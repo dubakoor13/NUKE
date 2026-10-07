@@ -35,6 +35,13 @@ def main() -> int:
         "nerva_3d_neutronics",
         "nerva_3d_fuel_heating",
         "nerva_3d_tie_heating",
+        "nerva_3d_fuel_hydrogen_heating",
+        "nerva_3d_tie_hydrogen_heating",
+        "nerva_3d_tie_supply_hydrogen_heating",
+        "nerva_3d_tie_return_hydrogen_heating",
+        "nerva_fuel_element_instances",
+        "nerva_hydrogen_channel_01_instances",
+        "nerva_hydrogen_channel_19_instances",
         "nerva_material_transport",
         "nerva_fuel_spectrum",
         "nerva_hydrogen_spectrum",
@@ -87,6 +94,32 @@ def main() -> int:
         __import__("numpy").array([1.0, 2.0, 3.0]),
     )
     assert abs(sum(fractions.values()) - 1.0) < 1.0e-12
+
+    trigger_config = NervaConfig(
+        core_rings=3,
+        particles=100,
+        batches=12,
+        inactive=4,
+        tally_rel_err_trigger=0.25,
+        trigger_max_batches=30,
+        trigger_batch_interval=2,
+        diagnostic_energy_groups=16,
+        axial_mesh_bins=24,
+    )
+    trigger_model = build_model(
+        trigger_config,
+        assembly="reactor",
+    )
+    assert trigger_model.settings.trigger_active is True
+    assert trigger_model.settings.trigger_max_batches == 30
+    assert trigger_model.settings.trigger_batch_interval == 2
+    trigger_tally = next(
+        tally
+        for tally in trigger_model.tallies
+        if tally.name == "nerva_3d_neutronics"
+    )
+    assert len(trigger_tally.triggers) == 1
+    assert trigger_tally.triggers[0].trigger_type == "rel_err"
 
     print("Expanded NERVA OpenMC diagnostics validation: PASS")
     print(f"  tallies: {len(tallies)}")
