@@ -10,6 +10,9 @@ from .lantr import (
     BASE_REACTOR_EXIT_TEMPERATURE_K,
     BASE_REACTOR_POWER_MW,
     BIMODAL_POWER,
+    HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA,
+    HIGH_PRESSURE_LANTR_NOZZLE_AREA_RATIO,
+    high_pressure_lantr_isp,
     lantr_point,
     lantr_table,
 )
@@ -43,6 +46,16 @@ def main() -> int:
     assert BASE_REACTOR_EXIT_TEMPERATURE_K == 2734.0
     assert math.isclose(BASE_CHAMBER_PRESSURE_PA / 1e6, 6.894757, rel_tol=1e-6)
     assert BASE_ISP_S == 900.0
+
+    hp_isp, hp_tw = high_pressure_lantr_isp(3.0)
+    assert math.isclose(
+        HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA / 1e6,
+        13.789515,
+        rel_tol=1e-6,
+    )
+    assert HIGH_PRESSURE_LANTR_NOZZLE_AREA_RATIO == 500.0
+    assert hp_isp == 647.0
+    assert hp_tw == 8.2
 
     assert BIMODAL_POWER.electric_power_kwe_per_engine == 25.0
     assert BIMODAL_POWER.reference_stage_power_kwe == 50.0
