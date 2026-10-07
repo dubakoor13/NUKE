@@ -88,7 +88,8 @@
       "material_change": false,
       "internal_boundary_type": "transmission",
       "purpose": "channel-associated solid-heating scoring"
-    }
+    },
+    "fuel_sector_deterministic_area_model": true
   },
   "thermal_hydraulics": {
     "fuel_channel": {
@@ -148,6 +149,24 @@
       "tolerance_default": 0.001,
       "maximum_iterations_default": 6,
       "caveat": "screening network balance; does not model manifolds, plenums, pumps, or crossflow"
+    },
+    "fuel_solid_conduction_models": {
+      "default": "ligament-slab",
+      "available": {
+        "ligament-slab": {
+          "status": "legacy screening model",
+          "geometry": "minimum channel ligament half-width",
+          "coating": "planar thin-layer approximation"
+        },
+        "equivalent-annulus-sector": {
+          "status": "optional higher-fidelity reduced-order model",
+          "geometry": "area-preserving annulus for each deterministic nearest-channel Voronoi fuel sector",
+          "coating": "exact cylindrical resistance",
+          "fuel_heating": "uniform volumetric generation per axial sector bin",
+          "outer_boundary": "adiabatic equivalent radius",
+          "limitation": "not a 2-D/3-D conduction solution"
+        }
+      }
     }
   },
   "software_validation": {
@@ -184,7 +203,10 @@
     "parallel_flow_update_math": true,
     "balanced_fuel_channel_end_to_end": true,
     "balanced_tie_instance_end_to_end": true,
-    "parallel_mass_flow_closure": true
+    "parallel_mass_flow_closure": true,
+    "deterministic_fuel_sector_area_closure": true,
+    "equivalent_annulus_zero_power_limit": true,
+    "equivalent_annulus_sector_end_to_end": true
   },
   "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked. Fuel-element, channel-associated fuel-sector, coolant-channel, and tie-tube integrated/axial heating shapes are OpenMC tally outputs for current statepoints. Fuel-sector-to-channel heat assignment remains an engineering thermal partition. Parallel branch flow is equal by default or can be redistributed with the optional common-pressure-drop screening balance; manifolds/plenums/pump coupling are not modeled.",
   "results": {
@@ -201,6 +223,7 @@
     "tie_instance_summary": true,
     "tie_instance_plots": true,
     "fuel_sector_channel_wall_power": true,
-    "parallel_flow_diagnostics": true
+    "parallel_flow_diagnostics": true,
+    "solid_conduction_model_recorded": true
   }
 }
