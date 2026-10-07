@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from .config import NervaConfig
-from .geometry import cluster_summary, geometry_summary
+from .geometry import cluster_summary, geometry_summary, mixed_core_summary
 from .model import build_model
 
 
@@ -22,9 +22,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--assembly",
-        choices=("core", "cluster"),
+        choices=("core", "cluster", "mixed-core"),
         default="core",
-        help="Export the original small all-fuel core or the 6-fuel/1-tie cluster.",
+        help="Export the all-fuel core, 6-fuel/1-tie cluster, or mixed fuel/tie core.",
     )
     parser.add_argument(
         "--rings",
@@ -55,11 +55,12 @@ def main() -> int:
     model = build_model(config, assembly=args.assembly)
     model.export_to_xml(directory=args.output)
 
-    summary = (
-        cluster_summary(config)
-        if args.assembly == "cluster"
-        else geometry_summary(config)
-    )
+    if args.assembly == "cluster":
+        summary = cluster_summary(config)
+    elif args.assembly == "mixed-core":
+        summary = mixed_core_summary(config)
+    else:
+        summary = geometry_summary(config)
     print(f"NERVA-derived {args.assembly} model exported:")
     for key, value in summary.items():
         print(f"  {key}: {value}")
