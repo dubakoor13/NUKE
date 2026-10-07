@@ -120,3 +120,73 @@ def high_pressure_lantr_isp(
     isp = float(np.interp(mr, _HIGH_MR, _HIGH_ISP_5H_2900K))
     thrust_to_weight = float(np.interp(mr, _HIGH_MR, _HIGH_TW))
     return isp, thrust_to_weight
+
+
+G0_M_S2 = 9.80665
+BASE_HYDROGEN_MASS_FLOW_KG_S = BASE_THRUST_N / (G0_M_S2 * BASE_ISP_S)
+
+
+@dataclass(frozen=True)
+class CoupledLantrPoint:
+    oxygen_hydrogen_ratio: float
+    chamber_pressure_pa: float
+    reactor_exit_temperature_k: float
+    hydrogen_mass_flow_kg_s: float
+    oxygen_mass_flow_kg_s: float
+    total_mass_flow_kg_s: float
+    delivered_isp_s: float
+    thrust_n: float
+    thrust_augmentation_factor: float
+
+
+def coupled_lantr_point(
+    oxygen_hydrogen_ratio: float,
+    chamber_pressure_pa: float,
+    reactor_exit_temperature_k: float = BASE_REACTOR_EXIT_TEMPERATURE_K,
+) -> CoupledLantrPoint:
+    """Scale the NASA LANTR reference with pressure for fixed throat geometry.
+
+    The reference engine is anchored to the published MR/Isp table at
+    BASE_CHAMBER_PRESSURE_PA and BASE_REACTOR_EXIT_TEMPERATURE_K.
+
+    For a fixed throat and approximately fixed gas properties, choked hydrogen
+    flow scales as Pc/sqrt(Tc). Oxygen flow is MR times hydrogen flow, and
+    thrust is total propellant flow times g0 times the published delivered Isp.
+    """
+    if chamber_pressure_pa <= 0.0:
+        raise ValueError("chamber_pressure_pa must be positive")
+    if reactor_exit_temperature_k <= 0.0:
+        raise ValueError("reactor_exit_temperature_k must be positive")
+
+    reference = lantr_point(oxygen_hydrogen_ratio)
+    pressure_scale = chamber_pressure_pa / BASE_CHAMBER_PRESSURE_PA
+    temperature_scale = (
+        BASE_REACTOR_EXIT_TEMPERATURE_K / reactor_exit_temperature_k
+    ) ** 0.5
+
+    hydrogen_flow = (
+        BASE_HYDROGEN_MASS_FLOW_KG_S
+        * pressure_scale
+        * temperature_scale
+    )
+    oxygen_flow = oxygen_hydrogen_ratio * hydrogen_flow
+    total_flow = hydrogen_flow + oxygen_flow
+    thrust = total_flow * G0_M_S2 * reference.delivered_isp_s
+
+    return CoupledLantrPoint(
+        oxygen_hydrogen_ratio=float(oxygen_hydrogen_ratio),
+        chamber_pressure_pa=float(chamber_pressure_pa),
+        reactor_exit_temperature_k=float(reactor_exit_temperature_k),
+        hydrogen_mass_flow_kg_s=float(hydrogen_flow),
+        oxygen_mass_flow_kg_s=float(oxygen_flow),
+        total_mass_flow_kg_s=float(total_flow),
+        delivered_isp_s=float(reference.delivered_isp_s),
+        thrust_n=float(thrust),
+        thrust_augmentation_factor=float(thrust / (
+            BASE_HYDROGEN_MASS_FLOW_KG_S
+            * pressure_scale
+            * temperature_scale
+            * G0_M_S2
+            * BASE_ISP_S
+        )),
+    )
