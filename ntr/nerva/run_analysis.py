@@ -66,6 +66,8 @@ def main() -> int:
     fuel_dir = root / "fuel"
     tie_dir = root / "tie"
     diagnostics_dir = root / "openmc_diagnostics"
+    instances_dir = root / "instances"
+    element_channels_dir = root / "element_channels"
     openmc_plots_dir = root / "openmc_plots"
     plots_dir = root / "plots"
     root.mkdir(parents=True, exist_ok=True)
@@ -97,6 +99,39 @@ def main() -> int:
             str(power_dir / "metadata.json"),
             "--output",
             str(diagnostics_dir),
+        ]
+    )
+
+    _run(
+        [
+            python,
+            "-m",
+            "ntr.nerva.postprocess_instance_tallies",
+            str(args.statepoint),
+            "--power-metadata",
+            str(power_dir / "metadata.json"),
+            "--output",
+            str(instances_dir),
+        ]
+    )
+
+    _run(
+        [
+            python,
+            "-m",
+            "ntr.nerva.solve_element_channels",
+            str(fields),
+            str(instances_dir / "instance_power_fractions.npz"),
+            "--fuel-mass-flow-kg-s",
+            str(args.fuel_mass_flow_kg_s),
+            "--inlet-temperature-k",
+            str(args.inlet_temperature_k),
+            "--inlet-pressure-mpa",
+            str(args.inlet_pressure_mpa),
+            "--hydrogen-model",
+            args.hydrogen_model,
+            "--output",
+            str(element_channels_dir),
         ]
     )
 
@@ -188,6 +223,8 @@ def main() -> int:
     print(f"  root: {root}")
     print(f"  power fields: {power_dir}")
     print(f"  OpenMC diagnostics: {diagnostics_dir}")
+    print(f"  instance tallies: {instances_dir}")
+    print(f"  element/channel thermal: {element_channels_dir}")
     print(f"  fuel thermal: {fuel_dir}")
     print(f"  tie thermal: {tie_dir}")
     print(f"  QA report: {root / 'analysis_validation.json'}")
