@@ -50,7 +50,9 @@
     "nuclear_data_temperature_audit": true,
     "fuel_element_axial_instance_tallies": true,
     "coolant_channel_axial_instance_tallies": true,
-    "tie_component_axial_instance_tallies": true
+    "tie_component_axial_instance_tallies": true,
+    "tie_supply_hydrogen_axial_instance_tallies": true,
+    "tie_return_hydrogen_axial_instance_tallies": true
   },
   "geometry": {
     "fuel_element": {
@@ -111,6 +113,15 @@
       "fuel_channels": true,
       "tie_supply_and_return": true,
       "treatment": "adds directly to bulk enthalpy; excluded from wall heat flux"
+    },
+    "tie_instance_resolution": {
+      "implemented": true,
+      "solid_axial_source": "sum of OpenMC tie-component Distribcell x axial-mesh heating-local tallies",
+      "supply_hydrogen_axial_source": "OpenMC tie-supply Distribcell x axial-mesh heating-local tally",
+      "return_hydrogen_axial_source": "OpenMC tie-return Distribcell x axial-mesh heating-local tally",
+      "normalization": "instance fields renormalized to global OpenMC mesh totals for energy closure",
+      "flow_distribution": "equal total tie-flow split among tie instances",
+      "representative_average_solver_retained": true
     }
   },
   "software_validation": {
@@ -139,9 +150,11 @@
     "numerical_convergence_cli": true,
     "hottest_channel_uncertainty_screening": true,
     "nuclear_data_temperature_audit": true,
-    "engineering_report_cli": true
+    "engineering_report_cli": true,
+    "tie_instance_reconstruction_math": true,
+    "tie_instance_power_closure": true
   },
-  "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked. Repeated-cell integrated and axial fuel/channel power shapes are OpenMC tally outputs; equal solid-wall sharing among the 19 channels within each element remains a thermal reconstruction assumption.",
+  "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked. Fuel-element, coolant-channel, and tie-tube integrated/axial heating shapes are OpenMC tally outputs when current statepoints are used. Equal solid-wall sharing among the 19 fuel channels and equal tie-flow sharing among tie instances remain thermal reconstruction assumptions.",
   "results": {
     "vtk_paraview_export": true,
     "element_channel_heatmaps": true,
@@ -152,6 +165,8 @@
     "uncertainty_screening": "±1σ integrated OpenMC tally sensitivity; not covariance-aware",
     "engineering_run_report_markdown": true,
     "engineering_run_report_json": true,
-    "full_run_report_generated_automatically": true
+    "full_run_report_generated_automatically": true,
+    "tie_instance_summary": true,
+    "tie_instance_plots": true
   }
 }
