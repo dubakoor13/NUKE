@@ -1,0 +1,77 @@
+{
+  "model": "NERVA-derived OpenMC demonstrator",
+  "status": "engineering demonstrator; not a validated historical NERVA model",
+  "neutronics": {
+    "solver": "OpenMC",
+    "fuel_loading": "low-enrichment surrogate",
+    "historical_criticality_calibration": false,
+    "transport_with_production_nuclear_data_validated": false,
+    "implemented_tallies": [
+      "3-D flux",
+      "3-D fission",
+      "3-D total heating-local",
+      "3-D fuel-only heating-local",
+      "3-D tie-solid heating-local"
+    ]
+  },
+  "geometry": {
+    "fuel_element": {
+      "status": "public NERVA-derived dimensions",
+      "flat_to_flat_cm": 1.905,
+      "active_length_cm": 132.0,
+      "coolant_channels": 19,
+      "coolant_bore_diameter_cm": 0.2565,
+      "coolant_bore_pitch_cm": 0.40894,
+      "zrc_coating_thickness_cm": 0.005
+    },
+    "tie_tube": {
+      "status": "public NERVA-derived dimensions with simplified material definitions",
+      "central_supply_and_annular_return": true
+    },
+    "core_pattern": {
+      "status": "representative SNRE-style mixed fuel/tie lattice",
+      "historical_element_map_reproduced": false
+    },
+    "periphery": {
+      "partial_filler": "homogenized graphite surrogate",
+      "reflector": "beryllium",
+      "control_drums": 12,
+      "control_drum_dimensions": "engineering surrogate",
+      "pressure_vessel": "aluminum-alloy surrogate"
+    }
+  },
+  "thermal_hydraulics": {
+    "fuel_channel": {
+      "implemented": true,
+      "dimensionality": "1-D",
+      "pressure_loss": "Darcy-Weisbach",
+      "heat_transfer": "Dittus-Boelter / laminar fallback",
+      "default_hydrogen": "constant-property ideal-gas surrogate",
+      "optional_hydrogen": "CoolProp real-fluid state properties"
+    },
+    "tie_tube": {
+      "implemented": true,
+      "flow_topology": "central supply / annular return counterflow",
+      "default_heat_split": "wetted-perimeter weighting",
+      "turn_loss_model": false
+    },
+    "fuel_solid_temperature": {
+      "implemented": true,
+      "model": "1-D ZrC conduction plus half-ligament screening estimate",
+      "full_2d_or_3d_conduction": false
+    }
+  },
+  "software_validation": {
+    "geometry_validation": true,
+    "openmc_xml_export": true,
+    "power_normalization_unit_test": true,
+    "mesh_ordering_check": true,
+    "fuel_channel_energy_balance": true,
+    "tie_tube_energy_balance": true,
+    "state_dependent_property_backend_test": true,
+    "coolprop_smoke_test": true,
+    "synthetic_end_to_end_pipeline": "CI pending/currently exercised",
+    "historical_benchmark_validation": false
+  },
+  "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked."
+}
