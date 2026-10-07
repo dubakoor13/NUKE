@@ -15,6 +15,10 @@ from .model import build_model
 
 _INSTANCE_CELL_NAMES = {
     "fuel matrix",
+    *{
+        f"fuel matrix channel sector {i:02d}"
+        for i in range(1, 20)
+    },
     *{f"hydrogen channel {i}" for i in range(1, 20)},
     "tie-tube inner Inconel tube",
     "tie-tube ZrH moderator",
