@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - 'ntr/nerva/**'
+      - 'ntr/airbreathing/**'
       - '.github/workflows/nerva-model-check.yml'
 
 permissions:
@@ -85,6 +86,31 @@ jobs:
 
       - name: Check nuclear-airbreathing CLI
         run: python -m ntr.airbreathing.run_nuclear_ramjet --help
+
+      - name: Validate generic OpenMC air-heater model
+        run: python -m ntr.airbreathing.validate_openmc_airheater
+
+      - name: Check OpenMC air-heater build CLI
+        run: python -m ntr.airbreathing.build_openmc_airheater --help
+
+      - name: Check OpenMC air-heater postprocessor CLI
+        run: python -m ntr.airbreathing.postprocess_openmc_airheater --help
+
+      - name: Validate OpenMC-to-airbreathing coupling
+        run: python -m ntr.airbreathing.validate_openmc_coupling
+
+      - name: Check OpenMC-to-airbreathing coupling CLI
+        run: python -m ntr.airbreathing.couple_openmc_airheater --help
+
+      - name: Export generic fixed-source OpenMC air heater
+        run: |
+          python -m ntr.airbreathing.build_openmc_airheater \
+            --batches 4 \
+            --particles 100 \
+            --output build/openmc_airheater_ci
+          for f in geometry.xml materials.xml settings.xml tallies.xml plots.xml; do
+            test -s "build/openmc_airheater_ci/$f"
+          done
 
       - name: Export four requested propulsion families
         run: python -m ntr.nerva.run_propulsion_modes
