@@ -12,6 +12,8 @@ from .lantr import (
     BIMODAL_POWER,
     HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA,
     HIGH_PRESSURE_LANTR_NOZZLE_AREA_RATIO,
+    coupled_high_pressure_lantr_point,
+    coupled_lantr_point,
     high_pressure_lantr_isp,
     lantr_point,
     lantr_table,
@@ -47,6 +49,27 @@ def main() -> int:
     assert math.isclose(BASE_CHAMBER_PRESSURE_PA / 1e6, 6.894757, rel_tol=1e-6)
     assert BASE_ISP_S == 900.0
 
+    coupled_ref = coupled_lantr_point(
+        3.0,
+        BASE_CHAMBER_PRESSURE_PA,
+        BASE_REACTOR_EXIT_TEMPERATURE_K,
+    )
+    assert math.isclose(
+        coupled_ref.thrust_n,
+        p3.thrust_n,
+        rel_tol=3e-3,
+    )
+    coupled_2x = coupled_lantr_point(
+        3.0,
+        2.0 * BASE_CHAMBER_PRESSURE_PA,
+        BASE_REACTOR_EXIT_TEMPERATURE_K,
+    )
+    assert math.isclose(
+        coupled_2x.thrust_n / coupled_ref.thrust_n,
+        2.0,
+        rel_tol=1e-12,
+    )
+
     hp_isp, hp_tw = high_pressure_lantr_isp(3.0)
     assert math.isclose(
         HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA / 1e6,
@@ -56,6 +79,24 @@ def main() -> int:
     assert HIGH_PRESSURE_LANTR_NOZZLE_AREA_RATIO == 500.0
     assert hp_isp == 647.0
     assert hp_tw == 8.2
+
+    hp_ref = coupled_high_pressure_lantr_point(
+        3.0,
+        HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA,
+        2900.0,
+    )
+    hp_20mpa = coupled_high_pressure_lantr_point(
+        3.0,
+        20.0e6,
+        2900.0,
+    )
+    assert hp_ref.thrust_n > 0.0
+    assert hp_20mpa.thrust_n > hp_ref.thrust_n
+    assert math.isclose(
+        hp_20mpa.thrust_n / hp_ref.thrust_n,
+        20.0e6 / HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA,
+        rel_tol=1e-12,
+    )
 
     assert BIMODAL_POWER.electric_power_kwe_per_engine == 25.0
     assert BIMODAL_POWER.reference_stage_power_kwe == 50.0
