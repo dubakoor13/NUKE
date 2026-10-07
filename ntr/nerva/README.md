@@ -25,12 +25,16 @@ low-enrichment surrogate.
 - Seven-position cluster: one tie tube surrounded by six fuel elements.
 - Parameterized small all-fuel core retained for regression comparison.
 - SNRE-style mixed fuel/tie full-core lattice using a three-color triangular-lattice pattern.
-- Finite axial geometry and beryllium radial reflector.
+- Homogenized graphite peripheral filler that rounds the lattice into a cylindrical core envelope.
+- Beryllium radial reflector with 12 embedded rotatable control drums.
+- Each drum uses a parameterized Be body with a natural-B4C absorber half-shell surrogate.
+- Aluminum-alloy pressure-vessel surrogate around the reflector.
+- Finite axial geometry and vacuum outer boundaries.
 - Eigenvalue settings and fissionable source.
 - 3-D mesh tallies for flux, fission rate, and local heating.
 - XY material plot definitions.
 - Pure-Python geometry validation.
-- GitHub CI export checks for cluster, all-fuel core, and mixed-core modes.
+- GitHub CI export checks for cluster, all-fuel core, mixed-core, and full reactor modes.
 
 ## Important model limitation
 
@@ -73,6 +77,26 @@ The mixed-core pattern assigns one of three triangular-lattice colors to tie
 tubes. This gives every interior tie tube six fuel neighbors and every interior
 fuel element three tie-tube neighbors.
 
+## Export the full reactor-periphery assembly
+
+```bash
+python -m ntr.nerva.build_model \
+  --assembly reactor \
+  --rings 8 \
+  --drum-angle 0 \
+  --output build/nerva_reactor
+```
+
+The control-drum angle is parameterized. By convention in this demonstrator,
+`0 deg` places the B4C-bearing half-shell toward the core and `180 deg`
+rotates it outward. This is a geometry convention only; it is not yet a
+validated drum-worth calibration.
+
+The periphery is intentionally staged. The partial filler is presently a
+homogenized graphite region outside the finite lattice but inside the
+cylindrical core envelope. Explicit machined partial-hex filler pieces can be
+substituted later without changing the core lattice API.
+
 ## Export the small all-fuel regression core
 
 ```bash
@@ -102,6 +126,15 @@ library are configured.
                    |
                    v
        representative mixed core
+                   |
+                   v
+      homogenized peripheral filler
+                   |
+                   v
+      Be reflector + 12 control drums
+                   |
+                   v
+       Al-alloy pressure vessel
 ```
 
 ## Roadmap
@@ -110,8 +143,9 @@ library are configured.
 2. Coaxial tie/support element. **DONE**
 3. Six-fuel + one-tie cluster. **DONE**
 4. Repeat the fuel/tie pattern into a representative full core. **DONE**
-5. Add cylindrical/partial filler elements, Be reflector, and control drums.
-6. Add axial/radial power extraction and normalization.
-7. Couple heating to a 1-D hydrogen coolant/tie-tube thermal model.
-8. Add temperature/density feedback iteration.
-9. Calibrate only against published Rover/NERVA benchmark information.
+5. Add cylindrical filler, Be reflector, control drums, and pressure vessel. **DONE (homogenized filler / surrogate drum dimensions)**
+6. Replace homogenized filler with explicit partial-hex filler pieces.
+7. Add axial/radial power extraction and normalization.
+8. Couple heating to a 1-D hydrogen coolant/tie-tube thermal model.
+9. Add temperature/density feedback iteration.
+10. Calibrate only against published Rover/NERVA benchmark information.
