@@ -45,6 +45,50 @@ def main() -> int:
     assert np.all(solution.wall_temperature_k > bin_mean_temperature)
     assert np.all(solution.reynolds > 0.0)
 
+    # Direct nuclear heating in the coolant must raise bulk enthalpy without
+    # being interpreted as additional wall heat flux.
+    direct_power = np.full(12, 0.20e6 / 12.0)
+    direct_solution = solve_fuel_channel(
+        axial_total_fuel_power_w=axial_power,
+        axial_direct_coolant_power_w=direct_power,
+        z_edges_m=z_edges,
+        fuel_channel_count=channels,
+        mass_flow_per_channel_kg_s=mass_flow_per_channel,
+        inlet_temperature_k=500.0,
+        inlet_pressure_pa=8.0e6,
+        channel_diameter_m=0.002565,
+        properties=properties,
+    )
+    assert direct_solution.outlet_temperature_k > (
+        solution.outlet_temperature_k
+    )
+    assert np.allclose(
+        direct_solution.heat_flux_w_m2,
+        solution.heat_flux_w_m2,
+        rtol=0.0,
+        atol=1.0e-12,
+    )
+    assert np.isclose(
+        direct_solution.wall_transferred_power_w,
+        channel_power,
+        rtol=1.0e-12,
+    )
+    assert np.isclose(
+        direct_solution.direct_nuclear_coolant_power_w,
+        0.20e6 / channels,
+        rtol=1.0e-12,
+    )
+    direct_recovered = (
+        mass_flow_per_channel
+        * properties.cp_j_kg_k
+        * (direct_solution.outlet_temperature_k - 500.0)
+    )
+    assert np.isclose(
+        direct_recovered,
+        1.20e6 / channels,
+        rtol=1.0e-12,
+    )
+
     print("NERVA 1-D fuel-channel thermal validation: PASS")
     print(f"  representative channel power: {channel_power:.6f} W")
     print(f"  outlet temperature: {solution.outlet_temperature_k:.6f} K")
