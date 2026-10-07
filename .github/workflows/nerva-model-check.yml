@@ -74,6 +74,9 @@ jobs:
       - name: Validate published NERVA historical presets
         run: python -m ntr.nerva.validate_historical_presets
 
+      - name: Validate LANTR and bimodal NTR reference model
+        run: python -m ntr.nerva.validate_lantr
+
       - name: Syntax-check NERVA web dashboard
         run: python -m py_compile streamlit_app.py ntr/nerva/webapp.py
 
