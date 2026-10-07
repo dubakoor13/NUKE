@@ -403,6 +403,36 @@ def main() -> int:
                 "element/channel maximum peak fuel temperature must be positive"
             )
 
+        _assert_close(
+            _finite_number(
+                element_channels[
+                    "reconstructed_total_fuel_mass_flow_kg_s"
+                ],
+                "element_channels.reconstructed_total_fuel_mass_flow_kg_s",
+            ),
+            _finite_number(
+                element_channels["fuel_mass_flow_kg_s"],
+                "element_channels.fuel_mass_flow_kg_s",
+            ),
+            "element/channel fuel mass-flow closure",
+            rel_tol=1.0e-10,
+            abs_tol=1.0e-12,
+        )
+        if _finite_number(
+            element_channels["minimum_channel_mass_flow_kg_s"],
+            "element_channels.minimum_channel_mass_flow_kg_s",
+        ) <= 0.0:
+            raise ValueError(
+                "element/channel minimum mass flow must be positive"
+            )
+        if _finite_number(
+            element_channels["final_pressure_drop_spread_fraction"],
+            "element_channels.final_pressure_drop_spread_fraction",
+        ) < 0.0:
+            raise ValueError(
+                "element/channel pressure-drop spread must be non-negative"
+            )
+
 
     if tie_instances is not None:
         _assert_close(
@@ -482,6 +512,36 @@ def main() -> int:
                 "all-tie maximum wall temperature must be positive"
             )
 
+        _assert_close(
+            _finite_number(
+                tie_instances[
+                    "reconstructed_total_tie_mass_flow_kg_s"
+                ],
+                "tie_instances.reconstructed_total_tie_mass_flow_kg_s",
+            ),
+            _finite_number(
+                tie_instances["tie_mass_flow_kg_s"],
+                "tie_instances.tie_mass_flow_kg_s",
+            ),
+            "per-tie mass-flow closure",
+            rel_tol=1.0e-10,
+            abs_tol=1.0e-12,
+        )
+        if _finite_number(
+            tie_instances["minimum_tie_mass_flow_kg_s"],
+            "tie_instances.minimum_tie_mass_flow_kg_s",
+        ) <= 0.0:
+            raise ValueError(
+                "per-tie minimum mass flow must be positive"
+            )
+        if _finite_number(
+            tie_instances["final_pressure_drop_spread_fraction"],
+            "tie_instances.final_pressure_drop_spread_fraction",
+        ) < 0.0:
+            raise ValueError(
+                "per-tie pressure-drop spread must be non-negative"
+            )
+
     with np.load(fields_path) as fields:
         required_arrays = {
             "power_density_w_cm3",
@@ -540,6 +600,10 @@ def main() -> int:
             ),
             "tie_instance_power_closure": (
                 tie_instances is not None
+            ),
+            "parallel_mass_flow_closure": (
+                element_channels is not None
+                and tie_instances is not None
             ),
         },
         "diagnostic_values": {
