@@ -14,6 +14,17 @@ class NervaConfig:
     coolant_bore_pitch_cm: float = 0.40894
     zrc_coating_thickness_cm: float = 0.0050
 
+    # Public NERVA-derived tie-tube dimensions.
+    tie_graphite_filler_id_cm: float = 1.626
+    tie_zrc_outer_diameter_cm: float = 1.613
+    tie_zrc_inner_diameter_cm: float = 1.410
+    tie_outer_tube_outer_diameter_cm: float = 1.397
+    tie_outer_tube_wall_cm: float = 0.0205
+    tie_zrh_outer_diameter_cm: float = 1.168
+    tie_zrh_inner_diameter_cm: float = 0.533
+    tie_inner_tube_outer_diameter_cm: float = 0.521
+    tie_inner_tube_wall_cm: float = 0.051
+
     core_rings: int = 3
     reflector_thickness_cm: float = 5.0
 
@@ -23,6 +34,9 @@ class NervaConfig:
     hydrogen_temperature_k: float = 600.0
     reflector_density_g_cm3: float = 1.85
     zrc_density_g_cm3: float = 6.5
+    graphite_density_g_cm3: float = 1.70
+    zrh_density_g_cm3: float = 5.60
+    inconel_density_g_cm3: float = 8.19
 
     batches: int = 80
     inactive: int = 20
@@ -47,6 +61,50 @@ class NervaConfig:
     @property
     def inner_fuel_edge_length_cm(self) -> float:
         return self.inner_fuel_flat_to_flat_cm / math.sqrt(3.0)
+
+    @property
+    def tie_graphite_inner_radius_cm(self) -> float:
+        return 0.5 * self.tie_graphite_filler_id_cm
+
+    @property
+    def tie_zrc_outer_radius_cm(self) -> float:
+        return 0.5 * self.tie_zrc_outer_diameter_cm
+
+    @property
+    def tie_zrc_inner_radius_cm(self) -> float:
+        return 0.5 * self.tie_zrc_inner_diameter_cm
+
+    @property
+    def tie_outer_tube_outer_radius_cm(self) -> float:
+        return 0.5 * self.tie_outer_tube_outer_diameter_cm
+
+    @property
+    def tie_outer_tube_inner_radius_cm(self) -> float:
+        return self.tie_outer_tube_outer_radius_cm - self.tie_outer_tube_wall_cm
+
+    @property
+    def tie_zrh_outer_radius_cm(self) -> float:
+        return 0.5 * self.tie_zrh_outer_diameter_cm
+
+    @property
+    def tie_zrh_inner_radius_cm(self) -> float:
+        return 0.5 * self.tie_zrh_inner_diameter_cm
+
+    @property
+    def tie_inner_tube_outer_radius_cm(self) -> float:
+        return 0.5 * self.tie_inner_tube_outer_diameter_cm
+
+    @property
+    def tie_inner_tube_inner_radius_cm(self) -> float:
+        return self.tie_inner_tube_outer_radius_cm - self.tie_inner_tube_wall_cm
+
+    @property
+    def cluster_radius_cm(self) -> float:
+        return self.fuel_flat_to_flat_cm + self.fuel_edge_length_cm
+
+    @property
+    def cluster_reflector_outer_radius_cm(self) -> float:
+        return self.cluster_radius_cm + self.reflector_thickness_cm
 
     @property
     def core_radius_cm(self) -> float:
@@ -76,3 +134,21 @@ class NervaConfig:
             raise ValueError("inactive batches must be less than total batches")
         if self.particles < 100:
             raise ValueError("particles should be at least 100")
+
+        radii = (
+            self.tie_inner_tube_inner_radius_cm,
+            self.tie_inner_tube_outer_radius_cm,
+            self.tie_zrh_inner_radius_cm,
+            self.tie_zrh_outer_radius_cm,
+            self.tie_outer_tube_inner_radius_cm,
+            self.tie_outer_tube_outer_radius_cm,
+            self.tie_zrc_inner_radius_cm,
+            self.tie_zrc_outer_radius_cm,
+            self.tie_graphite_inner_radius_cm,
+        )
+        if any(radius <= 0.0 for radius in radii):
+            raise ValueError("tie-tube radii must all be positive")
+        if any(a >= b for a, b in zip(radii, radii[1:])):
+            raise ValueError("tie-tube radial layers must be strictly ordered")
+        if self.tie_graphite_inner_radius_cm >= 0.5 * self.inner_fuel_flat_to_flat_cm:
+            raise ValueError("tie-tube circular stack does not fit inside the hexagonal filler")
