@@ -1,17 +1,13 @@
 """Element- and channel-resolved NERVA thermal reconstruction.
 
-OpenMC provides exact integrated repeated-cell power fractions for each fuel
-matrix instance and each hydrogen-channel instance. The existing 3-D mesh
-provides global axial shapes. This solver combines those measurements using a
-clearly stated separable reconstruction:
+For current statepoints, OpenMC supplies integrated repeated-cell power plus
+direct fuel-element x axial and coolant-channel x axial heating tallies. The
+solver uses those native axial shapes on their own mesh and renormalizes them
+to the global power totals for strict energy closure.
 
-    element solid power(z) = element integrated fraction * global fuel shape(z)
-    channel wall power(z)  = element solid power(z) / 19
-    direct H2 power(e,c,z)  = channel integrated fraction * global H2 shape(z)
-
-Thus element-to-element and direct channel-to-channel differences come from
-OpenMC. Intra-element solid wall power remains equally shared among 19 channels
-until an explicit channel-resolved solid-deposition tally is available.
+Older statepoints that do not contain instance-axial tallies fall back to the
+global axial shape. The remaining first-order assumption is equal solid-wall
+power sharing among the 19 coolant channels inside one fuel element.
 """
 
 from __future__ import annotations
@@ -36,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Solve every repeated NERVA fuel element × 19 coolant channels "
-            "using OpenMC instance power fractions and global axial shapes."
+            "using OpenMC repeated-cell and direct instance-axial tallies."
         )
     )
     parser.add_argument(
@@ -85,6 +81,37 @@ def _normalized_shape(values: np.ndarray) -> np.ndarray:
     if total <= 0.0:
         return np.zeros_like(values)
     return values / total
+
+
+def _rebin_shape_to_edges(
+    values: np.ndarray,
+    old_edges: np.ndarray,
+    new_edges: np.ndarray,
+) -> np.ndarray:
+    """Conservatively map bin-integrated values onto a new 1-D grid."""
+    values = np.asarray(values, dtype=float)
+    old_edges = np.asarray(old_edges, dtype=float)
+    new_edges = np.asarray(new_edges, dtype=float)
+    if old_edges.size != values.size + 1:
+        raise ValueError("old_edges must bracket values")
+    if new_edges.size < 2:
+        raise ValueError("new_edges must contain at least two points")
+
+    result = np.zeros(new_edges.size - 1, dtype=float)
+    for i, value in enumerate(values):
+        lo = old_edges[i]
+        hi = old_edges[i + 1]
+        width = hi - lo
+        if width <= 0.0 or value == 0.0:
+            continue
+        for j in range(result.size):
+            overlap = max(
+                0.0,
+                min(hi, new_edges[j + 1]) - max(lo, new_edges[j]),
+            )
+            if overlap > 0.0:
+                result[j] += value * overlap / width
+    return result
 
 
 def main() -> int:
@@ -186,15 +213,38 @@ def main() -> int:
     fuel_axial_shape = _normalized_shape(axial_fuel_power_w)
     direct_axial_shape = _normalized_shape(axial_direct_h2_power_w)
 
+    legacy_z_edges_m = np.linspace(
+        lower_left[2] / 100.0,
+        upper_right[2] / 100.0,
+        int(dimension[2]) + 1,
+    )
+
+    instance_z_edges_m = np.asarray(
+        instances["instance_axial_z_edges_m"],
+        dtype=float,
+    ) if "instance_axial_z_edges_m" in instances.files else np.asarray(
+        [],
+        dtype=float,
+    )
+    instance_axial_bins = max(0, instance_z_edges_m.size - 1)
+
     direct_instance_axial_available = (
-        "fuel_element_axial_heating_w" in instances.files
+        instance_axial_bins > 0
+        and "fuel_element_axial_heating_w" in instances.files
         and np.asarray(
             instances["fuel_element_axial_heating_w"]
-        ).shape == (n_elements, int(dimension[2]))
+        ).shape == (n_elements, instance_axial_bins)
         and float(
             np.sum(instances["fuel_element_axial_heating_w"])
         ) > 0.0
     )
+
+    z_edges_m = (
+        instance_z_edges_m
+        if direct_instance_axial_available
+        else legacy_z_edges_m
+    )
+    thermal_axial_bins = z_edges_m.size - 1
 
     if direct_instance_axial_available:
         raw_element_axial = np.asarray(
@@ -231,7 +281,7 @@ def main() -> int:
         ).shape == (
             n_elements,
             n_channels,
-            int(dimension[2]),
+            thermal_axial_bins,
         )
         and float(
             np.sum(
@@ -241,6 +291,19 @@ def main() -> int:
             )
         ) > 0.0
     )
+
+    fallback_direct_axial_shape = direct_axial_shape
+    if (
+        thermal_axial_bins != int(dimension[2])
+        and direct_axial_shape.size > 0
+    ):
+        fallback_direct_axial_shape = _normalized_shape(
+            _rebin_shape_to_edges(
+                axial_direct_h2_power_w,
+                legacy_z_edges_m,
+                z_edges_m,
+            )
+        )
 
     if direct_total_w > 0.0 and np.sum(direct_fraction) > 0.0:
         if direct_channel_axial_available:
@@ -267,16 +330,10 @@ def main() -> int:
             channel_direct_axial = (
                 direct_fraction[:, :, None]
                 * direct_total_w
-                * direct_axial_shape[None, None, :]
+                * fallback_direct_axial_shape[None, None, :]
             )
     else:
         channel_direct_axial = np.zeros_like(channel_wall_axial)
-
-    z_edges_m = np.linspace(
-        lower_left[2] / 100.0,
-        upper_right[2] / 100.0,
-        int(dimension[2]) + 1,
-    )
 
     total_channels = n_elements * n_channels
     mass_flow_per_channel = (
@@ -424,6 +481,10 @@ def main() -> int:
         channel_wall_axial_power_w=channel_wall_axial,
         channel_direct_h2_axial_power_w=channel_direct_axial,
         z_edges_m=z_edges_m,
+        native_instance_axial_mesh_used=np.asarray(
+            [direct_instance_axial_available],
+            dtype=bool,
+        ),
     )
 
     outlet_temperatures = np.asarray(
@@ -472,6 +533,7 @@ def main() -> int:
         "direct_element_axial_openmc_used": (
             direct_instance_axial_available
         ),
+        "thermal_axial_bins": int(thermal_axial_bins),
         "direct_channel_axial_openmc_used": (
             direct_channel_axial_available
         ),
