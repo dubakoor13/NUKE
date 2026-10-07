@@ -193,14 +193,18 @@ assumptions:
 
 - **OpenMC measured:** integrated fuel-element heating fraction;
 - **OpenMC measured:** integrated direct-H2 heating of each channel instance;
-- **OpenMC measured:** global axial fuel-heating shape;
-- **OpenMC measured:** global axial direct-H2 heating shape;
-- **reconstruction assumption:** the global axial shape is separable from the
-  element/channel integrated fractions;
-- **reconstruction assumption:** solid wall power within one fuel element is
-  divided equally among its 19 coolant channels.
+- **OpenMC measured:** fuel-element-specific axial fuel-matrix heating from a
+  Distribcell x axial-mesh tally;
+- **OpenMC measured:** channel-instance-specific axial direct-H2 heating from
+  Distribcell x axial-mesh tallies;
+- **legacy fallback only:** the global axial shapes are used separably when an
+  older statepoint does not contain the direct instance-axial tallies;
+- **remaining reconstruction assumption:** solid wall power within one fuel
+  element is divided equally among its 19 coolant channels.
 
-No element-specific axial power shape is fabricated.
+For new statepoints built by the current model, the element and direct-H2
+channel axial shapes are therefore Monte Carlo tally outputs rather than
+fabricated separable shapes.
 
 Outputs include the complete element/channel table, reconstructed axial power
 arrays, and a full axial profile for the hottest reconstructed channel.
