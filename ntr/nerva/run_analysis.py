@@ -28,6 +28,29 @@ def parse_args() -> argparse.Namespace:
         default="constant",
     )
     parser.add_argument(
+        "--balance-parallel-flow",
+        action="store_true",
+        help=(
+            "Enable iterative common-pressure-drop flow balancing for "
+            "fuel channels and tie-tube branches."
+        ),
+    )
+    parser.add_argument(
+        "--flow-balance-max-iterations",
+        type=int,
+        default=6,
+    )
+    parser.add_argument(
+        "--flow-balance-tolerance",
+        type=float,
+        default=1.0e-3,
+    )
+    parser.add_argument(
+        "--flow-balance-relaxation",
+        type=float,
+        default=0.5,
+    )
+    parser.add_argument(
         "--volume-results",
         type=Path,
         default=None,
@@ -141,25 +164,36 @@ def main() -> int:
         )
     _run(instance_command)
 
-    _run(
-        [
-            python,
-            "-m",
-            "ntr.nerva.solve_element_channels",
-            str(fields),
-            str(instances_dir / "instance_power_fractions.npz"),
-            "--fuel-mass-flow-kg-s",
-            str(args.fuel_mass_flow_kg_s),
-            "--inlet-temperature-k",
-            str(args.inlet_temperature_k),
-            "--inlet-pressure-mpa",
-            str(args.inlet_pressure_mpa),
-            "--hydrogen-model",
-            args.hydrogen_model,
-            "--output",
-            str(element_channels_dir),
-        ]
-    )
+    element_command = [
+        python,
+        "-m",
+        "ntr.nerva.solve_element_channels",
+        str(fields),
+        str(instances_dir / "instance_power_fractions.npz"),
+        "--fuel-mass-flow-kg-s",
+        str(args.fuel_mass_flow_kg_s),
+        "--inlet-temperature-k",
+        str(args.inlet_temperature_k),
+        "--inlet-pressure-mpa",
+        str(args.inlet_pressure_mpa),
+        "--hydrogen-model",
+        args.hydrogen_model,
+        "--output",
+        str(element_channels_dir),
+    ]
+    if args.balance_parallel_flow:
+        element_command.extend(
+            [
+                "--balance-flow",
+                "--flow-balance-max-iterations",
+                str(args.flow_balance_max_iterations),
+                "--flow-balance-tolerance",
+                str(args.flow_balance_tolerance),
+                "--flow-balance-relaxation",
+                str(args.flow_balance_relaxation),
+            ]
+        )
+    _run(element_command)
 
     _run(
         [
@@ -222,25 +256,36 @@ def main() -> int:
         ]
     )
 
-    _run(
-        [
-            python,
-            "-m",
-            "ntr.nerva.solve_tie_instances",
-            str(fields),
-            str(instances_dir / "instance_power_fractions.npz"),
-            "--tie-mass-flow-kg-s",
-            str(args.tie_mass_flow_kg_s),
-            "--inlet-temperature-k",
-            str(args.inlet_temperature_k),
-            "--inlet-pressure-mpa",
-            str(args.inlet_pressure_mpa),
-            "--hydrogen-model",
-            args.hydrogen_model,
-            "--output",
-            str(tie_instances_dir),
-        ]
-    )
+    tie_instance_command = [
+        python,
+        "-m",
+        "ntr.nerva.solve_tie_instances",
+        str(fields),
+        str(instances_dir / "instance_power_fractions.npz"),
+        "--tie-mass-flow-kg-s",
+        str(args.tie_mass_flow_kg_s),
+        "--inlet-temperature-k",
+        str(args.inlet_temperature_k),
+        "--inlet-pressure-mpa",
+        str(args.inlet_pressure_mpa),
+        "--hydrogen-model",
+        args.hydrogen_model,
+        "--output",
+        str(tie_instances_dir),
+    ]
+    if args.balance_parallel_flow:
+        tie_instance_command.extend(
+            [
+                "--balance-flow",
+                "--flow-balance-max-iterations",
+                str(args.flow_balance_max_iterations),
+                "--flow-balance-tolerance",
+                str(args.flow_balance_tolerance),
+                "--flow-balance-relaxation",
+                str(args.flow_balance_relaxation),
+            ]
+        )
+    _run(tie_instance_command)
 
     _run(
         [
