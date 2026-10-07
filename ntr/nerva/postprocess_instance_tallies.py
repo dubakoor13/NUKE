@@ -641,9 +641,23 @@ def main() -> int:
             )
 
 
-    if fuel_rows and "fuel matrix" in repeated_cell_volumes:
+    fuel_repeated_volume_cm3 = float(
+        repeated_cell_volumes.get("fuel matrix", 0.0)
+    )
+    if fuel_repeated_volume_cm3 <= 0.0:
+        fuel_repeated_volume_cm3 = float(
+            sum(
+                repeated_cell_volumes.get(
+                    f"fuel matrix channel sector {i:02d}",
+                    0.0,
+                )
+                for i in range(1, 20)
+            )
+        )
+
+    if fuel_rows and fuel_repeated_volume_cm3 > 0.0:
         avg_volume = (
-            repeated_cell_volumes["fuel matrix"]
+            fuel_repeated_volume_cm3
             / len(fuel_rows)
         )
         if avg_volume > 0.0:
@@ -724,6 +738,38 @@ def main() -> int:
         str(row["element_key"]): index
         for index, row in enumerate(fuel_rows)
     }
+    fuel_sector_integrated_w = np.zeros(
+        (len(fuel_rows), 19),
+        dtype=float,
+    )
+    fuel_sector_integrated_std_w = np.zeros_like(
+        fuel_sector_integrated_w
+    )
+    unmatched_fuel_sector_rows = 0
+
+    for sector_index, heating in fuel_sector_integrated_raw.items():
+        paths = fuel_sector_paths[sector_index]
+        std_values = fuel_sector_integrated_std_raw[sector_index]
+        for i in range(len(heating)):
+            key = _parent_path(
+                paths[i] if i < len(paths) else "",
+                i,
+            )
+            element_index = fuel_key_to_index.get(key)
+            if element_index is None and i < len(fuel_rows):
+                element_index = i
+            if element_index is None:
+                unmatched_fuel_sector_rows += 1
+                continue
+            fuel_sector_integrated_w[
+                element_index,
+                sector_index - 1,
+            ] = float(heating[i])
+            fuel_sector_integrated_std_w[
+                element_index,
+                sector_index - 1,
+            ] = float(std_values[i])
+
     channel_direct_matrix = np.zeros(
         (len(fuel_rows), 19),
         dtype=float,
@@ -761,6 +807,10 @@ def main() -> int:
     axial_bins = 0
     if fuel_axial_raw is not None:
         axial_bins = int(fuel_axial_raw.shape[1])
+    elif fuel_sector_axial_raw:
+        axial_bins = int(
+            next(iter(fuel_sector_axial_raw.values())).shape[1]
+        )
     elif channel_axial_raw:
         axial_bins = int(next(iter(channel_axial_raw.values())).shape[1])
     elif tie_component_axial_raw:
@@ -769,6 +819,40 @@ def main() -> int:
         )
     elif tie_supply_axial_raw is not None:
         axial_bins = int(tie_supply_axial_raw.shape[1])
+
+    fuel_sector_axial_w = np.zeros(
+        (len(fuel_rows), 19, axial_bins),
+        dtype=float,
+    )
+    fuel_sector_axial_std_w = np.zeros_like(
+        fuel_sector_axial_w
+    )
+    unmatched_fuel_sector_axial_rows = 0
+
+    for sector_index, axial_values in fuel_sector_axial_raw.items():
+        paths = fuel_sector_axial_paths[sector_index]
+        std_values = fuel_sector_axial_std_raw[sector_index]
+        for i in range(axial_values.shape[0]):
+            key = _parent_path(
+                paths[i] if i < len(paths) else "",
+                i,
+            )
+            element_index = fuel_key_to_index.get(key)
+            if element_index is None and i < len(fuel_rows):
+                element_index = i
+            if element_index is None:
+                unmatched_fuel_sector_axial_rows += 1
+                continue
+            fuel_sector_axial_w[
+                element_index,
+                sector_index - 1,
+                :,
+            ] = axial_values[i, :]
+            fuel_sector_axial_std_w[
+                element_index,
+                sector_index - 1,
+                :,
+            ] = std_values[i, :]
 
     fuel_element_axial_heating_w = np.zeros(
         (len(fuel_rows), axial_bins),
@@ -797,6 +881,15 @@ def main() -> int:
             fuel_element_axial_heating_std_w[element_index, :] = (
                 fuel_axial_std_raw[i, :]
             )
+
+    elif fuel_sector_axial_raw:
+        fuel_element_axial_heating_w = np.sum(
+            fuel_sector_axial_w,
+            axis=1,
+        )
+        fuel_element_axial_heating_std_w = np.sqrt(
+            np.sum(fuel_sector_axial_std_w**2, axis=1)
+        )
 
     channel_direct_axial_w = np.zeros(
         (len(fuel_rows), 19, axial_bins),
@@ -956,6 +1049,14 @@ def main() -> int:
         fuel_element_power_w=fuel_power,
         fuel_element_heating_std_w=fuel_power_std,
         fuel_element_power_fraction=fuel_fractions,
+        fuel_channel_sector_heating_w=fuel_sector_integrated_w,
+        fuel_channel_sector_heating_std_w=(
+            fuel_sector_integrated_std_w
+        ),
+        fuel_channel_sector_axial_heating_w=fuel_sector_axial_w,
+        fuel_channel_sector_axial_heating_std_w=(
+            fuel_sector_axial_std_w
+        ),
         channel_direct_nuclear_heating_w=channel_direct_matrix,
         channel_direct_nuclear_heating_std_w=channel_direct_std_matrix,
         fuel_element_axial_heating_w=fuel_element_axial_heating_w,
@@ -997,6 +1098,16 @@ def main() -> int:
         ) if fuel_power_std.size else 0.0,
         "fuel_element_max_to_mean_power": fuel_peaking,
         "hottest_fuel_element_instance": hottest,
+        "fuel_channel_sector_tallies_available": (
+            len(fuel_sector_integrated_raw) == 19
+        ),
+        "fuel_channel_sector_axial_tallies_available": (
+            len(fuel_sector_axial_raw) == 19
+        ),
+        "unmatched_fuel_sector_rows": unmatched_fuel_sector_rows,
+        "unmatched_fuel_sector_axial_rows": (
+            unmatched_fuel_sector_axial_rows
+        ),
         "hydrogen_channel_row_count": len(channel_rows),
         "channel_element_alignment_mode": channel_alignment_mode,
         "unmatched_channel_rows": unmatched_channel_rows,
@@ -1029,8 +1140,15 @@ def main() -> int:
         "tie_heating_by_component_W": tie_power_by_component,
         "important_interpretation": {
             "fuel_instance_heating": (
-                "Exact integrated OpenMC heating-local score for each "
-                "repeated fuel-matrix cell instance."
+                "Current statepoints aggregate 19 same-material fuel-sector "
+                "Distribcell tallies into exact repeated fuel-element totals. "
+                "Legacy statepoints may use the older single fuel-matrix tally."
+            ),
+            "fuel_sector_heating": (
+                "Each fuel sector is the nearest-channel Voronoi portion of "
+                "the fuel matrix. Integrated and axial heating in the sector "
+                "is a direct OpenMC tally; assigning that sector heat to its "
+                "associated coolant channel remains a thermal partition model."
             ),
             "channel_heating": (
                 "Direct nuclear energy deposited in hydrogen. It is not "
