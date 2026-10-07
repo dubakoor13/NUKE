@@ -32,6 +32,12 @@ jobs:
       - name: Validate NERVA fuel and tie-tube geometry
         run: python -m ntr.nerva.validate_layout
 
+      - name: Validate NERVA power normalization
+        run: python -m ntr.nerva.validate_power
+
+      - name: Check statepoint postprocessor CLI
+        run: python -m ntr.nerva.postprocess_statepoint --help
+
       - name: Export seven-position cluster
         run: |
           python -m ntr.nerva.build_model \
