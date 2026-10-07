@@ -33,6 +33,8 @@ from .lantr import (
     HIGH_PRESSURE_LANTR_TEMPERATURE_RANGE_K,
     NASA_HIGH_PRESSURE_LANTR_SOURCE,
     NASA_HIGH_PRESSURE_LANTR_URL,
+    coupled_high_pressure_lantr_point,
+    coupled_lantr_point,
     high_pressure_lantr_isp,
     lantr_point,
     lantr_table,
@@ -222,96 +224,107 @@ def _render_historical(preset: HistoricalNervaPreset) -> None:
 def _render_lantr(
     oxygen_hydrogen_ratio: float,
     architecture: str,
+    chamber_pressure_mpa: float,
+    reactor_exit_temperature_k: float,
 ) -> None:
     high_pressure = architecture == "2000-psia trimodal LANTR"
 
-    st.success("Bimodal NTR + LOX-augmented LANTR reference")
+    if high_pressure:
+        point = coupled_high_pressure_lantr_point(
+            oxygen_hydrogen_ratio,
+            chamber_pressure_mpa * 1.0e6,
+            reactor_exit_temperature_k,
+        )
+        nozzle_ratio = HIGH_PRESSURE_LANTR_NOZZLE_AREA_RATIO
+        pressure_anchor_mpa = (
+            HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA / 1.0e6
+        )
+        reference_name = "NASA 2000-psia trimodal LANTR"
+    else:
+        point = coupled_lantr_point(
+            oxygen_hydrogen_ratio,
+            chamber_pressure_mpa * 1.0e6,
+            reactor_exit_temperature_k,
+        )
+        nozzle_ratio = BASE_NOZZLE_AREA_RATIO
+        pressure_anchor_mpa = BASE_CHAMBER_PRESSURE_PA / 1.0e6
+        reference_name = "NASA 1000-psia small-engine LANTR"
+
+    st.success("Bimodal NTR + LOX-augmented LANTR")
     st.write(
-        "The same NTR reactor can operate in high-Isp LH2 propulsion mode, "
-        "LOX-augmented LANTR high-thrust mode, or low-power bimodal Brayton "
-        "electric mode during coast."
+        "Pressure is now a coupled operating variable, not a fixed label. "
+        "For fixed throat geometry, choked H2 flow scales approximately as "
+        "Pc/sqrt(Tc). LOX flow is MR times H2 flow, and thrust is computed "
+        "from total mass flow times delivered Isp."
     )
 
     row1 = st.columns(5)
-    if high_pressure:
-        isp_value, tw_value = high_pressure_lantr_isp(
-            oxygen_hydrogen_ratio
-        )
-        with row1[0]:
-            _metric("Reference thrust class", f"{HIGH_PRESSURE_LANTR_BASE_THRUST_N / 1000.0:,.1f} kN")
-        with row1[1]:
-            _metric("O/H mixture ratio", f"{oxygen_hydrogen_ratio:.2f}")
-        with row1[2]:
-            _metric("Nozzle-inlet pressure", f"{HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA / 1.0e6:,.3f} MPa")
-        with row1[3]:
-            _metric("Delivered Isp", f"{isp_value:,.0f} s")
-        with row1[4]:
-            _metric("Engine T/W", f"{tw_value:.2f}")
+    with row1[0]:
+        _metric("Chamber / nozzle-inlet pressure", f"{chamber_pressure_mpa:,.3f} MPa")
+    with row1[1]:
+        _metric("O/H mixture ratio", f"{oxygen_hydrogen_ratio:.2f}")
+    with row1[2]:
+        _metric("Thrust", f"{point.thrust_n / 1000.0:,.1f} kN")
+    with row1[3]:
+        _metric("Delivered Isp", f"{point.delivered_isp_s:,.0f} s")
+    with row1[4]:
+        _metric("Thrust augmentation", f"{point.thrust_augmentation_factor:.3f}x")
 
-        row2 = st.columns(5)
-        with row2[0]:
-            _metric(
-                "Hot-H₂ temperature range",
-                f"{HIGH_PRESSURE_LANTR_TEMPERATURE_RANGE_K[0]:.0f}–{HIGH_PRESSURE_LANTR_TEMPERATURE_RANGE_K[1]:.0f} K",
-            )
-        with row2[1]:
-            _metric("Nozzle Ae/At", f"{HIGH_PRESSURE_LANTR_NOZZLE_AREA_RATIO:,.0f}:1")
-        with row2[2]:
-            _metric("Pressure vs 1000-psia case", "2.00×")
-        with row2[3]:
-            _metric("Pressure vs RS-25 class", "~67%")
-        with row2[4]:
-            _metric("Reference", "NASA trimodal LANTR")
-    else:
-        point = lantr_point(oxygen_hydrogen_ratio)
-        with row1[0]:
-            _metric("Reactor power", f"{BASE_REACTOR_POWER_MW:,.0f} MWt")
-        with row1[1]:
-            _metric("O/H mixture ratio", f"{point.oxygen_hydrogen_ratio:.2f}")
-        with row1[2]:
-            _metric("Thrust", f"{point.thrust_n / 1000.0:,.1f} kN")
-        with row1[3]:
-            _metric("Delivered Isp", f"{point.delivered_isp_s:,.0f} s")
-        with row1[4]:
-            _metric(
-                "Thrust augmentation",
-                f"{point.thrust_augmentation_factor:.3f}×",
-            )
+    row2 = st.columns(5)
+    with row2[0]:
+        _metric("H2 flow", f"{point.hydrogen_mass_flow_kg_s:,.2f} kg/s")
+    with row2[1]:
+        _metric("O2 flow", f"{point.oxygen_mass_flow_kg_s:,.2f} kg/s")
+    with row2[2]:
+        _metric("Total propellant flow", f"{point.total_mass_flow_kg_s:,.2f} kg/s")
+    with row2[3]:
+        _metric("Hot-H2 temperature", f"{reactor_exit_temperature_k:,.0f} K")
+    with row2[4]:
+        _metric("Nozzle Ae/At", f"{nozzle_ratio:,.0f}:1")
 
-        row2 = st.columns(5)
-        with row2[0]:
-            _metric(
-                "Reactor exit temperature",
-                f"{BASE_REACTOR_EXIT_TEMPERATURE_K:,.0f} K",
-            )
-        with row2[1]:
-            _metric(
-                "Chamber pressure",
-                f"{BASE_CHAMBER_PRESSURE_PA / 1.0e6:,.3f} MPa",
-            )
-        with row2[2]:
-            _metric("Baseline NTR Isp", f"{BASE_ISP_S:,.0f} s")
-        with row2[3]:
-            _metric("Nozzle Ae/At", f"{BASE_NOZZLE_AREA_RATIO:,.0f}:1")
-        with row2[4]:
-            _metric("Engine T/W", f"{point.engine_thrust_to_weight:.2f}")
-
-    st.subheader("LANTR thrust–Isp trade")
-    table = lantr_table()
-    trade = pd.DataFrame(
-        {
-            "O/H MR": [p.oxygen_hydrogen_ratio for p in table],
-            "Thrust kN": [p.thrust_n / 1000.0 for p in table],
-            "Isp s": [p.delivered_isp_s for p in table],
-            "Thrust augmentation": [
-                p.thrust_augmentation_factor for p in table
-            ],
-            "Engine mass kg": [p.engine_mass_kg for p in table],
-        }
+    st.caption(
+        f"Reference anchor: {reference_name} at {pressure_anchor_mpa:.3f} MPa. "
+        "Moving the pressure slider keeps the reference throat geometry fixed, "
+        "so mass flow and thrust change with pressure."
     )
-    st.dataframe(trade, hide_index=True, use_container_width=True)
+
+    st.subheader("Pressure -> flow -> thrust coupling")
+    pressure_samples = [
+        6.895,
+        10.0,
+        13.79,
+        17.5,
+        20.7,
+        25.0,
+    ]
+    rows = []
+    for pressure in pressure_samples:
+        if high_pressure:
+            sample = coupled_high_pressure_lantr_point(
+                oxygen_hydrogen_ratio,
+                pressure * 1.0e6,
+                reactor_exit_temperature_k,
+            )
+        else:
+            sample = coupled_lantr_point(
+                min(oxygen_hydrogen_ratio, 5.0),
+                pressure * 1.0e6,
+                reactor_exit_temperature_k,
+            )
+        rows.append(
+            {
+                "Pc MPa": pressure,
+                "H2 kg/s": sample.hydrogen_mass_flow_kg_s,
+                "O2 kg/s": sample.oxygen_mass_flow_kg_s,
+                "Total kg/s": sample.total_mass_flow_kg_s,
+                "Thrust kN": sample.thrust_n / 1000.0,
+                "Isp s": sample.delivered_isp_s,
+            }
+        )
+    pressure_df = pd.DataFrame(rows)
+    st.dataframe(pressure_df, hide_index=True, use_container_width=True)
     st.line_chart(
-        trade.set_index("O/H MR")[["Thrust kN", "Isp s"]],
+        pressure_df.set_index("Pc MPa")[["Thrust kN", "Total kg/s"]],
         height=320,
     )
 
@@ -320,11 +333,25 @@ def _render_lantr(
             {
                 "O/H MR": [0, 1, 3, 5, 7],
                 "Isp s (5 h / 2900 K)": [941, 772, 647, 576, 514],
-                "Engine T/W": [3.0, 4.8, 8.2, 11.0, 13.1],
+                "Reference engine T/W": [3.0, 4.8, 8.2, 11.0, 13.1],
             }
         )
-        st.subheader("2000-psia trimodal LANTR reference table")
+        st.subheader("Published 2000-psia trimodal LANTR map")
         st.dataframe(high_table, hide_index=True, use_container_width=True)
+    else:
+        table = lantr_table()
+        trade = pd.DataFrame(
+            {
+                "O/H MR": [p.oxygen_hydrogen_ratio for p in table],
+                "Thrust kN at 6.895 MPa": [p.thrust_n / 1000.0 for p in table],
+                "Isp s": [p.delivered_isp_s for p in table],
+                "Thrust augmentation": [
+                    p.thrust_augmentation_factor for p in table
+                ],
+            }
+        )
+        st.subheader("Published 1000-psia LANTR map")
+        st.dataframe(trade, hide_index=True, use_container_width=True)
 
     st.subheader("Bimodal electrical-power mode")
     power_row = st.columns(4)
@@ -350,25 +377,21 @@ def _render_lantr(
         )
 
     st.info(
-        "Operating modes: MR=0 is pure LH2 NTR propulsion. Increasing O/H "
-        "injects oxygen downstream of the nozzle throat for supersonic "
-        "afterburning, increasing thrust while reducing Isp. Bimodal power "
-        "mode is a separate low-reactor-power coast mode using Brayton "
-        "conversion, not simultaneous full-thrust operation."
+        "Classic LANTR still injects oxygen downstream of the choked throat. "
+        "This pressure sweep changes the upstream NTR stagnation/chamber state "
+        "and therefore the choked hydrogen mass flow through a fixed throat."
     )
 
     st.subheader("Public NASA sources")
     st.markdown(f"**LANTR:** {NASA_LANTR_SOURCE}")
     st.markdown(f"[NASA LANTR source]({NASA_LANTR_URL})")
     st.markdown(f"**High-pressure LANTR:** {NASA_HIGH_PRESSURE_LANTR_SOURCE}")
-    st.markdown(f"[NASA high-pressure LANTR source]({NASA_HIGH_PRESSURE_LANTR_URL})")
+    st.markdown(
+        f"[NASA high-pressure LANTR source]({NASA_HIGH_PRESSURE_LANTR_URL})"
+    )
     st.markdown(f"**Bimodal power:** {NASA_BIMODAL_SOURCE}")
     st.markdown(f"[NASA bimodal source]({NASA_BIMODAL_URL})")
 
-    st.warning(
-        "This is a public system-level reference model. It does not encode "
-        "reactor fissile loading or an exact criticality recipe."
-    )
 
 def _render_calculated(
     metadata: dict[str, Any],
@@ -576,6 +599,8 @@ def main() -> None:
         historical_preset = None
         lantr_mr = None
         lantr_architecture = None
+        lantr_pressure_mpa = None
+        lantr_temperature_k = None
         if mode == "Historical NERVA reference":
             preset_keys = list(PRESETS)
             selected = st.selectbox(
@@ -592,7 +617,26 @@ def main() -> None:
                 ("1000-psia small-engine LANTR", "2000-psia trimodal LANTR"),
                 index=1,
             )
-            max_mr = 7.0 if lantr_architecture == "2000-psia trimodal LANTR" else 5.0
+            high_pressure = lantr_architecture == "2000-psia trimodal LANTR"
+            max_mr = 7.0 if high_pressure else 5.0
+            default_pressure = 13.789515 if high_pressure else 6.894757
+            default_temperature = 2900.0 if high_pressure else BASE_REACTOR_EXIT_TEMPERATURE_K
+            lantr_pressure_mpa = st.slider(
+                "Chamber / nozzle-inlet pressure [MPa]",
+                min_value=5.0,
+                max_value=25.0,
+                value=float(default_pressure),
+                step=0.25,
+                key=f"lantr_pc_{lantr_architecture}",
+            )
+            lantr_temperature_k = st.slider(
+                "Hot-H2 reactor outlet temperature [K]",
+                min_value=2400.0,
+                max_value=3100.0,
+                value=float(default_temperature),
+                step=25.0,
+                key=f"lantr_tc_{lantr_architecture}",
+            )
             lantr_mr = st.slider(
                 "LOX augmentation O/H mixture ratio",
                 min_value=0.0,
@@ -675,7 +719,12 @@ def main() -> None:
     if historical_preset is not None:
         _render_historical(historical_preset)
     elif lantr_mr is not None:
-        _render_lantr(lantr_mr, lantr_architecture)
+        _render_lantr(
+            lantr_mr,
+            lantr_architecture,
+            lantr_pressure_mpa,
+            lantr_temperature_k,
+        )
     else:
         _render_calculated(
             metadata=metadata,
