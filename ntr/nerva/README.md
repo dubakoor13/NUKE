@@ -32,6 +32,8 @@ low-enrichment surrogate.
 - Finite axial geometry and vacuum outer boundaries.
 - Eigenvalue settings and fissionable source.
 - 3-D mesh tallies for flux, fission rate, and local heating.
+- Statepoint postprocessor that normalizes raw tallies to requested reactor thermal power.
+- NPZ, CSV, and JSON export of 3-D power-density, fission-rate, and flux fields.
 - XY material plot definitions.
 - Pure-Python geometry validation.
 - GitHub CI export checks for cluster, all-fuel core, mixed-core, and full reactor modes.
@@ -108,6 +110,33 @@ python -m ntr.nerva.build_model \
 Add `--run` only after an OpenMC executable and compatible nuclear-data
 library are configured.
 
+## Normalize a completed OpenMC statepoint
+
+After a transport run has produced a statepoint file:
+
+```bash
+python -m ntr.nerva.postprocess_statepoint \
+  statepoint.80.h5 \
+  --power-mw 100 \
+  --output build/nerva_power
+```
+
+The postprocessor uses the mesh `heating-local` score to derive the source-rate
+normalization that makes the summed voxel heating equal the requested total
+thermal power. It then applies the same source-rate scale to fission rate and
+tracklength flux.
+
+Outputs:
+
+```text
+build/nerva_power/
+├── nerva_mesh_fields.npz
+├── nerva_mesh_fields.csv
+└── metadata.json
+```
+
+Field units are W/cm3, reactions/cm3/s, and particles/cm2/s respectively.
+
 ## Current hierarchy
 
 ```text
@@ -145,7 +174,7 @@ library are configured.
 4. Repeat the fuel/tie pattern into a representative full core. **DONE**
 5. Add cylindrical filler, Be reflector, control drums, and pressure vessel. **DONE (homogenized filler / surrogate drum dimensions)**
 6. Replace homogenized filler with explicit partial-hex filler pieces.
-7. Add axial/radial power extraction and normalization.
+7. Add axial/radial power extraction and normalization. **DONE**
 8. Couple heating to a 1-D hydrogen coolant/tie-tube thermal model.
 9. Add temperature/density feedback iteration.
 10. Calibrate only against published Rover/NERVA benchmark information.
