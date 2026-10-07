@@ -31,7 +31,9 @@
     "axial_transport_mesh": true,
     "vacuum_boundary_current": true,
     "monte_carlo_uncertainty_export": true,
-    "reported_keff_diagnostic_only": true
+    "reported_keff_diagnostic_only": true,
+    "nuclear_data_preflight": true,
+    "transport_provenance_bundle": true
   },
   "geometry": {
     "fuel_element": {
@@ -94,7 +96,10 @@
     "expanded_openmc_diagnostics_construction": true,
     "openmc_diagnostics_postprocessor_cli": true,
     "openmc_diagnostics_plot_cli": true,
-    "production_nuclear_data_transport_run": false
+    "production_nuclear_data_transport_run": false,
+    "nuclear_data_inventory_parser": true,
+    "analysis_package_qa_gate": true,
+    "full_real_data_pipeline_cli": true
   },
   "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked."
 }
