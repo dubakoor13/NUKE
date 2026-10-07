@@ -5,19 +5,33 @@ from __future__ import annotations
 import openmc
 
 from .config import NervaConfig
-from .geometry import build_core_geometry
+from .geometry import build_cluster_geometry, build_core_geometry
 from .materials import build_materials
 from .tallies import build_tallies
 
 
-def build_model(config: NervaConfig | None = None) -> openmc.Model:
+def build_model(
+    config: NervaConfig | None = None,
+    assembly: str = "core",
+) -> openmc.Model:
+    """Construct either the all-fuel core demo or the 6-FE/1-TT cluster."""
     if config is None:
         config = NervaConfig()
     config.validate()
 
     material_map = build_materials(config)
     materials = openmc.Materials(list(material_map.values()))
-    geometry = build_core_geometry(config, material_map)
+
+    if assembly == "core":
+        geometry = build_core_geometry(config, material_map)
+        source_region_radius = config.core_radius_cm
+        radial_extent = config.reflector_outer_radius_cm
+    elif assembly == "cluster":
+        geometry = build_cluster_geometry(config, material_map)
+        source_region_radius = config.cluster_radius_cm
+        radial_extent = config.cluster_reflector_outer_radius_cm
+    else:
+        raise ValueError("assembly must be 'core' or 'cluster'")
 
     settings = openmc.Settings()
     settings.run_mode = "eigenvalue"
@@ -26,7 +40,7 @@ def build_model(config: NervaConfig | None = None) -> openmc.Model:
     settings.particles = config.particles
 
     half_length = 0.5 * config.active_length_cm
-    source_radius = max(0.5, 0.8 * config.core_radius_cm)
+    source_radius = max(0.5, 0.8 * source_region_radius)
     settings.source = openmc.IndependentSource(
         space=openmc.stats.Box(
             (-source_radius, -source_radius, -0.8 * half_length),
@@ -35,12 +49,12 @@ def build_model(config: NervaConfig | None = None) -> openmc.Model:
         constraints={"fissionable": True},
     )
 
-    tallies = build_tallies(config)
+    tallies = build_tallies(config, radial_extent_cm=radial_extent)
 
-    plot = openmc.SlicePlot(name="nerva_xy")
+    plot = openmc.SlicePlot(name=f"nerva_{assembly}_xy")
     plot.basis = "xy"
     plot.origin = (0.0, 0.0, 0.0)
-    width = 2.05 * config.reflector_outer_radius_cm
+    width = 2.05 * radial_extent
     plot.width = (width, width)
     plot.pixels = (1000, 1000)
     plot.color_by = "material"
