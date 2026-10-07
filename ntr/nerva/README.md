@@ -302,6 +302,48 @@ wall-temperature, and hottest-tie axial plots.
 
 
 
+
+### Equivalent-annulus fuel-sector conduction
+
+The legacy solid-temperature screening model uses a minimum-ligament slab.
+A second opt-in model now uses the deterministic area of the actual
+nearest-channel Voronoi fuel sector:
+
+```bash
+python -m ntr.nerva.solve_element_channels \
+  build/nerva_power/nerva_mesh_fields.npz \
+  build/nerva_instances/instance_power_fractions.npz \
+  --fuel-mass-flow-kg-s 2.0 \
+  --inlet-temperature-k 500 \
+  --inlet-pressure-mpa 8 \
+  --solid-conduction-model equivalent-annulus-sector \
+  --output build/nerva_element_channels_annulus
+```
+
+For each of the 19 channel sectors, the deterministic geometry layer clips the
+inner fuel hex by the same nearest-channel half-planes used by the OpenMC
+scoring partition. The local coated channel area is removed to obtain the fuel
+cross-sectional area. An equivalent outer radius is then chosen so that
+
+```text
+pi * (R_eq^2 - r_coated^2) = A_fuel,sector
+```
+
+The ZrC coating temperature rise uses the cylindrical resistance, while the
+fuel rise assumes uniform volumetric heating in an annulus with an adiabatic
+outer boundary. The axial heat input is the direct OpenMC fuel-sector wall
+power for that channel.
+
+This is a higher-fidelity reduced-order solid model, not a 2-D/3-D finite
+element conduction solution. The legacy `ligament-slab` model remains the
+default so existing runs do not silently change. The orchestrators expose the
+same choice with `--solid-conduction-model`.
+
+`validate_fuel_sector_geometry.py` checks exact hex/sector area closure and
+the equivalent-radius reconstruction. `validate_fuel_conduction.py` checks
+the annulus zero-power limit and positive temperature-rise behavior.
+
+
 ### Optional parallel-flow balancing
 
 By default, the resolved fuel coolant channels and tie-tube branches still use
