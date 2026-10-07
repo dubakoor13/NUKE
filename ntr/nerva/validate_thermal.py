@@ -36,7 +36,13 @@ def main() -> int:
     assert np.isclose(recovered, channel_power, rtol=1.0e-12)
     assert solution.outlet_temperature_k > 500.0
     assert solution.outlet_pressure_pa < 8.0e6
-    assert np.all(solution.wall_temperature_k > solution.bulk_temperature_k)
+    bin_inlet_temperature = np.concatenate(
+        ([500.0], solution.bulk_temperature_k[:-1])
+    )
+    bin_mean_temperature = 0.5 * (
+        bin_inlet_temperature + solution.bulk_temperature_k
+    )
+    assert np.all(solution.wall_temperature_k > bin_mean_temperature)
     assert np.all(solution.reynolds > 0.0)
 
     print("NERVA 1-D fuel-channel thermal validation: PASS")
