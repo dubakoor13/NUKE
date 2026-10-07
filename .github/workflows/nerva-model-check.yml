@@ -105,6 +105,12 @@ jobs:
       - name: Check NERVA numerical-convergence CLI
         run: python -m ntr.nerva.summarize_convergence --help
 
+      - name: Check NERVA uncertainty screening CLI
+        run: python -m ntr.nerva.propagate_uncertainty --help
+
+      - name: Check NERVA nuclear-data temperature audit CLI
+        run: python -m ntr.nerva.audit_nuclear_data_temperatures --help
+
       - name: Validate NERVA nuclear-data preflight parser
         run: python -m ntr.nerva.validate_nuclear_data
 
