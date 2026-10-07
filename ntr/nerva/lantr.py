@@ -88,3 +88,35 @@ def lantr_point(oxygen_hydrogen_ratio: float) -> LantrPoint:
 def lantr_table() -> list[LantrPoint]:
     """Return the exact tabulated NASA LANTR points."""
     return [lantr_point(float(mr)) for mr in _MR]
+
+
+# Higher-pressure trimodal LANTR reference published by NASA. This is a
+# separate architecture from the 1000-psia small-engine table above.
+HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA = 2000.0 * PSI_TO_PA
+HIGH_PRESSURE_LANTR_NOZZLE_AREA_RATIO = 500.0
+HIGH_PRESSURE_LANTR_BASE_THRUST_N = 15000.0 * LBF_TO_N
+HIGH_PRESSURE_LANTR_TEMPERATURE_RANGE_K = (2500.0, 2900.0)
+
+# Published 5-hour / 2900 K column for the 15-klbf trimodal LANTR.
+_HIGH_MR = np.array([0.0, 1.0, 3.0, 5.0, 7.0], dtype=float)
+_HIGH_ISP_5H_2900K = np.array([941.0, 772.0, 647.0, 576.0, 514.0], dtype=float)
+_HIGH_TW = np.array([3.0, 4.8, 8.2, 11.0, 13.1], dtype=float)
+
+NASA_HIGH_PRESSURE_LANTR_SOURCE = (
+    "NASA TM-106726 / LANTR trimodal concept: 15-klbf LANTR, "
+    "2000-psia nozzle inlet pressure, 500:1 expansion ratio"
+)
+NASA_HIGH_PRESSURE_LANTR_URL = "https://ntrs.nasa.gov/citations/19950005290"
+
+
+def high_pressure_lantr_isp(
+    oxygen_hydrogen_ratio: float,
+) -> tuple[float, float]:
+    """Return 5-hour/2900 K Isp and engine T/W for the 2000-psia LANTR."""
+    mr = float(oxygen_hydrogen_ratio)
+    if not 0.0 <= mr <= 7.0:
+        raise ValueError("oxygen_hydrogen_ratio must lie between 0 and 7")
+
+    isp = float(np.interp(mr, _HIGH_MR, _HIGH_ISP_5H_2900K))
+    thrust_to_weight = float(np.interp(mr, _HIGH_MR, _HIGH_TW))
+    return isp, thrust_to_weight
