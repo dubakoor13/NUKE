@@ -10,8 +10,9 @@ from .config import NervaConfig
 def build_tallies(
     config: NervaConfig,
     radial_extent_cm: float | None = None,
+    fuel_material: openmc.Material | None = None,
 ) -> openmc.Tallies:
-    """Create 3-D flux, fission-rate, and local-heating mesh tallies."""
+    """Create whole-reactor and fuel-only 3-D neutronics tallies."""
     half_length = 0.5 * config.active_length_cm
     r = config.reflector_outer_radius_cm if radial_extent_cm is None else radial_extent_cm
 
@@ -20,8 +21,21 @@ def build_tallies(
     mesh.lower_left = (-r, -r, -half_length)
     mesh.upper_right = (r, r, half_length)
 
-    tally = openmc.Tally(name="nerva_3d_neutronics")
-    tally.filters = [openmc.MeshFilter(mesh)]
-    tally.scores = ["flux", "fission", "heating-local"]
+    mesh_filter = openmc.MeshFilter(mesh)
 
-    return openmc.Tallies([tally])
+    neutronics = openmc.Tally(name="nerva_3d_neutronics")
+    neutronics.filters = [mesh_filter]
+    neutronics.scores = ["flux", "fission", "heating-local"]
+
+    tallies = [neutronics]
+
+    if fuel_material is not None:
+        fuel_heating = openmc.Tally(name="nerva_3d_fuel_heating")
+        fuel_heating.filters = [
+            mesh_filter,
+            openmc.MaterialFilter([fuel_material]),
+        ]
+        fuel_heating.scores = ["heating-local"]
+        tallies.append(fuel_heating)
+
+    return openmc.Tallies(tallies)
