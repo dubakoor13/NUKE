@@ -161,6 +161,49 @@ def build_tallies(
             tallies.append(tie_heating)
 
 
+
+    if geometry is not None:
+        fuel_hydrogen_cells = [
+            cell
+            for cell in geometry.get_all_cells().values()
+            if cell.name.startswith("hydrogen channel ")
+        ]
+        if fuel_hydrogen_cells:
+            fuel_h2_heating = openmc.Tally(
+                name="nerva_3d_fuel_hydrogen_heating"
+            )
+            fuel_h2_heating.filters = [
+                mesh_filter,
+                openmc.CellFilter(fuel_hydrogen_cells),
+            ]
+            fuel_h2_heating.scores = [
+                "heating-local",
+                "absorption",
+            ]
+            tallies.append(fuel_h2_heating)
+
+        tie_hydrogen_cells = [
+            cell
+            for cell in geometry.get_all_cells().values()
+            if cell.name in {
+                "tie-tube hydrogen supply",
+                "tie-tube hydrogen return",
+            }
+        ]
+        if tie_hydrogen_cells:
+            tie_h2_heating = openmc.Tally(
+                name="nerva_3d_tie_hydrogen_heating"
+            )
+            tie_h2_heating.filters = [
+                mesh_filter,
+                openmc.CellFilter(tie_hydrogen_cells),
+            ]
+            tie_h2_heating.scores = [
+                "heating-local",
+                "absorption",
+            ]
+            tallies.append(tie_h2_heating)
+
     # Repeated-cell instance diagnostics. These preserve the actual Monte Carlo
     # power distribution instead of averaging all repeated lattice placements.
     if geometry is not None and config.element_instance_tallies:
