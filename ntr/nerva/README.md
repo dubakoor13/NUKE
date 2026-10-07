@@ -116,6 +116,135 @@ Add `--run` only after an OpenMC executable and compatible nuclear-data
 library are configured.
 
 
+
+## Reproducible real-data OpenMC run
+
+The repository now has a nuclear-data preflight and provenance layer for real
+OpenMC transport runs. It does not download or modify nuclear data; it validates
+the library you explicitly provide.
+
+### 1. Check the nuclear-data library
+
+```bash
+python -m ntr.nerva.check_nuclear_data \
+  --cross-sections /path/to/cross_sections.xml \
+  --output build/nerva_nuclear_data_report.json
+```
+
+The report records:
+
+- SHA-256 of `cross_sections.xml`;
+- neutron/photon/thermal library inventory;
+- nuclides required by the current NERVA material definitions;
+- missing neutron nuclides;
+- missing referenced HDF5 files;
+- photon-data availability when photon transport is requested.
+
+No composition or enrichment is changed during this check.
+
+### 2. Export or run one explicit transport configuration
+
+Export/preflight only:
+
+```bash
+python -m ntr.nerva.run_openmc_transport \
+  --cross-sections /path/to/cross_sections.xml \
+  --assembly reactor \
+  --rings 5 \
+  --output build/nerva_transport \
+  --export-only
+```
+
+Run OpenMC:
+
+```bash
+python -m ntr.nerva.run_openmc_transport \
+  --cross-sections /path/to/cross_sections.xml \
+  --assembly reactor \
+  --rings 5 \
+  --particles 4000 \
+  --batches 80 \
+  --inactive 20 \
+  --output build/nerva_transport
+```
+
+The transport directory contains the exported XML, the nuclear-data preflight
+report and `transport_provenance.json`. The provenance file records:
+
+- Git commit when available;
+- Python/OpenMC versions;
+- platform;
+- complete run settings;
+- geometry summary;
+- cross-sections path and SHA-256;
+- SHA-256 of the exported XML inputs;
+- completed statepoint path/checksum after a run.
+
+The runner executes one supplied configuration only. It contains no automatic
+enrichment, geometry or control-drum search.
+
+### 3. Run the complete real-data pipeline
+
+```bash
+python -m ntr.nerva.run_full_openmc_analysis \
+  --cross-sections /path/to/cross_sections.xml \
+  --assembly reactor \
+  --rings 5 \
+  --power-mw 100 \
+  --fuel-mass-flow-kg-s 2.0 \
+  --tie-mass-flow-kg-s 0.40 \
+  --inlet-temperature-k 500 \
+  --inlet-pressure-mpa 8 \
+  --hydrogen-model coolprop \
+  --output-root build/nerva_full_run
+```
+
+This performs:
+
+```text
+nuclear-data preflight
+        ↓
+OpenMC input export
+        ↓
+OpenMC transport
+        ↓
+statepoint + provenance
+        ↓
+power normalization
+        ↓
+advanced OpenMC diagnostics
+        ↓
+fuel-channel thermal analysis
+        ↓
+tie-tube thermal analysis
+        ↓
+analysis-package QA
+        ↓
+plots
+```
+
+The final QA gate is:
+
+```bash
+python -m ntr.nerva.validate_analysis_outputs \
+  build/nerva_full_run/analysis
+```
+
+It checks internal consistency only:
+
+- requested vs normalized power closure;
+- OpenMC source-rate consistency;
+- fuel/tie deposited-power cross-checks;
+- material-power and spectrum-fraction closure;
+- finite Monte Carlo uncertainty statistics;
+- finite reported `k_eff` if present;
+- fuel/tie temperature and pressure trends;
+- shape/finite-value integrity of every normalized 3-D field.
+
+A PASS does not constitute historical NERVA criticality or performance
+validation.
+
+
 ## Full OpenMC diagnostics path
 
 The NERVA-derived model now uses OpenMC for substantially more than a single
