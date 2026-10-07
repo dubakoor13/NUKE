@@ -69,6 +69,7 @@ def main() -> int:
     instances_dir = root / "instances"
     element_channels_dir = root / "element_channels"
     openmc_plots_dir = root / "openmc_plots"
+    element_plots_dir = root / "element_channel_plots"
     plots_dir = root / "plots"
     root.mkdir(parents=True, exist_ok=True)
 
@@ -88,6 +89,17 @@ def main() -> int:
     )
 
     fields = power_dir / "nerva_mesh_fields.npz"
+
+    _run(
+        [
+            python,
+            "-m",
+            "ntr.nerva.export_vtk",
+            str(fields),
+            "--output",
+            str(root / "openmc_fields.vtk"),
+        ]
+    )
 
     _run(
         [
@@ -205,6 +217,26 @@ def main() -> int:
             [
                 python,
                 "-m",
+                "ntr.nerva.plot_element_channels",
+                "--summary-csv",
+                str(
+                    element_channels_dir
+                    / "element_channel_summary.csv"
+                ),
+                "--hottest-profile",
+                str(
+                    element_channels_dir
+                    / "hottest_channel_profile.csv"
+                ),
+                "--output",
+                str(element_plots_dir),
+            ]
+        )
+
+        _run(
+            [
+                python,
+                "-m",
                 "ntr.nerva.plot_results",
                 "--power-fields",
                 str(fields),
@@ -230,6 +262,7 @@ def main() -> int:
     print(f"  QA report: {root / 'analysis_validation.json'}")
     if not args.no_plots:
         print(f"  OpenMC plots: {openmc_plots_dir}")
+        print(f"  element/channel plots: {element_plots_dir}")
         print(f"  thermal plots: {plots_dir}")
     return 0
 
