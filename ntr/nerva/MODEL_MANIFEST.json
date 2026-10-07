@@ -33,7 +33,21 @@
     "monte_carlo_uncertainty_export": true,
     "reported_keff_diagnostic_only": true,
     "nuclear_data_preflight": true,
-    "transport_provenance_bundle": true
+    "transport_provenance_bundle": true,
+    "repeated_cell_instance_tallies": true,
+    "fuel_element_integrated_power": true,
+    "coolant_channel_instance_tallies": 19,
+    "tie_component_instance_tallies": true,
+    "direct_hydrogen_heating": {
+      "fuel_channels": true,
+      "tie_supply": true,
+      "tie_return": true
+    },
+    "material_energy_matrix": true,
+    "particle_heating_split_when_photon_transport_enabled": true,
+    "stochastic_volume_calculations": true,
+    "optional_tally_relative_error_trigger": true,
+    "nuclear_data_temperature_audit": true
   },
   "geometry": {
     "fuel_element": {
@@ -80,6 +94,20 @@
       "implemented": true,
       "model": "1-D ZrC conduction plus half-ligament screening estimate",
       "full_2d_or_3d_conduction": false
+    },
+    "element_channel_reconstruction": {
+      "implemented": true,
+      "fuel_element_integrated_power_source": "OpenMC Distribcell tally",
+      "channels_per_element": 19,
+      "direct_hydrogen_heating_source": "OpenMC channel-instance heating-local tally",
+      "element_specific_axial_shape": false,
+      "axial_reconstruction": "global OpenMC axial shape applied separably to integrated element/channel fractions",
+      "solid_wall_power_within_element": "equal 1/19 split pending channel-resolved solid deposition"
+    },
+    "direct_nuclear_coolant_heating": {
+      "fuel_channels": true,
+      "tie_supply_and_return": true,
+      "treatment": "adds directly to bulk enthalpy; excluded from wall heat flux"
     }
   },
   "software_validation": {
@@ -99,7 +127,24 @@
     "production_nuclear_data_transport_run": false,
     "nuclear_data_inventory_parser": true,
     "analysis_package_qa_gate": true,
-    "full_real_data_pipeline_cli": true
+    "full_real_data_pipeline_cli": true,
+    "stochastic_volume_setup": true,
+    "element_channel_reconstruction_math": true,
+    "direct_hydrogen_heating_energy_balance": true,
+    "vtk_export": true,
+    "run_comparison_cli": true,
+    "numerical_convergence_cli": true,
+    "hottest_channel_uncertainty_screening": true,
+    "nuclear_data_temperature_audit": true
   },
-  "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked."
+  "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked. Repeated-cell integrated powers are OpenMC tally outputs; element-specific axial shapes remain a separable reconstruction and are labeled as such.",
+  "results": {
+    "vtk_paraview_export": true,
+    "element_channel_heatmaps": true,
+    "material_energy_csv": true,
+    "particle_heating_csv": true,
+    "run_comparison": true,
+    "numerical_convergence_summary": true,
+    "uncertainty_screening": "±1σ integrated OpenMC tally sensitivity; not covariance-aware"
+  }
 }
