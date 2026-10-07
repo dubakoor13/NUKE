@@ -76,6 +76,15 @@ def _paths(
     return [str(value) for value in values]
 
 
+def _parent_path(path: str, instance: int) -> str:
+    """Return the repeated-universe parent path used as an element key."""
+    if path:
+        parts = path.split("->")
+        if len(parts) > 1:
+            return "->".join(parts[:-1])
+    return f"instance:{instance}"
+
+
 def _relative_error(mean: np.ndarray, std: np.ndarray) -> np.ndarray:
     result = np.zeros_like(mean, dtype=float)
     mask = np.abs(mean) > 0.0
@@ -124,6 +133,7 @@ def main() -> int:
                     {
                         "instance": i,
                         "path": paths[i],
+                        "element_key": _parent_path(paths[i], i),
                         "heating_W": (
                             heating[i] * EV_TO_J * source_rate
                         ),
@@ -168,6 +178,7 @@ def main() -> int:
                         "channel": channel_index,
                         "instance": i,
                         "path": paths[i],
+                        "element_key": _parent_path(paths[i], i),
                         "direct_nuclear_heating_W": (
                             heating[i] * EV_TO_J * source_rate
                         ),
@@ -260,6 +271,37 @@ def main() -> int:
         hottest = -1
         fuel_peaking = 0.0
 
+
+    fuel_key_to_index = {
+        str(row["element_key"]): index
+        for index, row in enumerate(fuel_rows)
+    }
+    channel_direct_matrix = np.zeros(
+        (len(fuel_rows), 19),
+        dtype=float,
+    )
+    channel_alignment_mode = (
+        "distribcell_parent_path"
+        if fuel_rows and all(str(row["path"]) for row in fuel_rows)
+        else "instance_index_fallback"
+    )
+    unmatched_channel_rows = 0
+    for row in channel_rows:
+        key = str(row["element_key"])
+        element_index = fuel_key_to_index.get(key)
+        if element_index is None:
+            fallback = int(row["instance"])
+            if 0 <= fallback < len(fuel_rows):
+                element_index = fallback
+                channel_alignment_mode = "instance_index_fallback"
+            else:
+                unmatched_channel_rows += 1
+                continue
+        channel_index = int(row["channel"]) - 1
+        channel_direct_matrix[element_index, channel_index] += float(
+            row["direct_nuclear_heating_W"]
+        )
+
     channel_power_by_number = {}
     for channel_index in range(1, 20):
         values = [
@@ -284,6 +326,7 @@ def main() -> int:
         args.output / "instance_power_fractions.npz",
         fuel_element_power_w=fuel_power,
         fuel_element_power_fraction=fuel_fractions,
+        channel_direct_nuclear_heating_w=channel_direct_matrix,
     )
 
     summary = {
@@ -296,6 +339,8 @@ def main() -> int:
         "fuel_element_max_to_mean_power": fuel_peaking,
         "hottest_fuel_element_instance": hottest,
         "hydrogen_channel_row_count": len(channel_rows),
+        "channel_element_alignment_mode": channel_alignment_mode,
+        "unmatched_channel_rows": unmatched_channel_rows,
         "direct_hydrogen_nuclear_heating_by_channel_W": (
             channel_power_by_number
         ),
