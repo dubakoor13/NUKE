@@ -24,8 +24,10 @@ import numpy as np
 from .config import NervaConfig
 from .fuel_conduction import (
     FuelSolidProperties,
+    estimate_fuel_sector_temperatures,
     estimate_fuel_solid_temperatures,
 )
+from .fuel_sector_geometry import fuel_sector_fuel_areas_cm2
 from .hydrogen_properties import make_hydrogen_property_model
 from .parallel_flow import (
     pressure_spread_fraction,
@@ -62,6 +64,19 @@ def parse_args() -> argparse.Namespace:
         "--hydrogen-model",
         choices=("constant", "coolprop"),
         default="constant",
+    )
+    parser.add_argument(
+        "--solid-conduction-model",
+        choices=(
+            "ligament-slab",
+            "equivalent-annulus-sector",
+        ),
+        default="ligament-slab",
+        help=(
+            "Solid temperature screening model. The equivalent-annulus "
+            "option preserves each Voronoi fuel-sector area and treats its "
+            "wall power as uniform volumetric generation."
+        ),
     )
     parser.add_argument(
         "--fuel-conductivity-w-m-k",
@@ -457,6 +472,14 @@ def main() -> int:
     )
 
     config = NervaConfig()
+    sector_fuel_areas_m2 = (
+        fuel_sector_fuel_areas_cm2(config) * 1.0e-4
+    )
+    if sector_fuel_areas_m2.shape != (n_channels,):
+        raise ValueError(
+            "fuel-sector geometry must provide 19 channel areas"
+        )
+
     property_model = make_hydrogen_property_model(
         args.hydrogen_model
     )
@@ -583,11 +606,25 @@ def main() -> int:
                 properties=HydrogenProperties(),
                 property_model=property_model,
             )
-            solid = estimate_fuel_solid_temperatures(
-                solution,
-                config=config,
-                properties=solid_properties,
-            )
+            if (
+                args.solid_conduction_model
+                == "equivalent-annulus-sector"
+            ):
+                solid = estimate_fuel_sector_temperatures(
+                    solution,
+                    z_edges_m=z_edges_m,
+                    sector_fuel_area_m2=float(
+                        sector_fuel_areas_m2[channel]
+                    ),
+                    config=config,
+                    properties=solid_properties,
+                )
+            else:
+                solid = estimate_fuel_solid_temperatures(
+                    solution,
+                    config=config,
+                    properties=solid_properties,
+                )
 
             max_peak = float(np.max(solid.peak_fuel_temperature_k))
             row = {
@@ -595,6 +632,9 @@ def main() -> int:
                 "channel": channel + 1,
                 "fuel_element_power_fraction": float(
                     fuel_fraction[element]
+                ),
+                "sector_fuel_area_m2": float(
+                    sector_fuel_areas_m2[channel]
                 ),
                 "mass_flow_kg_s": float(
                     branch_mass_flow[element, channel]
@@ -766,6 +806,15 @@ def main() -> int:
         "hottest_channel": hottest,
         "inlet_temperature_K": args.inlet_temperature_k,
         "inlet_pressure_Pa": args.inlet_pressure_mpa * 1.0e6,
+        "solid_conduction_model": (
+            args.solid_conduction_model
+        ),
+        "fuel_sector_area_min_m2": float(
+            np.min(sector_fuel_areas_m2)
+        ),
+        "fuel_sector_area_max_m2": float(
+            np.max(sector_fuel_areas_m2)
+        ),
         "fuel_matrix_conductivity_W_m_K": (
             args.fuel_conductivity_w_m_k
         ),
@@ -807,6 +856,13 @@ def main() -> int:
                 "The Voronoi fuel-sector assignment is a scoring/thermal "
                 "partition: all sector cells use the same fuel material and "
                 "internal boundaries are transmission-only."
+            ),
+            (
+                "The ligament-slab solid-temperature estimate is the legacy "
+                "default. The optional equivalent-annulus-sector model "
+                "preserves the deterministic Voronoi fuel area and uses "
+                "uniform volumetric heating with an adiabatic equivalent "
+                "outer boundary; it is still reduced-order, not 2-D FEA."
             ),
             (
                 "Channel-specific OpenMC direct-H2 axial shapes are used "
