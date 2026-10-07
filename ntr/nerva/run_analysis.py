@@ -66,6 +66,7 @@ def main() -> int:
     fuel_dir = root / "fuel"
     tie_dir = root / "tie"
     diagnostics_dir = root / "openmc_diagnostics"
+    openmc_plots_dir = root / "openmc_plots"
     plots_dir = root / "plots"
     root.mkdir(parents=True, exist_ok=True)
 
@@ -146,6 +147,20 @@ def main() -> int:
             [
                 python,
                 "-m",
+                "ntr.nerva.plot_openmc_diagnostics",
+                "--diagnostics",
+                str(diagnostics_dir / "openmc_diagnostics.npz"),
+                "--material-csv",
+                str(diagnostics_dir / "material_transport.csv"),
+                "--output",
+                str(openmc_plots_dir),
+            ]
+        )
+
+        _run(
+            [
+                python,
+                "-m",
                 "ntr.nerva.plot_results",
                 "--power-fields",
                 str(fields),
@@ -167,7 +182,8 @@ def main() -> int:
     print(f"  fuel thermal: {fuel_dir}")
     print(f"  tie thermal: {tie_dir}")
     if not args.no_plots:
-        print(f"  plots: {plots_dir}")
+        print(f"  OpenMC plots: {openmc_plots_dir}")
+        print(f"  thermal plots: {plots_dir}")
     return 0
 
 
