@@ -53,6 +53,14 @@ class NervaConfig:
     inactive: int = 20
     particles: int = 4000
 
+    # OpenMC diagnostics / transport controls. These increase observability
+    # only; they do not alter enrichment, geometry, or control settings.
+    photon_transport: bool = False
+    diagnostic_energy_groups: int = 80
+    axial_mesh_bins: int = 96
+    entropy_mesh_xy: int = 16
+    entropy_mesh_z: int = 8
+
     @property
     def fuel_edge_length_cm(self) -> float:
         return self.fuel_flat_to_flat_cm / math.sqrt(3.0)
@@ -157,6 +165,12 @@ class NervaConfig:
             raise ValueError("inactive batches must be less than total batches")
         if self.particles < 100:
             raise ValueError("particles should be at least 100")
+        if self.diagnostic_energy_groups < 8:
+            raise ValueError("diagnostic_energy_groups must be >= 8")
+        if self.axial_mesh_bins < 8:
+            raise ValueError("axial_mesh_bins must be >= 8")
+        if self.entropy_mesh_xy < 2 or self.entropy_mesh_z < 2:
+            raise ValueError("entropy mesh dimensions must be >= 2")
         if self.control_drum_count < 3:
             raise ValueError("control_drum_count must be at least 3")
         if self.control_drum_radius_cm <= 0.0:
