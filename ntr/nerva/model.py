@@ -79,6 +79,11 @@ def build_model(
     )
     settings.entropy_mesh = entropy_mesh
 
+    if config.tally_rel_err_trigger is not None:
+        settings.trigger_active = True
+        settings.trigger_max_batches = config.trigger_max_batches
+        settings.trigger_batch_interval = config.trigger_batch_interval
+
     tallies = build_tallies(
         config,
         radial_extent_cm=radial_extent,
