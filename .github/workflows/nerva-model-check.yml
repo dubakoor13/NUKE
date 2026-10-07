@@ -87,6 +87,9 @@ jobs:
       - name: Check reproducible NERVA transport runner CLI
         run: python -m ntr.nerva.run_openmc_transport --help
 
+      - name: Check full real-data NERVA OpenMC pipeline CLI
+        run: python -m ntr.nerva.run_full_openmc_analysis --help
+
       - name: Check NERVA analysis QA gate CLI
         run: python -m ntr.nerva.validate_analysis_outputs --help
 
