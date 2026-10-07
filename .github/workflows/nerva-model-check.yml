@@ -47,8 +47,8 @@ jobs:
       - name: Validate state-dependent hydrogen property backend
         run: python -m ntr.nerva.validate_hydrogen_backend
 
-      - name: Install optional CoolProp backend
-        run: python -m pip install CoolProp
+      - name: Install optional analysis dependencies
+        run: python -m pip install CoolProp matplotlib
 
       - name: Validate CoolProp hydrogen backend
         run: python -m ntr.nerva.validate_coolprop
@@ -64,6 +64,41 @@ jobs:
 
       - name: Check NERVA result plotting CLI
         run: python -m ntr.nerva.plot_results --help
+
+      - name: Run synthetic end-to-end thermal pipeline
+        run: |
+          python -m ntr.nerva.make_synthetic_fields \
+            --output build/nerva_synthetic/nerva_mesh_fields.npz
+          python -m ntr.nerva.solve_thermal \
+            build/nerva_synthetic/nerva_mesh_fields.npz \
+            --rings 5 \
+            --fuel-mass-flow-kg-s 2.0 \
+            --inlet-temperature-k 500 \
+            --inlet-pressure-mpa 8 \
+            --hydrogen-model constant \
+            --output build/nerva_synthetic/fuel
+          python -m ntr.nerva.solve_tie_tube \
+            build/nerva_synthetic/nerva_mesh_fields.npz \
+            --rings 5 \
+            --tie-mass-flow-kg-s 0.40 \
+            --inlet-temperature-k 500 \
+            --inlet-pressure-mpa 8 \
+            --hydrogen-model constant \
+            --output build/nerva_synthetic/tie
+          python -m ntr.nerva.plot_results \
+            --power-fields build/nerva_synthetic/nerva_mesh_fields.npz \
+            --fuel-profile build/nerva_synthetic/fuel/fuel_channel_profile.csv \
+            --tie-supply-profile build/nerva_synthetic/tie/tie_supply_profile.csv \
+            --tie-return-profile build/nerva_synthetic/tie/tie_return_profile.csv \
+            --output build/nerva_synthetic/plots
+
+      - name: Verify synthetic pipeline products
+        run: |
+          test -s build/nerva_synthetic/fuel/thermal_summary.json
+          test -s build/nerva_synthetic/tie/tie_thermal_summary.json
+          test -s build/nerva_synthetic/plots/total_power_midplane.png
+          test -s build/nerva_synthetic/plots/fuel_temperatures.png
+          test -s build/nerva_synthetic/plots/tie_temperatures.png
 
       - name: Export seven-position cluster
         run: |
