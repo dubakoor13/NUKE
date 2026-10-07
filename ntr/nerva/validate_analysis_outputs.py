@@ -255,6 +255,29 @@ def main() -> int:
                 abs_tol=1.0e-8,
             )
 
+    source_convergence = diagnostics.get(
+        "source_convergence",
+        {},
+    )
+    for group_name in (
+        "active_k_batch_metrics",
+        "active_entropy_metrics",
+    ):
+        metrics = source_convergence.get(group_name, {})
+        for key in (
+            "window_mean",
+            "window_std",
+            "window_range",
+            "window_relative_range",
+            "window_slope_per_index",
+        ):
+            value = metrics.get(key)
+            if value is not None:
+                _finite_number(
+                    value,
+                    f"source_convergence.{group_name}.{key}",
+                )
+
     keff = diagnostics.get("keff", {})
     keff_mean = keff.get("mean")
     keff_std = keff.get("std_dev")
@@ -421,6 +444,7 @@ def main() -> int:
             "energy_deposition_diagnostics_finite": True,
             "spectral_fraction_closure": True,
             "keff_report_finite_if_present": True,
+            "source_convergence_metrics_finite": True,
             "fuel_temperature_pressure_trends": True,
             "tie_temperature_pressure_trends": True,
             "normalized_field_arrays_finite": True,
