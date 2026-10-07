@@ -80,6 +80,12 @@ jobs:
       - name: Validate four requested propulsion families
         run: python -m ntr.nerva.validate_propulsion_modes
 
+      - name: Validate generic nuclear-airbreathing demonstrator
+        run: python -m ntr.airbreathing.validate_nuclear_ramjet
+
+      - name: Check nuclear-airbreathing CLI
+        run: python -m ntr.airbreathing.run_nuclear_ramjet --help
+
       - name: Export four requested propulsion families
         run: python -m ntr.nerva.run_propulsion_modes
 
