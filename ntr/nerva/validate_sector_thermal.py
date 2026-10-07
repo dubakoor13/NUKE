@@ -174,6 +174,8 @@ def main() -> int:
                 "8",
                 "--hydrogen-model",
                 "constant",
+                "--solid-conduction-model",
+                "equivalent-annulus-sector",
                 "--balance-flow",
                 "--flow-balance-max-iterations",
                 "3",
@@ -194,6 +196,15 @@ def main() -> int:
             ).read_text(encoding="utf-8")
         )
         assert balanced["flow_balance_enabled"] is True
+        assert (
+            balanced["solid_conduction_model"]
+            == "equivalent-annulus-sector"
+        )
+        assert balanced["fuel_sector_area_min_m2"] > 0.0
+        assert (
+            balanced["fuel_sector_area_max_m2"]
+            >= balanced["fuel_sector_area_min_m2"]
+        )
         assert balanced["flow_balance_iterations"] >= 1
         assert np.isclose(
             balanced[
