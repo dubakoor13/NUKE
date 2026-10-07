@@ -44,6 +44,12 @@ jobs:
       - name: Check thermal coupling CLI
         run: python -m ntr.nerva.solve_thermal --help
 
+      - name: Validate NERVA tie-tube counterflow
+        run: python -m ntr.nerva.validate_tie_tube
+
+      - name: Check tie-tube thermal CLI
+        run: python -m ntr.nerva.solve_tie_tube --help
+
       - name: Export seven-position cluster
         run: |
           python -m ntr.nerva.build_model \
