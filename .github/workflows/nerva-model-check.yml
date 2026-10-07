@@ -111,6 +111,9 @@ jobs:
       - name: Check NERVA nuclear-data temperature audit CLI
         run: python -m ntr.nerva.audit_nuclear_data_temperatures --help
 
+      - name: Check NERVA engineering report CLI
+        run: python -m ntr.nerva.generate_run_report --help
+
       - name: Validate NERVA nuclear-data preflight parser
         run: python -m ntr.nerva.validate_nuclear_data
 
