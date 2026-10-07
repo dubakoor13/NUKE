@@ -74,6 +74,12 @@ jobs:
       - name: Validate physics-based NERVA engine solver
         run: python -m ntr.nerva.validate_nerva_engine
 
+      - name: Validate four alternative-propellant NTP cases
+        run: python -m ntr.nerva.validate_alternative_propellant_cases
+
+      - name: Reconstruct four alternative-propellant NTP cases
+        run: python -m ntr.nerva.run_alternative_propellant_cases
+
       - name: Check physics-based NERVA engine CLI
         run: python -m ntr.nerva.run_nerva_engine --help
 
