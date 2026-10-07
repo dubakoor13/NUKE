@@ -37,6 +37,7 @@ low-enrichment surrogate.
 - NPZ, CSV, and JSON export of 3-D power-density, fuel-power, fission-rate, and flux fields.
 - First-pass 1-D hydrogen fuel-channel solver with energy balance, heat-transfer coefficient, wall-temperature estimate, Reynolds number, and Darcy pressure loss.
 - Explicit counterflow tie-tube thermal model with central H2 supply and annular H2 return paths.
+- First-pass ZrC + fuel-ligament conduction estimate for fuel-surface and local peak-fuel temperature.
 - XY material plot definitions.
 - Pure-Python geometry validation.
 - GitHub CI export checks for cluster, all-fuel core, mixed-core, and full reactor modes.
@@ -186,9 +187,14 @@ override it explicitly. The supply and return paths preserve separate
 temperature, pressure, Reynolds-number, wall-temperature, heat-flux and
 heat-transfer-coefficient histories.
 
-Real-gas hydrogen properties, fuel-matrix conduction, radiation, local
-fuel-element power peaking, turn losses and temperature feedback remain
-next-fidelity layers.
+The fuel-channel output now also estimates solid temperatures by adding
+1-D conduction through the channel ZrC coating and a symmetry-slab rise across
+half of the minimum fuel ligament. Fuel and ZrC conductivities are explicit CLI
+parameters so this screening model does not hide material assumptions.
+
+Real-gas hydrogen properties, 2-D/3-D fuel conduction, radiation, local
+fuel-element power peaking, tie-tube turn losses and temperature feedback
+remain next-fidelity layers.
 
 ## Current hierarchy
 
@@ -230,6 +236,7 @@ next-fidelity layers.
 7. Add axial/radial power extraction and normalization. **DONE**
 8. Couple fuel heating to a 1-D hydrogen fuel-channel thermal model. **DONE (constant-property surrogate)**
 9. Add explicit tie-tube supply/return thermal-hydraulic paths. **DONE (constant-property surrogate)**
-10. Add real-gas H2 properties and local fuel-element/tie-tube power peaking.
-11. Add fuel-matrix conduction and temperature/density feedback iteration.
-12. Calibrate only against published Rover/NERVA benchmark information.
+10. Add first-pass channel-coating/fuel-ligament conduction. **DONE (screening estimate)**
+11. Add real-gas H2 properties and local fuel-element/tie-tube power peaking.
+12. Add 2-D/3-D fuel conduction and temperature/density feedback iteration.
+13. Calibrate only against published Rover/NERVA benchmark information.
