@@ -66,6 +66,36 @@ def parse_args() -> argparse.Namespace:
         help="Number of fine axial bins for OpenMC profile tallies.",
     )
     parser.add_argument(
+        "--no-element-instance-tallies",
+        action="store_true",
+        help="Disable repeated fuel/tie instance tallies.",
+    )
+    parser.add_argument(
+        "--no-channel-instance-tallies",
+        action="store_true",
+        help="Disable 19-channel repeated-cell tallies.",
+    )
+    parser.add_argument(
+        "--target-rel-error",
+        type=float,
+        default=None,
+        help=(
+            "Optional heating-local relative-error tally trigger. "
+            "When set, OpenMC may continue beyond --batches up to "
+            "--trigger-max-batches."
+        ),
+    )
+    parser.add_argument(
+        "--trigger-max-batches",
+        type=int,
+        default=500,
+    )
+    parser.add_argument(
+        "--trigger-batch-interval",
+        type=int,
+        default=5,
+    )
+    parser.add_argument(
         "--run",
         action="store_true",
         help="Run OpenMC after exporting XML (requires executable + nuclear data).",
@@ -82,6 +112,11 @@ def main() -> int:
         photon_transport=args.photon_transport,
         diagnostic_energy_groups=args.diagnostic_energy_groups,
         axial_mesh_bins=args.axial_mesh_bins,
+        element_instance_tallies=not args.no_element_instance_tallies,
+        channel_instance_tallies=not args.no_channel_instance_tallies,
+        tally_rel_err_trigger=args.target_rel_error,
+        trigger_max_batches=args.trigger_max_batches,
+        trigger_batch_interval=args.trigger_batch_interval,
     )
     config.validate()
 
@@ -103,6 +138,9 @@ def main() -> int:
     print(f"  photon transport: {config.photon_transport}")
     print(f"  diagnostic energy groups: {config.diagnostic_energy_groups}")
     print(f"  axial diagnostic bins: {config.axial_mesh_bins}")
+    print(f"  element instance tallies: {config.element_instance_tallies}")
+    print(f"  channel instance tallies: {config.channel_instance_tallies}")
+    print(f"  tally relative-error trigger: {config.tally_rel_err_trigger}")
     print(f"  output: {args.output}")
 
     if args.run:
