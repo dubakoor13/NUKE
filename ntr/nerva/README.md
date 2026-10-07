@@ -161,10 +161,27 @@ python -m ntr.nerva.solve_thermal \
   --output build/nerva_thermal
 ```
 
-The current fuel thermal model distributes fuel-deposited power equally over
-all 19 coolant holes in every fuel element, then solves one representative
-channel. It uses constant surrogate H2 properties, ideal-gas density,
-Dittus-Boelter heat transfer, and Darcy-Weisbach pressure loss.
+The fuel thermal model distributes fuel-deposited power equally over all 19
+coolant holes in every fuel element, then solves one representative channel.
+The default hydrogen model remains the constant-property ideal-gas surrogate.
+An optional state-dependent backend is now available through CoolProp:
+
+```bash
+python -m pip install CoolProp
+python -m ntr.nerva.solve_thermal \
+  build/nerva_power/nerva_mesh_fields.npz \
+  --rings 5 \
+  --fuel-mass-flow-kg-s 1.0 \
+  --inlet-temperature-k 500 \
+  --inlet-pressure-mpa 8 \
+  --hydrogen-model coolprop \
+  --output build/nerva_thermal_real_h2
+```
+
+With the CoolProp backend, density, heat capacity, viscosity, conductivity, and
+Prandtl number are re-evaluated from the local temperature and pressure during
+the axial march. Dittus-Boelter heat transfer and Darcy-Weisbach pressure loss
+remain the governing correlations.
 
 ## Solve the tie-tube counterflow path
 
@@ -177,6 +194,7 @@ python -m ntr.nerva.solve_tie_tube \
   --tie-mass-flow-kg-s 0.20 \
   --inlet-temperature-k 500 \
   --inlet-pressure-mpa 8 \
+  --hydrogen-model constant \
   --output build/nerva_tie_thermal
 ```
 
@@ -255,6 +273,7 @@ plots. Matplotlib is loaded only when plots are actually requested.
 8. Couple fuel heating to a 1-D hydrogen fuel-channel thermal model. **DONE (constant-property surrogate)**
 9. Add explicit tie-tube supply/return thermal-hydraulic paths. **DONE (constant-property surrogate)**
 10. Add first-pass channel-coating/fuel-ligament conduction. **DONE (screening estimate)**
-11. Add real-gas H2 properties and local fuel-element/tie-tube power peaking.
-12. Add 2-D/3-D fuel conduction and temperature/density feedback iteration.
-13. Calibrate only against published Rover/NERVA benchmark information.
+11. Add optional state-dependent / real-fluid H2 properties. **DONE (CoolProp backend; optional dependency)**
+12. Add local fuel-element/tie-tube power peaking.
+13. Add 2-D/3-D fuel conduction and temperature/density feedback iteration.
+14. Calibrate only against published Rover/NERVA benchmark information.
