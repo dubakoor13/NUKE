@@ -28,6 +28,15 @@ def parse_args() -> argparse.Namespace:
         default="constant",
     )
     parser.add_argument(
+        "--volume-results",
+        type=Path,
+        default=None,
+        help=(
+            "Optional volume_results.json from calculate_volumes. "
+            "Used to normalize repeated-cell flux tallies."
+        ),
+    )
+    parser.add_argument(
         "--output-root",
         type=Path,
         default=Path("build/nerva_analysis"),
@@ -114,18 +123,21 @@ def main() -> int:
         ]
     )
 
-    _run(
-        [
-            python,
-            "-m",
-            "ntr.nerva.postprocess_instance_tallies",
-            str(args.statepoint),
-            "--power-metadata",
-            str(power_dir / "metadata.json"),
-            "--output",
-            str(instances_dir),
-        ]
-    )
+    instance_command = [
+        python,
+        "-m",
+        "ntr.nerva.postprocess_instance_tallies",
+        str(args.statepoint),
+        "--power-metadata",
+        str(power_dir / "metadata.json"),
+        "--output",
+        str(instances_dir),
+    ]
+    if args.volume_results is not None:
+        instance_command.extend(
+            ["--volume-results", str(args.volume_results)]
+        )
+    _run(instance_command)
 
     _run(
         [
