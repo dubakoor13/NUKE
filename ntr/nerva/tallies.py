@@ -182,14 +182,48 @@ def build_tallies(
             ]
             tallies.append(fuel_h2_heating)
 
-        tie_hydrogen_cells = [
+        tie_supply_hydrogen_cells = [
             cell
             for cell in geometry.get_all_cells().values()
-            if cell.name in {
-                "tie-tube hydrogen supply",
-                "tie-tube hydrogen return",
-            }
+            if cell.name == "tie-tube hydrogen supply"
         ]
+        tie_return_hydrogen_cells = [
+            cell
+            for cell in geometry.get_all_cells().values()
+            if cell.name == "tie-tube hydrogen return"
+        ]
+        tie_hydrogen_cells = (
+            tie_supply_hydrogen_cells
+            + tie_return_hydrogen_cells
+        )
+        if tie_supply_hydrogen_cells:
+            tie_supply_h2 = openmc.Tally(
+                name="nerva_3d_tie_supply_hydrogen_heating"
+            )
+            tie_supply_h2.filters = [
+                mesh_filter,
+                openmc.CellFilter(tie_supply_hydrogen_cells),
+            ]
+            tie_supply_h2.scores = [
+                "heating-local",
+                "absorption",
+            ]
+            tallies.append(tie_supply_h2)
+
+        if tie_return_hydrogen_cells:
+            tie_return_h2 = openmc.Tally(
+                name="nerva_3d_tie_return_hydrogen_heating"
+            )
+            tie_return_h2.filters = [
+                mesh_filter,
+                openmc.CellFilter(tie_return_hydrogen_cells),
+            ]
+            tie_return_h2.scores = [
+                "heating-local",
+                "absorption",
+            ]
+            tallies.append(tie_return_h2)
+
         if tie_hydrogen_cells:
             tie_h2_heating = openmc.Tally(
                 name="nerva_3d_tie_hydrogen_heating"
