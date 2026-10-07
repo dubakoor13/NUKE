@@ -9,6 +9,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .config import NervaConfig
+from .fuel_conduction import FuelSolidProperties, estimate_fuel_solid_temperatures
 from .layout import mixed_core_counts
 from .thermal import HydrogenProperties, solve_fuel_channel
 
@@ -34,15 +36,19 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Total hydrogen mass flow assigned to fuel-element channels.",
     )
+    parser.add_argument("--inlet-temperature-k", type=float, required=True)
+    parser.add_argument("--inlet-pressure-mpa", type=float, required=True)
     parser.add_argument(
-        "--inlet-temperature-k",
+        "--fuel-conductivity-w-m-k",
         type=float,
-        required=True,
+        default=25.0,
+        help="Constant fuel-matrix thermal conductivity surrogate.",
     )
     parser.add_argument(
-        "--inlet-pressure-mpa",
+        "--zrc-conductivity-w-m-k",
         type=float,
-        required=True,
+        default=20.0,
+        help="Constant channel-coating ZrC thermal conductivity surrogate.",
     )
     parser.add_argument(
         "--output",
@@ -103,6 +109,7 @@ def main() -> int:
     fuel_channels = fuel_elements * 19
     mass_flow_per_channel = args.fuel_mass_flow_kg_s / fuel_channels
 
+    config = NervaConfig(core_rings=args.rings)
     solution = solve_fuel_channel(
         axial_total_fuel_power_w=axial_fuel_power_w,
         z_edges_m=z_edges_m,
@@ -110,8 +117,17 @@ def main() -> int:
         mass_flow_per_channel_kg_s=mass_flow_per_channel,
         inlet_temperature_k=args.inlet_temperature_k,
         inlet_pressure_pa=args.inlet_pressure_mpa * 1.0e6,
-        channel_diameter_m=0.2565 / 100.0,
+        channel_diameter_m=config.coolant_bore_diameter_cm / 100.0,
         properties=HydrogenProperties(),
+    )
+
+    solid = estimate_fuel_solid_temperatures(
+        solution,
+        config=config,
+        properties=FuelSolidProperties(
+            fuel_matrix_conductivity_w_m_k=args.fuel_conductivity_w_m_k,
+            zrc_conductivity_w_m_k=args.zrc_conductivity_w_m_k,
+        ),
     )
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -122,7 +138,9 @@ def main() -> int:
             (
                 "z_m",
                 "bulk_temperature_K",
-                "wall_temperature_K",
+                "coolant_wall_temperature_K",
+                "fuel_surface_temperature_K",
+                "peak_fuel_temperature_K",
                 "pressure_Pa",
                 "reynolds",
                 "htc_W_m2_K",
@@ -134,6 +152,8 @@ def main() -> int:
             solution.z_center_m,
             solution.bulk_temperature_k,
             solution.wall_temperature_k,
+            solid.fuel_surface_temperature_k,
+            solid.peak_fuel_temperature_k,
             solution.pressure_pa,
             solution.reynolds,
             solution.heat_transfer_coefficient_w_m2_k,
@@ -153,11 +173,26 @@ def main() -> int:
         "outlet_temperature_K": solution.outlet_temperature_k,
         "inlet_pressure_Pa": args.inlet_pressure_mpa * 1.0e6,
         "outlet_pressure_Pa": solution.outlet_pressure_pa,
-        "maximum_wall_temperature_K": float(np.max(solution.wall_temperature_k)),
+        "maximum_coolant_wall_temperature_K": float(
+            np.max(solution.wall_temperature_k)
+        ),
+        "maximum_fuel_surface_temperature_K": float(
+            np.max(solid.fuel_surface_temperature_k)
+        ),
+        "maximum_peak_fuel_temperature_K": float(
+            np.max(solid.peak_fuel_temperature_k)
+        ),
+        "effective_half_ligament_m": solid.effective_half_ligament_m,
+        "fuel_matrix_conductivity_W_m_K": args.fuel_conductivity_w_m_k,
+        "zrc_conductivity_W_m_K": args.zrc_conductivity_w_m_k,
         "hydrogen_property_model": "constant-property ideal-gas surrogate",
+        "solid_conduction_model": "1-D ZrC + half-ligament symmetry-slab estimate",
     }
     summary_path = args.output / "thermal_summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    summary_path.write_text(
+        json.dumps(summary, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     print("NERVA representative fuel-channel thermal solve complete:")
     print(f"  fuel elements: {fuel_elements}")
@@ -165,7 +200,10 @@ def main() -> int:
     print(f"  fuel power: {summary['fuel_power_W'] / 1.0e6:.6g} MW")
     print(f"  outlet temperature: {solution.outlet_temperature_k:.3f} K")
     print(f"  outlet pressure: {solution.outlet_pressure_pa / 1.0e6:.6f} MPa")
-    print(f"  maximum wall temperature: {summary['maximum_wall_temperature_K']:.3f} K")
+    print(
+        f"  maximum peak fuel temperature: "
+        f"{summary['maximum_peak_fuel_temperature_K']:.3f} K"
+    )
     print(f"  output: {args.output}")
     return 0
 
