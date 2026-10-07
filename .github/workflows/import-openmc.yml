@@ -30,28 +30,28 @@ jobs:
         run: |
           rsync -a --delete \
             --exclude='.git/' \
-            --exclude='.github/workflows/import-openmc.yml' \
+            --exclude='.github/workflows/' \
             /tmp/openmc/ ./
 
           UPSTREAM_SHA="$(cat /tmp/openmc-upstream-sha)"
-          cat > UPSTREAM.md <<EOF
-          # Upstream provenance
+          {
+            echo "# Upstream provenance"
+            echo
+            echo "This repository contains a snapshot of the public OpenMC repository."
+            echo
+            echo "- Upstream repository: https://github.com/openmc-dev/openmc"
+            echo "- Upstream branch: develop"
+            echo "- Imported commit: ${UPSTREAM_SHA}"
+            echo "- License: MIT (see LICENSE)"
+            echo
+            echo "OpenMC's original copyright, license, citation, and source files are retained."
+          } > UPSTREAM.md
 
-          This repository contains a snapshot of the public OpenMC repository.
-
-          - Upstream repository: https://github.com/openmc-dev/openmc
-          - Upstream branch: `develop`
-          - Imported commit: `${UPSTREAM_SHA}`
-          - License: MIT (see `LICENSE`)
-
-          OpenMC's original copyright, license, citation, and source files are retained.
-          EOF
-
-      - name: Commit full snapshot
+      - name: Commit full snapshot except upstream workflow files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add -f -A
           if git diff --cached --quiet; then
             echo "No changes to import."
             exit 0
