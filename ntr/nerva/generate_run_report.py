@@ -257,7 +257,17 @@ def main() -> int:
                 + str(element.get("direct_channel_axial_openmc_used"))
             ),
             "- Global axial separability is retained only as a legacy-statepoint fallback.",
-            "- Solid wall power is divided equally among the 19 coolant channels within one fuel element.",
+            (
+                "- Direct OpenMC fuel-sector wall-power assignment used: "
+                + str(
+                    element.get(
+                        "direct_fuel_sector_openmc_used"
+                    )
+                )
+            ),
+            "- Current statepoints use 19 nearest-channel same-material fuel sectors for channel-associated solid heating.",
+            "- Equal 1/19 solid-wall sharing is retained only as a legacy-statepoint fallback.",
+            "- Assigning each Voronoi fuel sector's heat to its associated coolant channel remains a thermal partition model.",
             "- Direct H2 nuclear heating is tallied separately and added to fluid enthalpy, not wall heat flux.",
             "- Tie-tube solid and supply/return H2 axial shapes are instance-resolved OpenMC tallies for current statepoints.",
             "- Total tie flow is currently divided equally among tie-tube instances.",
