@@ -75,6 +75,12 @@ jobs:
       - name: Validate physics-based NERVA engine solver
         run: python -m ntr.nerva.validate_nerva_engine
 
+      - name: Validate expanded NERVA OpenMC diagnostics
+        run: python -m ntr.nerva.validate_openmc_diagnostics
+
+      - name: Check NERVA OpenMC diagnostics postprocessor CLI
+        run: python -m ntr.nerva.postprocess_openmc_diagnostics --help
+
       - name: Validate four alternative-propellant NTP cases
         run: python -m ntr.nerva.validate_alternative_propellant_cases
 
