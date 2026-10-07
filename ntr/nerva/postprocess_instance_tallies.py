@@ -33,6 +33,16 @@ def parse_args() -> argparse.Namespace:
         help="metadata.json from postprocess_statepoint.",
     )
     parser.add_argument(
+        "--volume-results",
+        type=Path,
+        default=None,
+        help=(
+            "Optional volume_results.json from calculate_volumes. When "
+            "provided, integrated cell flux tallies are divided by average "
+            "repeated-cell volume to obtain cm^-2 s^-1."
+        ),
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=Path("build/nerva_instances"),
@@ -99,6 +109,20 @@ def main() -> int:
     metadata = json.loads(
         args.power_metadata.read_text(encoding="utf-8")
     )
+
+    repeated_cell_volumes: dict[str, float] = {}
+    if args.volume_results is not None:
+        volume_payload = json.loads(
+            args.volume_results.read_text(encoding="utf-8")
+        )
+        repeated_cell_volumes = {
+            str(row["name"]): float(
+                row["total_repeated_volume_cm3"]
+            )
+            for row in volume_payload[
+                "repeated_cell_total_volumes"
+            ]
+        }
     source_rate = float(metadata["source_rate_per_s"])
     if source_rate <= 0.0:
         raise ValueError("source_rate_per_s must be positive")
@@ -148,6 +172,7 @@ def main() -> int:
                         "flux_tally_x_source_rate": (
                             flux[i] * source_rate
                         ),
+                        "flux_cm2_s": None,
                     }
                 )
 
@@ -192,6 +217,7 @@ def main() -> int:
                         "flux_tally_x_source_rate": (
                             flux[i] * source_rate
                         ),
+                        "flux_cm2_s": None,
                     }
                 )
 
@@ -230,6 +256,41 @@ def main() -> int:
                         ),
                     }
                 )
+
+
+    if fuel_rows and "fuel matrix" in repeated_cell_volumes:
+        avg_volume = (
+            repeated_cell_volumes["fuel matrix"]
+            / len(fuel_rows)
+        )
+        if avg_volume > 0.0:
+            for row in fuel_rows:
+                row["flux_cm2_s"] = (
+                    float(row["flux_tally_x_source_rate"])
+                    / avg_volume
+                )
+
+    for channel_index in range(1, 20):
+        name = f"hydrogen channel {channel_index}"
+        channel_specific_rows = [
+            row
+            for row in channel_rows
+            if int(row["channel"]) == channel_index
+        ]
+        if (
+            channel_specific_rows
+            and name in repeated_cell_volumes
+        ):
+            avg_volume = (
+                repeated_cell_volumes[name]
+                / len(channel_specific_rows)
+            )
+            if avg_volume > 0.0:
+                for row in channel_specific_rows:
+                    row["flux_cm2_s"] = (
+                        float(row["flux_tally_x_source_rate"])
+                        / avg_volume
+                    )
 
     def write_csv(path: Path, rows: list[dict]) -> None:
         if not rows:
@@ -377,9 +438,10 @@ def main() -> int:
                 "reconstruction model for axial thermal coupling."
             ),
             "flux_units": (
-                "flux_tally_x_source_rate is the raw cell-integrated "
-                "tracklength tally scaled by source rate; divide by a "
-                "validated cell volume before interpreting as cm^-2 s^-1."
+                "flux_tally_x_source_rate is the cell-integrated "
+                "tracklength tally scaled by source rate. flux_cm2_s is "
+                "populated only when stochastic repeated-cell volumes are "
+                "provided and uses average volume per repeated instance."
             ),
         },
     }
