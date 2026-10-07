@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .config import NervaConfig
-from .thermal import HydrogenProperties, friction_factor, nusselt_number
+from .thermal import HydrogenProperties, evaluate_hydrogen_state, friction_factor, nusselt_number
 
 
 @dataclass(frozen=True)
@@ -77,6 +77,7 @@ def _solve_duct_path(
     hydraulic_diameter_m: float,
     heated_perimeter_m: float,
     properties: HydrogenProperties,
+    property_model,
     roughness_m: float,
 ) -> DuctPathSolution:
     power = np.asarray(path_power_w, dtype=float)
@@ -110,23 +111,56 @@ def _solve_duct_path(
 
     for i in range(n):
         q = float(power[i])
-        delta_t = q / (mass_flow_kg_s * properties.cp_j_kg_k)
-        temperature_mean = temperature_in + 0.5 * delta_t
 
-        density = pressure_in / (
-            properties.gas_constant_j_kg_k * temperature_mean
+        inlet_state = evaluate_hydrogen_state(
+            temperature_in,
+            pressure_in,
+            properties,
+            property_model=property_model,
         )
+        delta_t = q / (mass_flow_kg_s * inlet_state.cp_j_kg_k)
+
+        for _ in range(6):
+            temperature_mean = temperature_in + 0.5 * delta_t
+            state = evaluate_hydrogen_state(
+                temperature_mean,
+                pressure_in,
+                properties,
+                property_model=property_model,
+            )
+            updated_delta_t = q / (
+                mass_flow_kg_s * state.cp_j_kg_k
+            )
+            if np.isclose(
+                updated_delta_t,
+                delta_t,
+                rtol=1.0e-8,
+                atol=1.0e-10,
+            ):
+                delta_t = updated_delta_t
+                break
+            delta_t = updated_delta_t
+
+        temperature_mean = temperature_in + 0.5 * delta_t
+        state = evaluate_hydrogen_state(
+            temperature_mean,
+            pressure_in,
+            properties,
+            property_model=property_model,
+        )
+
+        density = state.density_kg_m3
         velocity = mass_flow_kg_s / (density * flow_area_m2)
         re = (
             density
             * velocity
             * hydraulic_diameter_m
-            / properties.dynamic_viscosity_pa_s
+            / state.dynamic_viscosity_pa_s
         )
-        nu = nusselt_number(re, properties.prandtl)
+        nu = nusselt_number(re, state.prandtl)
         h = (
             nu
-            * properties.thermal_conductivity_w_m_k
+            * state.thermal_conductivity_w_m_k
             / hydraulic_diameter_m
         )
 
@@ -183,6 +217,7 @@ def solve_tie_tube_counterflow(
     inlet_pressure_pa: float,
     config: NervaConfig | None = None,
     properties: HydrogenProperties | None = None,
+    property_model=None,
     supply_heat_fraction: float | None = None,
     roughness_m: float = 1.0e-6,
 ) -> TieTubeSolution:
@@ -258,6 +293,7 @@ def solve_tie_tube_counterflow(
         hydraulic_diameter_m=supply_diameter_m,
         heated_perimeter_m=supply_perimeter_m,
         properties=properties,
+        property_model=property_model,
         roughness_m=roughness_m,
     )
 
@@ -272,6 +308,7 @@ def solve_tie_tube_counterflow(
         hydraulic_diameter_m=return_hydraulic_diameter_m,
         heated_perimeter_m=return_perimeter_m,
         properties=properties,
+        property_model=property_model,
         roughness_m=roughness_m,
     )
 
