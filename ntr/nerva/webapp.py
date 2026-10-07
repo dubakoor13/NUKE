@@ -27,6 +27,13 @@ from .lantr import (
     NASA_BIMODAL_URL,
     NASA_LANTR_SOURCE,
     NASA_LANTR_URL,
+    HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA,
+    HIGH_PRESSURE_LANTR_NOZZLE_AREA_RATIO,
+    HIGH_PRESSURE_LANTR_BASE_THRUST_N,
+    HIGH_PRESSURE_LANTR_TEMPERATURE_RANGE_K,
+    NASA_HIGH_PRESSURE_LANTR_SOURCE,
+    NASA_HIGH_PRESSURE_LANTR_URL,
+    high_pressure_lantr_isp,
     lantr_point,
     lantr_table,
 )
@@ -212,8 +219,11 @@ def _render_historical(preset: HistoricalNervaPreset) -> None:
 
 
 
-def _render_lantr(oxygen_hydrogen_ratio: float) -> None:
-    point = lantr_point(oxygen_hydrogen_ratio)
+def _render_lantr(
+    oxygen_hydrogen_ratio: float,
+    architecture: str,
+) -> None:
+    high_pressure = architecture == "2000-psia trimodal LANTR"
 
     st.success("Bimodal NTR + LOX-augmented LANTR reference")
     st.write(
@@ -223,37 +233,68 @@ def _render_lantr(oxygen_hydrogen_ratio: float) -> None:
     )
 
     row1 = st.columns(5)
-    with row1[0]:
-        _metric("Reactor power", f"{BASE_REACTOR_POWER_MW:,.0f} MWt")
-    with row1[1]:
-        _metric("O/H mixture ratio", f"{point.oxygen_hydrogen_ratio:.2f}")
-    with row1[2]:
-        _metric("Thrust", f"{point.thrust_n / 1000.0:,.1f} kN")
-    with row1[3]:
-        _metric("Delivered Isp", f"{point.delivered_isp_s:,.0f} s")
-    with row1[4]:
-        _metric(
-            "Thrust augmentation",
-            f"{point.thrust_augmentation_factor:.3f}×",
+    if high_pressure:
+        isp_value, tw_value = high_pressure_lantr_isp(
+            oxygen_hydrogen_ratio
         )
+        with row1[0]:
+            _metric("Reference thrust class", f"{HIGH_PRESSURE_LANTR_BASE_THRUST_N / 1000.0:,.1f} kN")
+        with row1[1]:
+            _metric("O/H mixture ratio", f"{oxygen_hydrogen_ratio:.2f}")
+        with row1[2]:
+            _metric("Nozzle-inlet pressure", f"{HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA / 1.0e6:,.3f} MPa")
+        with row1[3]:
+            _metric("Delivered Isp", f"{isp_value:,.0f} s")
+        with row1[4]:
+            _metric("Engine T/W", f"{tw_value:.2f}")
 
-    row2 = st.columns(5)
-    with row2[0]:
-        _metric(
-            "Reactor exit temperature",
-            f"{BASE_REACTOR_EXIT_TEMPERATURE_K:,.0f} K",
-        )
-    with row2[1]:
-        _metric(
-            "Chamber pressure",
-            f"{BASE_CHAMBER_PRESSURE_PA / 1.0e6:,.3f} MPa",
-        )
-    with row2[2]:
-        _metric("Baseline NTR Isp", f"{BASE_ISP_S:,.0f} s")
-    with row2[3]:
-        _metric("Nozzle Ae/At", f"{BASE_NOZZLE_AREA_RATIO:,.0f}:1")
-    with row2[4]:
-        _metric("Engine T/W", f"{point.engine_thrust_to_weight:.2f}")
+        row2 = st.columns(5)
+        with row2[0]:
+            _metric(
+                "Hot-H₂ temperature range",
+                f"{HIGH_PRESSURE_LANTR_TEMPERATURE_RANGE_K[0]:.0f}–{HIGH_PRESSURE_LANTR_TEMPERATURE_RANGE_K[1]:.0f} K",
+            )
+        with row2[1]:
+            _metric("Nozzle Ae/At", f"{HIGH_PRESSURE_LANTR_NOZZLE_AREA_RATIO:,.0f}:1")
+        with row2[2]:
+            _metric("Pressure vs 1000-psia case", "2.00×")
+        with row2[3]:
+            _metric("Pressure vs RS-25 class", "~67%")
+        with row2[4]:
+            _metric("Reference", "NASA trimodal LANTR")
+    else:
+        point = lantr_point(oxygen_hydrogen_ratio)
+        with row1[0]:
+            _metric("Reactor power", f"{BASE_REACTOR_POWER_MW:,.0f} MWt")
+        with row1[1]:
+            _metric("O/H mixture ratio", f"{point.oxygen_hydrogen_ratio:.2f}")
+        with row1[2]:
+            _metric("Thrust", f"{point.thrust_n / 1000.0:,.1f} kN")
+        with row1[3]:
+            _metric("Delivered Isp", f"{point.delivered_isp_s:,.0f} s")
+        with row1[4]:
+            _metric(
+                "Thrust augmentation",
+                f"{point.thrust_augmentation_factor:.3f}×",
+            )
+
+        row2 = st.columns(5)
+        with row2[0]:
+            _metric(
+                "Reactor exit temperature",
+                f"{BASE_REACTOR_EXIT_TEMPERATURE_K:,.0f} K",
+            )
+        with row2[1]:
+            _metric(
+                "Chamber pressure",
+                f"{BASE_CHAMBER_PRESSURE_PA / 1.0e6:,.3f} MPa",
+            )
+        with row2[2]:
+            _metric("Baseline NTR Isp", f"{BASE_ISP_S:,.0f} s")
+        with row2[3]:
+            _metric("Nozzle Ae/At", f"{BASE_NOZZLE_AREA_RATIO:,.0f}:1")
+        with row2[4]:
+            _metric("Engine T/W", f"{point.engine_thrust_to_weight:.2f}")
 
     st.subheader("LANTR thrust–Isp trade")
     table = lantr_table()
@@ -273,6 +314,17 @@ def _render_lantr(oxygen_hydrogen_ratio: float) -> None:
         trade.set_index("O/H MR")[["Thrust kN", "Isp s"]],
         height=320,
     )
+
+    if high_pressure:
+        high_table = pd.DataFrame(
+            {
+                "O/H MR": [0, 1, 3, 5, 7],
+                "Isp s (5 h / 2900 K)": [941, 772, 647, 576, 514],
+                "Engine T/W": [3.0, 4.8, 8.2, 11.0, 13.1],
+            }
+        )
+        st.subheader("2000-psia trimodal LANTR reference table")
+        st.dataframe(high_table, hide_index=True, use_container_width=True)
 
     st.subheader("Bimodal electrical-power mode")
     power_row = st.columns(4)
@@ -308,6 +360,8 @@ def _render_lantr(oxygen_hydrogen_ratio: float) -> None:
     st.subheader("Public NASA sources")
     st.markdown(f"**LANTR:** {NASA_LANTR_SOURCE}")
     st.markdown(f"[NASA LANTR source]({NASA_LANTR_URL})")
+    st.markdown(f"**High-pressure LANTR:** {NASA_HIGH_PRESSURE_LANTR_SOURCE}")
+    st.markdown(f"[NASA high-pressure LANTR source]({NASA_HIGH_PRESSURE_LANTR_URL})")
     st.markdown(f"**Bimodal power:** {NASA_BIMODAL_SOURCE}")
     st.markdown(f"[NASA bimodal source]({NASA_BIMODAL_URL})")
 
@@ -521,6 +575,7 @@ def main() -> None:
 
         historical_preset = None
         lantr_mr = None
+        lantr_architecture = None
         if mode == "Historical NERVA reference":
             preset_keys = list(PRESETS)
             selected = st.selectbox(
@@ -532,10 +587,16 @@ def main() -> None:
             metadata = fuel = tie = {}
             using_fallback = False
         elif mode == "Bimodal NTR + LANTR":
+            lantr_architecture = st.selectbox(
+                "LANTR reference architecture",
+                ("1000-psia small-engine LANTR", "2000-psia trimodal LANTR"),
+                index=1,
+            )
+            max_mr = 7.0 if lantr_architecture == "2000-psia trimodal LANTR" else 5.0
             lantr_mr = st.slider(
                 "LOX augmentation O/H mixture ratio",
                 min_value=0.0,
-                max_value=5.0,
+                max_value=max_mr,
                 value=0.0,
                 step=0.1,
                 help=(
@@ -614,7 +675,7 @@ def main() -> None:
     if historical_preset is not None:
         _render_historical(historical_preset)
     elif lantr_mr is not None:
-        _render_lantr(lantr_mr)
+        _render_lantr(lantr_mr, lantr_architecture)
     else:
         _render_calculated(
             metadata=metadata,
