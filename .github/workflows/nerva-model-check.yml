@@ -38,6 +38,12 @@ jobs:
       - name: Check statepoint postprocessor CLI
         run: python -m ntr.nerva.postprocess_statepoint --help
 
+      - name: Validate NERVA 1-D hydrogen fuel channel
+        run: python -m ntr.nerva.validate_thermal
+
+      - name: Check thermal coupling CLI
+        run: python -m ntr.nerva.solve_thermal --help
+
       - name: Export seven-position cluster
         run: |
           python -m ntr.nerva.build_model \
