@@ -47,7 +47,10 @@
     "particle_heating_split_when_photon_transport_enabled": true,
     "stochastic_volume_calculations": true,
     "optional_tally_relative_error_trigger": true,
-    "nuclear_data_temperature_audit": true
+    "nuclear_data_temperature_audit": true,
+    "fuel_element_axial_instance_tallies": true,
+    "coolant_channel_axial_instance_tallies": true,
+    "tie_component_axial_instance_tallies": true
   },
   "geometry": {
     "fuel_element": {
@@ -100,9 +103,9 @@
       "fuel_element_integrated_power_source": "OpenMC Distribcell tally",
       "channels_per_element": 19,
       "direct_hydrogen_heating_source": "OpenMC channel-instance heating-local tally",
-      "element_specific_axial_shape": false,
-      "axial_reconstruction": "global OpenMC axial shape applied separably to integrated element/channel fractions",
-      "solid_wall_power_within_element": "equal 1/19 split pending channel-resolved solid deposition"
+      "element_specific_axial_shape": true,
+      "axial_reconstruction": "direct OpenMC Distribcell x axial-mesh shapes when present; global axial shape only for legacy-statepoint fallback",
+      "solid_wall_power_within_element": "equal 1/19 split pending channel-resolved solid deposition within the fuel matrix"
     },
     "direct_nuclear_coolant_heating": {
       "fuel_channels": true,
@@ -138,7 +141,7 @@
     "nuclear_data_temperature_audit": true,
     "engineering_report_cli": true
   },
-  "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked. Repeated-cell integrated powers are OpenMC tally outputs; element-specific axial shapes remain a separable reconstruction and are labeled as such.",
+  "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked. Repeated-cell integrated and axial fuel/channel power shapes are OpenMC tally outputs; equal solid-wall sharing among the 19 channels within each element remains a thermal reconstruction assumption.",
   "results": {
     "vtk_paraview_export": true,
     "element_channel_heatmaps": true,
