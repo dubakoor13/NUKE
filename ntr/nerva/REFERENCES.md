@@ -41,3 +41,20 @@ coolant channels and a 52 in (1.32 m) length.
 These references are used only as public historical geometry sources. The
 present OpenMC material loading and simplified Inconel/ZrH material definitions
 are intentionally not a historical criticality reproduction.
+
+
+## Reactor periphery and control topology
+
+The same NASA point-of-departure paper shows the NERVA-derived reactor core
+surrounded by partial filler elements, a beryllium radial reflector containing
+circumferential control drums, and an aluminum-alloy pressure vessel. The
+control drums use a reflector/moderator portion and a neutron absorber portion
+and rotate to vary reactivity.
+
+The public cross-section figure shows twelve control drums around the reflector.
+This demonstrator therefore uses 12 drums as its default topology.
+
+Important: the present control-drum radius, absorber-shell thickness, reflector
+thickness, and vessel wall thickness are parameterized engineering surrogates.
+They are not claimed to reproduce a specific NERVA/SNRE test article until a
+matching public drawing or dimensions are selected for calibration.
