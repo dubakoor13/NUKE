@@ -11,6 +11,7 @@ import numpy as np
 
 from .config import NervaConfig
 from .fuel_conduction import FuelSolidProperties, estimate_fuel_solid_temperatures
+from .hydrogen_properties import make_hydrogen_property_model
 from .layout import mixed_core_counts
 from .thermal import HydrogenProperties, solve_fuel_channel
 
@@ -38,6 +39,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--inlet-temperature-k", type=float, required=True)
     parser.add_argument("--inlet-pressure-mpa", type=float, required=True)
+    parser.add_argument(
+        "--hydrogen-model",
+        choices=("constant", "coolprop"),
+        default="constant",
+        help="Hydrogen property backend; CoolProp is optional.",
+    )
     parser.add_argument(
         "--fuel-conductivity-w-m-k",
         type=float,
@@ -110,6 +117,7 @@ def main() -> int:
     mass_flow_per_channel = args.fuel_mass_flow_kg_s / fuel_channels
 
     config = NervaConfig(core_rings=args.rings)
+    property_model = make_hydrogen_property_model(args.hydrogen_model)
     solution = solve_fuel_channel(
         axial_total_fuel_power_w=axial_fuel_power_w,
         z_edges_m=z_edges_m,
@@ -119,6 +127,7 @@ def main() -> int:
         inlet_pressure_pa=args.inlet_pressure_mpa * 1.0e6,
         channel_diameter_m=config.coolant_bore_diameter_cm / 100.0,
         properties=HydrogenProperties(),
+        property_model=property_model,
     )
 
     solid = estimate_fuel_solid_temperatures(
@@ -185,7 +194,7 @@ def main() -> int:
         "effective_half_ligament_m": solid.effective_half_ligament_m,
         "fuel_matrix_conductivity_W_m_K": args.fuel_conductivity_w_m_k,
         "zrc_conductivity_W_m_K": args.zrc_conductivity_w_m_k,
-        "hydrogen_property_model": "constant-property ideal-gas surrogate",
+        "hydrogen_property_model": args.hydrogen_model,
         "solid_conduction_model": "1-D ZrC + half-ligament symmetry-slab estimate",
     }
     summary_path = args.output / "thermal_summary.json"
