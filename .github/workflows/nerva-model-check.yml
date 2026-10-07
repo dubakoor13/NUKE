@@ -78,6 +78,18 @@ jobs:
       - name: Validate expanded NERVA OpenMC diagnostics
         run: python -m ntr.nerva.validate_openmc_diagnostics
 
+      - name: Validate NERVA nuclear-data preflight parser
+        run: python -m ntr.nerva.validate_nuclear_data
+
+      - name: Check NERVA nuclear-data preflight CLI
+        run: python -m ntr.nerva.check_nuclear_data --help
+
+      - name: Check reproducible NERVA transport runner CLI
+        run: python -m ntr.nerva.run_openmc_transport --help
+
+      - name: Check NERVA analysis QA gate CLI
+        run: python -m ntr.nerva.validate_analysis_outputs --help
+
       - name: Check NERVA OpenMC diagnostics postprocessor CLI
         run: python -m ntr.nerva.postprocess_openmc_diagnostics --help
 
