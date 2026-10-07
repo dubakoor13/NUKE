@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
         default="reactor",
     )
     parser.add_argument("--rings", type=int, default=5)
+    parser.add_argument("--drum-angle", type=float, default=0.0)
     parser.add_argument("--samples", type=int, default=1_000_000)
     parser.add_argument(
         "--rel-err-trigger",
@@ -108,6 +109,7 @@ def main() -> int:
         particles=100,
         batches=12,
         inactive=4,
+        control_drum_angle_deg=args.drum_angle,
     )
     model = build_model(config, assembly=args.assembly)
     lower_left, upper_right = _bounding_box(
@@ -162,6 +164,7 @@ def main() -> int:
     specification = {
         "assembly": args.assembly,
         "rings": args.rings,
+        "control_drum_angle_deg": args.drum_angle,
         "samples_per_calculation": args.samples,
         "relative_error_trigger": args.rel_err_trigger,
         "bounding_box_cm": {
