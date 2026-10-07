@@ -329,7 +329,7 @@ def main() -> int:
                     value_scaled = float(mean[i]) * source_rate
                     std_scaled = float(std[i]) * source_rate
                     units = (
-                        "particles/s"
+                        "tracklength-cm/s"
                         if score == "flux"
                         else "reactions/s"
                     )
