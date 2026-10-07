@@ -107,6 +107,23 @@ def _distrib_axial_score(
     return data, paths
 
 
+def _axial_z_edges_m(tally: openmc.Tally) -> np.ndarray:
+    mesh_filter = tally.find_filter(openmc.MeshFilter)
+    mesh = mesh_filter.mesh
+    if not isinstance(mesh, openmc.RegularMesh):
+        raise TypeError(f"{tally.name} axial filter must use RegularMesh")
+    dimension = tuple(int(v) for v in mesh.dimension)
+    if dimension[0] != 1 or dimension[1] != 1:
+        raise ValueError(
+            f"{tally.name} instance axial mesh must be 1x1xNz, got {dimension}"
+        )
+    return np.linspace(
+        float(mesh.lower_left[2]) / 100.0,
+        float(mesh.upper_right[2]) / 100.0,
+        dimension[2] + 1,
+    )
+
+
 def _paths(
     tally: openmc.Tally,
     count: int,
@@ -170,6 +187,7 @@ def main() -> int:
     fuel_axial_raw = None
     fuel_axial_std_raw = None
     fuel_axial_paths: list[str] = []
+    instance_axial_z_edges_m = np.asarray([], dtype=float)
     channel_axial_raw: dict[int, np.ndarray] = {}
     channel_axial_std_raw: dict[int, np.ndarray] = {}
     channel_axial_paths: dict[int, list[str]] = {}
@@ -227,6 +245,9 @@ def main() -> int:
             fuel_axial_tally = None
 
         if fuel_axial_tally is not None:
+            instance_axial_z_edges_m = _axial_z_edges_m(
+                fuel_axial_tally
+            )
             fuel_axial_raw, fuel_axial_paths = _distrib_axial_score(
                 fuel_axial_tally,
                 "heating-local",
@@ -575,6 +596,7 @@ def main() -> int:
         channel_direct_nuclear_heating_axial_std_w=(
             channel_direct_axial_std_w
         ),
+        instance_axial_z_edges_m=instance_axial_z_edges_m,
     )
 
     summary = {
