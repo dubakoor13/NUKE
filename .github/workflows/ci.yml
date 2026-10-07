@@ -1,0 +1,295 @@
+name: Tests and Coverage
+
+on:
+  # allows us to run workflows manually
+  workflow_dispatch:
+
+  pull_request:
+    branches:
+      - develop
+      - master
+  push:
+    branches:
+      - develop
+      - master
+
+env:
+  MPI_DIR: /usr
+  HDF5_ROOT: /usr
+  OMP_NUM_THREADS: 2
+  COVERALLS_PARALLEL: true
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  filter-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      source_changed: ${{ steps.filter.outputs.source_changed }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+      - name: Examine changed files
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            source_changed:
+              - '!docs/**'
+              - '!**/*.md'
+          predicate-quantifier: 'every'
+
+  cmake-dependencies:
+    needs: filter-changes
+    if: ${{ needs.filter-changes.outputs.source_changed == 'true' }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Every dependency is downloaded and built from the pinned sources.
+          - source: fetched
+            apt: ''
+            cmake_args: '-DOPENMC_FORCE_FETCHCONTENT=ON'
+          # fmt and pugixml are found as installed packages. Ubuntu 22.04 only
+          # packages Catch2 2.x, so it is rejected and fetched instead, which
+          # exercises both code paths in a single configuration.
+          - source: installed
+            apt: 'libfmt-dev libpugixml-dev catch2'
+            cmake_args: ''
+    name: "CMake dependencies (${{ matrix.source }})"
+    steps:
+      - name: Setup minimum supported CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.22.6'
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # Full history and tags are needed for git describe based versioning
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt -y update
+          sudo apt install -y libhdf5-dev libpng-dev ${{ matrix.apt }}
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-dependencies \
+            -DOPENMC_BUILD_TESTS=ON \
+            -DOPENMC_USE_OPENMP=OFF \
+            ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build-dependencies --parallel 2
+
+      - name: Test
+        run: ctest --test-dir build-dependencies --output-on-failure
+
+  main:
+    needs: filter-changes
+    if: ${{ needs.filter-changes.outputs.source_changed == 'true' }}
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+        mpi: [n, y]
+        omp: [n, y]
+        event: [n]
+
+        include:
+          - python-version: "3.13"
+            omp: n
+            mpi: n
+          - python-version: "3.14"
+            omp: n
+            mpi: n
+          - python-version: "3.14t"
+            omp: n
+            mpi: n
+          - python-version: "3.12"
+            omp: n
+            mpi: n
+            umesh_libs: y
+          - event: y
+            python-version: "3.12"
+            omp: y
+            mpi: n
+    name: "Python ${{ matrix.python-version }} (omp=${{ matrix.omp }},
+      mpi=${{ matrix.mpi }}, umesh_libs=${{ matrix.umesh_libs }},
+      event=${{ matrix.event }}"
+
+    env:
+      MPI: ${{ matrix.mpi }}
+      PHDF5: ${{ matrix.mpi }}
+      OMP: ${{ matrix.omp }}
+      DAGMC: ${{ matrix.umesh_libs }}
+      XDG: ${{ matrix.umesh_libs }}
+      EVENT: ${{ matrix.event }}
+      LIBMESH: ${{ matrix.umesh_libs }}
+      NPY_DISABLE_CPU_FEATURES: "AVX512F AVX512_SKX"
+      OPENBLAS_NUM_THREADS: 1
+      PYTEST_ADDOPTS: --cov=openmc --cov-report=lcov:coverage-python.lcov
+      # libfabric complains about fork() as a result of using Python multiprocessing.
+      # We can work around it with RDMAV_FORK_SAFE=1 in libfabric < 1.13 and with
+      # FI_EFA_FORK_SAFE=1 in more recent versions.
+      RDMAV_FORK_SAFE: 1
+
+    steps:
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.31'
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Environment Variables
+        run: |
+          echo "OPENMC_CROSS_SECTIONS=$HOME/nndc_hdf5/cross_sections.xml" >> $GITHUB_ENV
+          echo "OPENMC_ENDF_DATA=$HOME/endf-b-vii.1" >> $GITHUB_ENV
+          # get the sha of the last branch commit
+          # for push and workflow_dispatch events, use the current reference head
+          BRANCH_SHA=HEAD
+          # for a pull_request event, use the last reference of the parents of the merge commit
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            BRANCH_SHA=$(git rev-list --parents -n 1 HEAD | rev | cut -d" " -f 1 | rev)
+          fi
+          COMMIT_MESSAGE=$(git log $BRANCH_SHA -1 --pretty=%B | tr '\n' ' ')
+          echo ${COMMIT_MESSAGE}
+          echo "COMMIT_MESSAGE=${COMMIT_MESSAGE}" >> $GITHUB_ENV
+
+      - name: Apt dependencies
+        shell: bash
+        run: |
+          sudo apt -y update
+          sudo apt install -y libpng-dev \
+                              libnetcdf-dev \
+                              libpnetcdf-dev \
+                              libhdf5-serial-dev \
+                              libeigen3-dev
+
+      - name: Optional apt dependencies for MPI
+        shell: bash
+        if: ${{ matrix.mpi == 'y' }}
+        run: |
+          sudo apt install -y libhdf5-mpich-dev \
+                              libmpich-dev
+          sudo update-alternatives --set mpi /usr/bin/mpicc.mpich
+          sudo update-alternatives --set mpirun /usr/bin/mpirun.mpich
+          sudo update-alternatives --set mpi-x86_64-linux-gnu /usr/include/x86_64-linux-gnu/mpich
+
+      - name: Optional apt dependencies for XDG
+        shell: bash
+        if: ${{ matrix.umesh_libs == 'y' }}
+        run: |
+          sudo apt install -y libembree-dev
+
+      - name: install
+        shell: bash
+        run: |
+          echo "$HOME/NJOY2016/build" >> $GITHUB_PATH
+          $GITHUB_WORKSPACE/tools/ci/gha-install.sh
+
+      - name: display-config
+        shell: bash
+        run: |
+          openmc -v
+
+      - name: cache-xs
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/nndc_hdf5
+            ~/endf-b-vii.1
+          key: ${{ runner.os }}-build-xs-cache-${{ hashFiles(format('{0}/tools/ci/download-xs.sh', github.workspace)) }}
+
+      - name: before
+        shell: bash
+        run: $GITHUB_WORKSPACE/tools/ci/gha-before-script.sh
+
+      - name: test
+        shell: bash
+        run: |
+          CTEST_OUTPUT_ON_FAILURE=1 make test -C $GITHUB_WORKSPACE/build/
+          $GITHUB_WORKSPACE/tools/ci/gha-script.sh
+
+      - name: Setup tmate debug session
+        continue-on-error: true
+        if: ${{ failure() && contains(env.COMMIT_MESSAGE, '[gha-debug]') }}
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 10
+
+      - name: Generate C++ coverage (gcovr)
+        shell: bash
+        run: |
+          # Produce LCOV directly from gcov data in the build tree
+          gcovr \
+            --root "$GITHUB_WORKSPACE" \
+            --object-directory "$GITHUB_WORKSPACE/build" \
+            --filter "$GITHUB_WORKSPACE/src" \
+            --filter "$GITHUB_WORKSPACE/include" \
+            --exclude "$GITHUB_WORKSPACE/src/external/.*" \
+            --exclude "$GITHUB_WORKSPACE/src/include/openmc/external/.*" \
+            --gcov-ignore-errors source_not_found \
+            --gcov-ignore-errors output_error \
+            --gcov-ignore-parse-errors suspicious_hits.warn \
+            --merge-mode-functions=separate \
+            --print-summary \
+            --lcov -o coverage-cpp.lcov || true
+
+      - name: Merge C++ and Python coverage
+        shell: bash
+        run: |
+          # Merge C++ and Python LCOV into a single file for upload
+          cat coverage-cpp.lcov coverage-python.lcov > coverage.lcov
+
+      - name: Upload coverage to Coveralls
+        if: ${{ hashFiles('coverage.lcov') != '' }}
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          parallel: true
+          flag-name: C++ and Python
+          path-to-lcov: coverage.lcov
+          fail-on-error: false
+
+  coverage:
+    needs: [filter-changes, main]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Coveralls Finished
+        if: ${{ needs.filter-changes.outputs.source_changed == 'true' }}
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          parallel-finished: true
+          fail-on-error: false
+
+  ci-pass:
+    needs: [filter-changes, cmake-dependencies, main, coverage]
+    name: Check CI status
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check CI status
+        run: |
+          if [[ "${{ needs.filter-changes.outputs.source_changed }}" == "false" ]]; then
+            echo "Documentation-only change - CI skipped successfully"
+            exit 0
+          fi
+          if [[ "${{ needs.cmake-dependencies.result }}" == "success" && "${{ needs.main.result }}" == "success" && "${{ needs.coverage.result }}" == "success" ]]; then
+            echo "CI passed"
+            exit 0
+          fi
+          echo "CI failed"
+          exit 1
