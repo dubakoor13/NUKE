@@ -58,7 +58,11 @@ def build_model(
         constraints={"fissionable": True},
     )
 
-    tallies = build_tallies(config, radial_extent_cm=radial_extent)
+    tallies = build_tallies(
+        config,
+        radial_extent_cm=radial_extent,
+        fuel_material=material_map["fuel"],
+    )
 
     plot = openmc.SlicePlot(name=f"nerva_{assembly}_xy")
     plot.basis = "xy"
