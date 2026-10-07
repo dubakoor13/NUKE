@@ -31,6 +31,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--photon-transport", action="store_true")
     parser.add_argument("--diagnostic-energy-groups", type=int, default=80)
     parser.add_argument("--axial-mesh-bins", type=int, default=96)
+    parser.add_argument(
+        "--target-rel-error",
+        type=float,
+        default=None,
+        help="Optional OpenMC heating-local relative-error stopping target.",
+    )
+    parser.add_argument("--trigger-max-batches", type=int, default=500)
+    parser.add_argument("--trigger-batch-interval", type=int, default=5)
+    parser.add_argument(
+        "--calculate-volumes",
+        action="store_true",
+        help=(
+            "Run OpenMC stochastic material/repeated-cell volume calculations "
+            "and use them to normalize instance flux tallies."
+        ),
+    )
+    parser.add_argument("--volume-samples", type=int, default=1_000_000)
+    parser.add_argument(
+        "--volume-rel-error",
+        type=float,
+        default=None,
+    )
 
     parser.add_argument("--power-mw", type=float, required=True)
     parser.add_argument("--fuel-mass-flow-kg-s", type=float, required=True)
@@ -74,6 +96,7 @@ def main() -> int:
 
     transport_dir = args.output_root / "transport"
     analysis_dir = args.output_root / "analysis"
+    volumes_dir = args.output_root / "volumes"
     args.output_root.mkdir(parents=True, exist_ok=True)
 
     python = sys.executable
@@ -105,6 +128,40 @@ def main() -> int:
     ]
     if args.photon_transport:
         transport_command.append("--photon-transport")
+    if args.target_rel_error is not None:
+        transport_command.extend(
+            [
+                "--target-rel-error",
+                str(args.target_rel_error),
+                "--trigger-max-batches",
+                str(args.trigger_max_batches),
+                "--trigger-batch-interval",
+                str(args.trigger_batch_interval),
+            ]
+        )
+
+    if args.calculate_volumes:
+        volume_command = [
+            python,
+            "-m",
+            "ntr.nerva.calculate_volumes",
+            "--cross-sections",
+            str(args.cross_sections),
+            "--assembly",
+            args.assembly,
+            "--rings",
+            str(args.rings),
+            "--samples",
+            str(args.volume_samples),
+            "--output",
+            str(volumes_dir),
+            "--run",
+        ]
+        if args.volume_rel_error is not None:
+            volume_command.extend(
+                ["--rel-err-trigger", str(args.volume_rel_error)]
+            )
+        _run(volume_command)
 
     _run(transport_command)
 
@@ -133,6 +190,13 @@ def main() -> int:
         "--output-root",
         str(analysis_dir),
     ]
+    if args.calculate_volumes:
+        analysis_command.extend(
+            [
+                "--volume-results",
+                str(volumes_dir / "volume_results.json"),
+            ]
+        )
     if args.no_plots:
         analysis_command.append("--no-plots")
 
@@ -143,6 +207,9 @@ def main() -> int:
         "status": "PASS",
         "transport_directory": str(transport_dir),
         "analysis_directory": str(analysis_dir),
+        "volume_directory": (
+            str(volumes_dir) if args.calculate_volumes else None
+        ),
         "statepoint": str(statepoint),
         "transport_provenance": str(provenance),
         "analysis_validation": str(
