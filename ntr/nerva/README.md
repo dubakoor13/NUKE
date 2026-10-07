@@ -39,6 +39,7 @@ low-enrichment surrogate.
 - Explicit counterflow tie-tube thermal model with central H2 supply and annular H2 return paths.
 - First-pass ZrC + fuel-ligament conduction estimate for fuel-surface and local peak-fuel temperature.
 - XY material plot definitions.
+- Result plotting CLI for power-density maps, axial power, fuel-channel thermal profiles, and tie-tube counterflow profiles.
 - Pure-Python geometry validation.
 - GitHub CI export checks for cluster, all-fuel core, mixed-core, and full reactor modes.
 
@@ -195,6 +196,23 @@ parameters so this screening model does not hide material assumptions.
 Real-gas hydrogen properties, 2-D/3-D fuel conduction, radiation, local
 fuel-element power peaking, tie-tube turn losses and temperature feedback
 remain next-fidelity layers.
+
+## Plot postprocessed results
+
+The plotting CLI accepts any subset of the available result products:
+
+```bash
+python -m ntr.nerva.plot_results \
+  --power-fields build/nerva_power/nerva_mesh_fields.npz \
+  --fuel-profile build/nerva_thermal/fuel_channel_profile.csv \
+  --tie-supply-profile build/nerva_tie_thermal/tie_supply_profile.csv \
+  --tie-return-profile build/nerva_tie_thermal/tie_return_profile.csv \
+  --output build/nerva_plots
+```
+
+It produces mid-plane deposited-power maps, an axial power comparison, fuel
+temperature/pressure plots, and tie-tube supply/return temperature/pressure
+plots. Matplotlib is loaded only when plots are actually requested.
 
 ## Current hierarchy
 
