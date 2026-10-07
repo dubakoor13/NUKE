@@ -96,6 +96,15 @@ jobs:
       - name: Check NERVA element/channel plotting CLI
         run: python -m ntr.nerva.plot_element_channels --help
 
+      - name: Validate NERVA per-tie reconstruction
+        run: python -m ntr.nerva.validate_tie_instances
+
+      - name: Check NERVA per-tie thermal CLI
+        run: python -m ntr.nerva.solve_tie_instances --help
+
+      - name: Check NERVA per-tie plotting CLI
+        run: python -m ntr.nerva.plot_tie_instances --help
+
       - name: Check NERVA VTK exporter CLI
         run: python -m ntr.nerva.export_vtk --help
 
