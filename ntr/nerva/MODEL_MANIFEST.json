@@ -131,8 +131,23 @@
       "supply_hydrogen_axial_source": "OpenMC tie-supply Distribcell x axial-mesh heating-local tally",
       "return_hydrogen_axial_source": "OpenMC tie-return Distribcell x axial-mesh heating-local tally",
       "normalization": "instance fields renormalized to global OpenMC mesh totals for energy closure",
-      "flow_distribution": "equal total tie-flow split among tie instances",
+      "flow_distribution": "equal by default; optional common-pressure-drop balancing across tie instances",
       "representative_average_solver_retained": true
+    },
+    "parallel_flow_balancing": {
+      "implemented": true,
+      "default_enabled": false,
+      "branches": [
+        "all resolved fuel coolant channels",
+        "all resolved tie-tube counterflow branches"
+      ],
+      "total_flow_constraint": "fixed user-supplied total mass flow",
+      "branch_condition": "iterates toward common pressure drop",
+      "update_model": "iteration-local effective quadratic resistance DeltaP/mdot^2",
+      "relaxation_default": 0.5,
+      "tolerance_default": 0.001,
+      "maximum_iterations_default": 6,
+      "caveat": "screening network balance; does not model manifolds, plenums, pumps, or crossflow"
     }
   },
   "software_validation": {
@@ -165,9 +180,13 @@
     "tie_instance_reconstruction_math": true,
     "tie_instance_power_closure": true,
     "fuel_sector_partition_coverage": true,
-    "fuel_sector_power_closure": true
+    "fuel_sector_power_closure": true,
+    "parallel_flow_update_math": true,
+    "balanced_fuel_channel_end_to_end": true,
+    "balanced_tie_instance_end_to_end": true,
+    "parallel_mass_flow_closure": true
   },
-  "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked. Fuel-element, channel-associated fuel-sector, coolant-channel, and tie-tube integrated/axial heating shapes are OpenMC tally outputs for current statepoints. The fuel-sector-to-channel thermal assignment and equal tie-flow sharing remain engineering reconstruction assumptions.",
+  "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked. Fuel-element, channel-associated fuel-sector, coolant-channel, and tie-tube integrated/axial heating shapes are OpenMC tally outputs for current statepoints. Fuel-sector-to-channel heat assignment remains an engineering thermal partition. Parallel branch flow is equal by default or can be redistributed with the optional common-pressure-drop screening balance; manifolds/plenums/pump coupling are not modeled.",
   "results": {
     "vtk_paraview_export": true,
     "element_channel_heatmaps": true,
@@ -181,6 +200,7 @@
     "full_run_report_generated_automatically": true,
     "tie_instance_summary": true,
     "tie_instance_plots": true,
-    "fuel_sector_channel_wall_power": true
+    "fuel_sector_channel_wall_power": true,
+    "parallel_flow_diagnostics": true
   }
 }
