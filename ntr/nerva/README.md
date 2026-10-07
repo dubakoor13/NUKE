@@ -1,6 +1,9 @@
 # NERVA-derived OpenMC demonstrator
 
-This directory is the first NTR model built on the OpenMC source copied into `NUKE`. It starts with the historically recognizable NERVA fuel-element geometry and deliberately keeps the material model conservative and non-calibrated.
+This directory builds a staged OpenMC representation of a NERVA-derived nuclear
+thermal rocket reactor. The geometry follows public NASA heritage dimensions,
+while the fuel loading remains a deliberately conservative, non-calibrated
+low-enrichment surrogate.
 
 ## Implemented
 
@@ -10,23 +13,34 @@ This directory is the first NTR model built on the OpenMC source copied into `NU
 - 0.2565 cm coolant bore diameter.
 - 0.40894 cm bore pitch.
 - 50 micrometer ZrC channel and exterior coating.
-- Parameterized OpenMC hexagonal lattice.
-- Finite cylindrical core envelope.
-- Beryllium radial reflector.
-- Eigenvalue settings and a fissionable source box.
-- 3-D mesh tallies for neutron flux, fission rate, and local heating.
-- XY material plot definition.
-- Pure-Python layout validation.
-
-The geometric dimensions above are taken from the NASA NERVA-derived point-of-departure analysis listed in `REFERENCES.md`.
+- Explicit coaxial NERVA-derived tie/support element:
+  - hydrogen supply passage;
+  - inner Inconel tube;
+  - ZrH moderator sleeve;
+  - hydrogen return passage;
+  - outer Inconel tube;
+  - ZrC sleeve;
+  - graphite filler;
+  - explicit cold-condition gaps.
+- Seven-position cluster: one tie tube surrounded by six fuel elements.
+- Parameterized small all-fuel core retained for regression comparison.
+- Finite axial geometry and beryllium radial reflector.
+- Eigenvalue settings and fissionable source.
+- 3-D mesh tallies for flux, fission rate, and local heating.
+- XY material plot definitions.
+- Pure-Python geometry validation.
+- GitHub CI export checks for both core and cluster modes.
 
 ## Important model limitation
 
-The default `(U,Zr)C-graphite` material is a **surrogate**, not a reproduction of a historical NERVA fuel loading. Its uranium enrichment is deliberately limited to low-enriched fuel (<20 wt% U-235) in `NervaConfig`. Therefore the first checkout is intended to validate geometry, OpenMC input generation, tallies, and coupling architecture. Do not interpret the default `k_eff` as a NERVA benchmark.
+The fuel matrix, Inconel, ZrH, coolant state, and reflector properties are
+engineering surrogates rather than a validated reconstruction of a particular
+Rover/NERVA test article. The demonstration enrichment is constrained below
+20 wt% U-235. Do not interpret a future `k_eff`, temperature, or performance
+result as a historical NERVA benchmark until the model is explicitly calibrated
+against an appropriate public experiment.
 
-Tie tubes, control drums, filler blocks, thermal-hydraulics, temperature feedback, and historical benchmark calibration are the next model layers.
-
-## Quick geometry validation
+## Validate geometry
 
 From the repository root:
 
@@ -34,31 +48,50 @@ From the repository root:
 python -m ntr.nerva.validate_layout
 ```
 
-This requires only Python and checks the 19-hole pattern for overlap and edge clearance.
-
-## Export OpenMC input
-
-With the OpenMC Python package and nuclear-data library configured:
+## Export the seven-position fuel/tie cluster
 
 ```bash
-python -m ntr.nerva.build_model --output build/nerva_demo
+python -m ntr.nerva.build_model \
+  --assembly cluster \
+  --output build/nerva_cluster
 ```
 
-To execute OpenMC after export:
+This produces OpenMC `geometry.xml`, `materials.xml`, `settings.xml`,
+`tallies.xml`, and `plots.xml`.
+
+## Export the small all-fuel regression core
 
 ```bash
-python -m ntr.nerva.build_model --output build/nerva_demo --run
+python -m ntr.nerva.build_model \
+  --assembly core \
+  --output build/nerva_core
 ```
 
-The `OPENMC_CROSS_SECTIONS` environment variable (or an equivalent OpenMC data configuration) must point to a compatible cross-section library before a transport calculation is run.
+Add `--run` only after an OpenMC executable and compatible nuclear-data
+library are configured.
+
+## Current hierarchy
+
+```text
+19-channel fuel element
+        |
+        +---- six fuel elements
+        |          |
+        |          v
+        +---- 1 coaxial tie tube
+                   |
+                   v
+          seven-position cluster
+```
 
 ## Roadmap
 
-1. Validate one fuel element and produce geometry plots.
-2. Add an explicit tie-tube/support-element universe.
-3. Build a representative fuel/tie-tube cluster.
-4. Add cylindrical filler elements, Be reflector, and control drums.
-5. Add axial/radial power extraction and normalization.
-6. Couple the OpenMC heating map to a 1-D hydrogen coolant-channel solver.
-7. Add temperature/density feedback iteration.
-8. Calibrate only against published Rover/NERVA benchmark information.
+1. 19-channel fuel element. **DONE**
+2. Coaxial tie/support element. **DONE**
+3. Six-fuel + one-tie cluster. **DONE**
+4. Repeat the fuel/tie pattern into a representative full core.
+5. Add cylindrical/partial filler elements, Be reflector, and control drums.
+6. Add axial/radial power extraction and normalization.
+7. Couple heating to a 1-D hydrogen coolant/tie-tube thermal model.
+8. Add temperature/density feedback iteration.
+9. Calibrate only against published Rover/NERVA benchmark information.
