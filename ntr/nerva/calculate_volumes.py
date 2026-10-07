@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import openmc
@@ -30,6 +31,12 @@ def parse_args() -> argparse.Namespace:
             "Prepare or run OpenMC stochastic volume calculations for "
             "NERVA materials and repeated-cell definitions."
         )
+    )
+    parser.add_argument(
+        "--cross-sections",
+        type=Path,
+        default=None,
+        help="cross_sections.xml; defaults to OPENMC_CROSS_SECTIONS.",
     )
     parser.add_argument(
         "--assembly",
@@ -88,6 +95,13 @@ def main() -> int:
     if args.rel_err_trigger is not None:
         if not (0.0 < args.rel_err_trigger < 1.0):
             raise ValueError("--rel-err-trigger must lie in (0, 1)")
+
+    if args.cross_sections is not None:
+        if not args.cross_sections.is_file():
+            raise FileNotFoundError(args.cross_sections)
+        os.environ["OPENMC_CROSS_SECTIONS"] = str(
+            args.cross_sections.resolve()
+        )
 
     config = NervaConfig(
         core_rings=args.rings,
