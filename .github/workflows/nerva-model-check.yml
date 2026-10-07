@@ -105,6 +105,9 @@ jobs:
       - name: Validate NERVA per-tie reconstruction
         run: python -m ntr.nerva.validate_tie_instances
 
+      - name: Validate NERVA parallel-flow balancing
+        run: python -m ntr.nerva.validate_parallel_flow
+
       - name: Check NERVA per-tie thermal CLI
         run: python -m ntr.nerva.solve_tie_instances --help
 
