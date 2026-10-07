@@ -77,6 +77,12 @@ jobs:
       - name: Validate four alternative-propellant NTP cases
         run: python -m ntr.nerva.validate_alternative_propellant_cases
 
+      - name: Validate four requested propulsion families
+        run: python -m ntr.nerva.validate_propulsion_modes
+
+      - name: Export four requested propulsion families
+        run: python -m ntr.nerva.run_propulsion_modes
+
       - name: Reconstruct four alternative-propellant NTP cases
         run: python -m ntr.nerva.run_alternative_propellant_cases
 
