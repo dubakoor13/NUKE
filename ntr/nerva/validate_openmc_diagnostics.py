@@ -56,6 +56,22 @@ def main() -> int:
     }
     missing = required - set(tallies)
     assert not missing, f"missing diagnostics tallies: {sorted(missing)}"
+
+    fuel_sector_integrated = {
+        name
+        for name in tallies
+        if name.startswith("nerva_fuel_sector_")
+        and name.endswith("_instances")
+        and "_axial_" not in name
+    }
+    fuel_sector_axial = {
+        name
+        for name in tallies
+        if name.startswith("nerva_fuel_sector_")
+        and name.endswith("_axial_instances")
+    }
+    assert len(fuel_sector_integrated) == 19
+    assert len(fuel_sector_axial) == 19
     assert any(
         name.startswith("nerva_tie_axial_instance_")
         for name in tallies
