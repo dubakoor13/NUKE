@@ -53,6 +53,9 @@ jobs:
       - name: Check tie-tube thermal CLI
         run: python -m ntr.nerva.solve_tie_tube --help
 
+      - name: Check NERVA result plotting CLI
+        run: python -m ntr.nerva.plot_results --help
+
       - name: Export seven-position cluster
         run: |
           python -m ntr.nerva.build_model \
