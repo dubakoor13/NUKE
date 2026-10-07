@@ -46,6 +46,26 @@ def parse_args() -> argparse.Namespace:
         help="Control-drum absorber angle in degrees; 0 points the absorber half-shell inward.",
     )
     parser.add_argument(
+        "--photon-transport",
+        action="store_true",
+        help=(
+            "Enable coupled neutron-photon transport when the installed "
+            "OpenMC nuclear-data library supports photon interactions."
+        ),
+    )
+    parser.add_argument(
+        "--diagnostic-energy-groups",
+        type=int,
+        default=80,
+        help="Number of logarithmic energy bins for diagnostic spectra.",
+    )
+    parser.add_argument(
+        "--axial-mesh-bins",
+        type=int,
+        default=96,
+        help="Number of fine axial bins for OpenMC profile tallies.",
+    )
+    parser.add_argument(
         "--run",
         action="store_true",
         help="Run OpenMC after exporting XML (requires executable + nuclear data).",
@@ -59,6 +79,9 @@ def main() -> int:
         core_rings=args.rings,
         particles=args.particles,
         control_drum_angle_deg=args.drum_angle,
+        photon_transport=args.photon_transport,
+        diagnostic_energy_groups=args.diagnostic_energy_groups,
+        axial_mesh_bins=args.axial_mesh_bins,
     )
     config.validate()
 
@@ -77,6 +100,9 @@ def main() -> int:
     print(f"NERVA-derived {args.assembly} model exported:")
     for key, value in summary.items():
         print(f"  {key}: {value}")
+    print(f"  photon transport: {config.photon_transport}")
+    print(f"  diagnostic energy groups: {config.diagnostic_energy_groups}")
+    print(f"  axial diagnostic bins: {config.axial_mesh_bins}")
     print(f"  output: {args.output}")
 
     if args.run:
