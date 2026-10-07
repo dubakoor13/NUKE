@@ -22,6 +22,8 @@ class DuctPathSolution:
     heat_transfer_coefficient_w_m2_k: np.ndarray
     heat_flux_w_m2: np.ndarray
     path_power_w: np.ndarray
+    wall_heat_power_w: np.ndarray
+    direct_coolant_power_w: np.ndarray
 
     @property
     def outlet_temperature_k(self) -> float:
@@ -34,6 +36,14 @@ class DuctPathSolution:
     @property
     def absorbed_power_w(self) -> float:
         return float(np.sum(self.path_power_w))
+
+    @property
+    def wall_transferred_power_w(self) -> float:
+        return float(np.sum(self.wall_heat_power_w))
+
+    @property
+    def direct_nuclear_coolant_power_w(self) -> float:
+        return float(np.sum(self.direct_coolant_power_w))
 
 
 @dataclass(frozen=True)
@@ -53,6 +63,20 @@ class TieTubeSolution:
     @property
     def outlet_pressure_pa(self) -> float:
         return self.return_path.outlet_pressure_pa
+
+    @property
+    def total_absorbed_power_w(self) -> float:
+        return (
+            self.supply.absorbed_power_w
+            + self.return_path.absorbed_power_w
+        )
+
+    @property
+    def direct_nuclear_coolant_power_w(self) -> float:
+        return (
+            self.supply.direct_nuclear_coolant_power_w
+            + self.return_path.direct_nuclear_coolant_power_w
+        )
 
 
 def default_supply_heat_fraction(config: NervaConfig) -> float:
@@ -79,15 +103,26 @@ def _solve_duct_path(
     properties: HydrogenProperties,
     property_model,
     roughness_m: float,
+    direct_coolant_power_w: np.ndarray | None = None,
 ) -> DuctPathSolution:
-    power = np.asarray(path_power_w, dtype=float)
+    wall_power = np.asarray(path_power_w, dtype=float)
+    if direct_coolant_power_w is None:
+        direct_power = np.zeros_like(wall_power)
+    else:
+        direct_power = np.asarray(
+            direct_coolant_power_w,
+            dtype=float,
+        )
+    power = wall_power + direct_power
     z_center = np.asarray(z_center_m, dtype=float)
     dz = np.asarray(dz_m, dtype=float)
 
     if power.ndim != 1 or z_center.shape != power.shape or dz.shape != power.shape:
         raise ValueError("path power, z centers, and dz must be one-dimensional and equal length")
-    if np.any(power < 0.0) or np.any(dz <= 0.0):
-        raise ValueError("path power must be non-negative and dz must be positive")
+    if direct_power.shape != wall_power.shape:
+        raise ValueError("direct coolant power must match wall power shape")
+    if np.any(wall_power < 0.0) or np.any(direct_power < 0.0) or np.any(dz <= 0.0):
+        raise ValueError("wall/direct power must be non-negative and dz must be positive")
     if mass_flow_kg_s <= 0.0:
         raise ValueError("mass_flow_kg_s must be positive")
     if inlet_temperature_k <= 0.0 or inlet_pressure_pa <= 0.0:
@@ -110,7 +145,9 @@ def _solve_duct_path(
     rel_roughness = roughness_m / hydraulic_diameter_m
 
     for i in range(n):
-        q = float(power[i])
+        q_wall = float(wall_power[i])
+        q_direct = float(direct_power[i])
+        q_total = q_wall + q_direct
 
         inlet_state = evaluate_hydrogen_state(
             temperature_in,
@@ -118,7 +155,7 @@ def _solve_duct_path(
             properties,
             property_model=property_model,
         )
-        delta_t = q / (mass_flow_kg_s * inlet_state.cp_j_kg_k)
+        delta_t = q_total / (mass_flow_kg_s * inlet_state.cp_j_kg_k)
 
         for _ in range(6):
             temperature_mean = temperature_in + 0.5 * delta_t
@@ -128,7 +165,7 @@ def _solve_duct_path(
                 properties,
                 property_model=property_model,
             )
-            updated_delta_t = q / (
+            updated_delta_t = q_total / (
                 mass_flow_kg_s * state.cp_j_kg_k
             )
             if np.isclose(
@@ -165,7 +202,7 @@ def _solve_duct_path(
         )
 
         heated_area = heated_perimeter_m * dz[i]
-        q_flux = 0.0 if q == 0.0 else q / heated_area
+        q_flux = 0.0 if q_wall == 0.0 else q_wall / heated_area
         wall_t = temperature_mean + q_flux / h
 
         f = friction_factor(re, rel_roughness)
@@ -205,6 +242,8 @@ def _solve_duct_path(
         heat_transfer_coefficient_w_m2_k=htc,
         heat_flux_w_m2=heat_flux,
         path_power_w=power,
+        wall_heat_power_w=wall_power,
+        direct_coolant_power_w=direct_power,
     )
 
 
@@ -220,6 +259,8 @@ def solve_tie_tube_counterflow(
     property_model=None,
     supply_heat_fraction: float | None = None,
     roughness_m: float = 1.0e-6,
+    axial_direct_supply_hydrogen_power_w: np.ndarray | None = None,
+    axial_direct_return_hydrogen_power_w: np.ndarray | None = None,
 ) -> TieTubeSolution:
     """Solve one representative tie tube with supply and annular return flow.
 
@@ -236,6 +277,20 @@ def solve_tie_tube_counterflow(
 
     power = np.asarray(axial_total_tie_power_w, dtype=float)
     z_edges = np.asarray(z_edges_m, dtype=float)
+    if axial_direct_supply_hydrogen_power_w is None:
+        direct_supply = np.zeros_like(power)
+    else:
+        direct_supply = np.asarray(
+            axial_direct_supply_hydrogen_power_w,
+            dtype=float,
+        )
+    if axial_direct_return_hydrogen_power_w is None:
+        direct_return = np.zeros_like(power)
+    else:
+        direct_return = np.asarray(
+            axial_direct_return_hydrogen_power_w,
+            dtype=float,
+        )
 
     if power.ndim != 1:
         raise ValueError("axial_total_tie_power_w must be one-dimensional")
@@ -245,6 +300,12 @@ def solve_tie_tube_counterflow(
         raise ValueError("z_edges_m must be strictly increasing")
     if np.any(power < 0.0):
         raise ValueError("tie power must be non-negative")
+    if direct_supply.shape != power.shape or direct_return.shape != power.shape:
+        raise ValueError(
+            "direct supply/return hydrogen power arrays must match tie power"
+        )
+    if np.any(direct_supply < 0.0) or np.any(direct_return < 0.0):
+        raise ValueError("direct hydrogen heating must be non-negative")
     if tie_tube_count < 1:
         raise ValueError("tie_tube_count must be positive")
     if mass_flow_per_tie_kg_s <= 0.0:
@@ -261,6 +322,8 @@ def solve_tie_tube_counterflow(
 
     supply_power = per_tie_power * supply_heat_fraction
     return_power_physical = per_tie_power * (1.0 - supply_heat_fraction)
+    per_tie_direct_supply = direct_supply / float(tie_tube_count)
+    per_tie_direct_return = direct_return / float(tie_tube_count)
 
     supply_diameter_m = (
         2.0 * config.tie_inner_tube_inner_radius_cm / 100.0
@@ -295,6 +358,7 @@ def solve_tie_tube_counterflow(
         properties=properties,
         property_model=property_model,
         roughness_m=roughness_m,
+        direct_coolant_power_w=per_tie_direct_supply,
     )
 
     return_path = _solve_duct_path(
@@ -310,6 +374,7 @@ def solve_tie_tube_counterflow(
         properties=properties,
         property_model=property_model,
         roughness_m=roughness_m,
+        direct_coolant_power_w=per_tie_direct_return[::-1],
     )
 
     return TieTubeSolution(
