@@ -29,6 +29,42 @@ _MATERIAL_ORDER = (
     "aluminum",
 )
 
+def _safe_slug(value: str) -> str:
+    return (
+        value.lower()
+        .replace("-", "_")
+        .replace(" ", "_")
+        .replace("/", "_")
+        .replace("(", "")
+        .replace(")", "")
+    )
+
+
+def _cells_named(
+    geometry: openmc.Geometry,
+    name: str,
+) -> list[openmc.Cell]:
+    return [
+        cell
+        for cell in geometry.get_all_cells().values()
+        if cell.name == name
+    ]
+
+
+def _attach_heating_trigger(
+    tally: openmc.Tally,
+    config: NervaConfig,
+) -> None:
+    if config.tally_rel_err_trigger is None:
+        return
+    trigger = openmc.Trigger(
+        "rel_err",
+        config.tally_rel_err_trigger,
+        ignore_zeros=True,
+    )
+    trigger.scores = ["heating-local"]
+    tally.triggers = [trigger]
+
 
 def _energy_edges(config: NervaConfig) -> np.ndarray:
     """Log-spaced neutron-energy bins from thermal to 20 MeV."""
@@ -87,6 +123,7 @@ def build_tallies(
         "heating-local",
     ]
 
+    _attach_heating_trigger(neutronics, config)
     tallies: list[openmc.Tally] = [neutronics]
 
     if fuel_material is None and materials is not None:
@@ -122,6 +159,67 @@ def build_tallies(
                 "absorption",
             ]
             tallies.append(tie_heating)
+
+
+    # Repeated-cell instance diagnostics. These preserve the actual Monte Carlo
+    # power distribution instead of averaging all repeated lattice placements.
+    if geometry is not None and config.element_instance_tallies:
+        fuel_cells = _cells_named(geometry, "fuel matrix")
+        if fuel_cells:
+            fuel_instance = openmc.Tally(
+                name="nerva_fuel_element_instances"
+            )
+            fuel_instance.filters = [
+                openmc.DistribcellFilter(fuel_cells[0])
+            ]
+            fuel_instance.scores = [
+                "flux",
+                "fission",
+                "nu-fission",
+                "heating-local",
+            ]
+            tallies.append(fuel_instance)
+
+        for tie_name in sorted(_TIE_SOLID_CELL_NAMES):
+            cells = _cells_named(geometry, tie_name)
+            if not cells:
+                continue
+            tie_instance = openmc.Tally(
+                name=(
+                    "nerva_tie_instance_"
+                    + _safe_slug(tie_name)
+                )
+            )
+            tie_instance.filters = [
+                openmc.DistribcellFilter(cells[0])
+            ]
+            tie_instance.scores = [
+                "absorption",
+                "heating-local",
+            ]
+            tallies.append(tie_instance)
+
+    if geometry is not None and config.channel_instance_tallies:
+        for channel_index in range(1, 20):
+            channel_name = f"hydrogen channel {channel_index}"
+            channel_cells = _cells_named(geometry, channel_name)
+            if not channel_cells:
+                continue
+            channel_tally = openmc.Tally(
+                name=(
+                    f"nerva_hydrogen_channel_"
+                    f"{channel_index:02d}_instances"
+                )
+            )
+            channel_tally.filters = [
+                openmc.DistribcellFilter(channel_cells[0])
+            ]
+            channel_tally.scores = [
+                "flux",
+                "absorption",
+                "heating-local",
+            ]
+            tallies.append(channel_tally)
 
     # Material-resolved transport and energy deposition.
     if materials is not None:
