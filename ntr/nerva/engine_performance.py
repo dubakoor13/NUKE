@@ -1,4 +1,12 @@
-"""Engine-level performance estimates from NERVA thermal analysis outputs."""
+"""Legacy dashboard nozzle helper.
+
+For NERVA engineering calculations use :mod:`ntr.nerva.nerva_engine`.
+That module solves exit pressure from fixed nozzle expansion ratio, exposes
+c*/Cf, and includes reactor-power/mass-flow/temperature coupling.
+
+This file remains for backward compatibility with the original synthetic web
+dashboard and should not be used as the primary NERVA performance model.
+"""
 
 from __future__ import annotations
 
