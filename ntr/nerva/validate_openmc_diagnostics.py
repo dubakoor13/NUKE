@@ -43,6 +43,7 @@ def main() -> int:
         "nerva_hydrogen_channel_01_instances",
         "nerva_hydrogen_channel_19_instances",
         "nerva_material_transport",
+        "nerva_material_energy_transport",
         "nerva_fuel_spectrum",
         "nerva_hydrogen_spectrum",
         "nerva_axial_transport",
@@ -120,6 +121,22 @@ def main() -> int:
     )
     assert len(trigger_tally.triggers) == 1
     assert trigger_tally.triggers[0].trigger_type == "rel_err"
+
+    photon_config = NervaConfig(
+        core_rings=3,
+        particles=100,
+        batches=12,
+        inactive=4,
+        photon_transport=True,
+        diagnostic_energy_groups=16,
+        axial_mesh_bins=24,
+    )
+    photon_model = build_model(
+        photon_config,
+        assembly="reactor",
+    )
+    photon_tallies = {t.name for t in photon_model.tallies}
+    assert "nerva_particle_heating" in photon_tallies
 
     print("Expanded NERVA OpenMC diagnostics validation: PASS")
     print(f"  tallies: {len(tallies)}")
