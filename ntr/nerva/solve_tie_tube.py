@@ -104,6 +104,20 @@ def main() -> int:
         )
 
     tie_power_density = np.asarray(data["tie_power_density_w_cm3"], dtype=float)
+    if "tie_supply_hydrogen_power_density_w_cm3" in data.files:
+        tie_supply_h2_density = np.asarray(
+            data["tie_supply_hydrogen_power_density_w_cm3"],
+            dtype=float,
+        )
+    else:
+        tie_supply_h2_density = np.zeros_like(tie_power_density)
+    if "tie_return_hydrogen_power_density_w_cm3" in data.files:
+        tie_return_h2_density = np.asarray(
+            data["tie_return_hydrogen_power_density_w_cm3"],
+            dtype=float,
+        )
+    else:
+        tie_return_h2_density = np.zeros_like(tie_power_density)
     lower_left = np.asarray(data["lower_left_cm"], dtype=float)
     upper_right = np.asarray(data["upper_right_cm"], dtype=float)
     dimension = np.asarray(data["dimension"], dtype=int)
@@ -118,6 +132,14 @@ def main() -> int:
     voxel_volume_cm3 = float(np.prod(spacing_cm))
     axial_tie_power_w = (
         np.sum(tie_power_density, axis=(0, 1))
+        * voxel_volume_cm3
+    )
+    axial_tie_supply_h2_power_w = (
+        np.sum(tie_supply_h2_density, axis=(0, 1))
+        * voxel_volume_cm3
+    )
+    axial_tie_return_h2_power_w = (
+        np.sum(tie_return_h2_density, axis=(0, 1))
         * voxel_volume_cm3
     )
 
@@ -142,6 +164,12 @@ def main() -> int:
         config=config,
         property_model=property_model,
         supply_heat_fraction=args.supply_heat_fraction,
+        axial_direct_supply_hydrogen_power_w=(
+            axial_tie_supply_h2_power_w
+        ),
+        axial_direct_return_hydrogen_power_w=(
+            axial_tie_return_h2_power_w
+        ),
     )
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -154,6 +182,18 @@ def main() -> int:
         "mass_flow_per_tie_kg_s": mass_flow_per_tie,
         "total_tie_power_W": float(np.sum(axial_tie_power_w)),
         "representative_tie_power_W": solution.tie_power_w,
+        "total_direct_tie_supply_hydrogen_power_W": float(
+            np.sum(axial_tie_supply_h2_power_w)
+        ),
+        "total_direct_tie_return_hydrogen_power_W": float(
+            np.sum(axial_tie_return_h2_power_w)
+        ),
+        "representative_direct_hydrogen_power_W": (
+            solution.direct_nuclear_coolant_power_w
+        ),
+        "representative_total_absorbed_power_W": (
+            solution.total_absorbed_power_w
+        ),
         "supply_heat_fraction": solution.supply_heat_fraction,
         "inlet_temperature_K": args.inlet_temperature_k,
         "outlet_temperature_K": solution.outlet_temperature_k,
@@ -176,6 +216,10 @@ def main() -> int:
     print(f"  tie tubes: {tie_tubes}")
     print(f"  tie-solid power: {summary['total_tie_power_W'] / 1.0e6:.6g} MW")
     print(f"  supply heat fraction: {solution.supply_heat_fraction:.6f}")
+    print(
+        f"  direct tie H2 heating: "
+        f"{(summary['total_direct_tie_supply_hydrogen_power_W'] + summary['total_direct_tie_return_hydrogen_power_W']) / 1.0e6:.6g} MW"
+    )
     print(f"  outlet temperature: {solution.outlet_temperature_k:.3f} K")
     print(f"  outlet pressure: {solution.outlet_pressure_pa / 1.0e6:.6f} MPa")
     print(f"  output: {args.output}")
