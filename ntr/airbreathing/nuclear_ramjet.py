@@ -241,3 +241,60 @@ def evaluate_nuclear_ramjet(
             specific_thrust
         ),
     )
+
+
+def evaluate_nuclear_ramjet_from_thermal_power(
+    mach: float,
+    ambient_temperature_k: float,
+    ambient_pressure_pa: float,
+    air_mass_flow_kg_s: float,
+    deposited_thermal_power_w: float,
+    heat_transfer_efficiency: float = 0.85,
+    diffuser_pressure_recovery: float = 0.90,
+    reactor_total_pressure_ratio: float = 0.95,
+    nozzle_efficiency: float = 0.95,
+    air: AirModel | None = None,
+) -> NuclearRamjetResult:
+    """Drive the generic ramjet cycle from deposited OpenMC thermal power.
+
+    The OpenMC model provides nuclear deposited power. A separate engineering
+    heat-transfer efficiency determines how much of that deposited power reaches
+    the working air. No channel/inlet geometry is inferred here.
+    """
+    if air is None:
+        air = AirModel()
+    air.validate()
+
+    if deposited_thermal_power_w <= 0.0:
+        raise ValueError("deposited_thermal_power_w must be positive")
+    if not (0.0 < heat_transfer_efficiency <= 1.0):
+        raise ValueError("heat_transfer_efficiency must lie in (0, 1]")
+
+    diffuser_total_temperature = _stagnation_temperature(
+        ambient_temperature_k,
+        mach,
+        air.gamma,
+    )
+
+    heat_to_air_w = (
+        deposited_thermal_power_w * heat_transfer_efficiency
+    )
+    reactor_outlet_total_temperature_k = (
+        diffuser_total_temperature
+        + heat_to_air_w / (air_mass_flow_kg_s * air.cp_j_kg_k)
+    )
+
+    return evaluate_nuclear_ramjet(
+        mach=mach,
+        ambient_temperature_k=ambient_temperature_k,
+        ambient_pressure_pa=ambient_pressure_pa,
+        air_mass_flow_kg_s=air_mass_flow_kg_s,
+        reactor_outlet_total_temperature_k=(
+            reactor_outlet_total_temperature_k
+        ),
+        diffuser_pressure_recovery=diffuser_pressure_recovery,
+        reactor_total_pressure_ratio=reactor_total_pressure_ratio,
+        reactor_heat_transfer_efficiency=heat_transfer_efficiency,
+        nozzle_efficiency=nozzle_efficiency,
+        air=air,
+    )
