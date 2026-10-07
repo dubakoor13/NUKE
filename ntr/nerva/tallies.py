@@ -51,6 +51,20 @@ def _cells_named(
     ]
 
 
+def _cells_named_prefix(
+    geometry: openmc.Geometry,
+    prefix: str,
+) -> list[openmc.Cell]:
+    return sorted(
+        [
+            cell
+            for cell in geometry.get_all_cells().values()
+            if cell.name.startswith(prefix)
+        ],
+        key=lambda cell: cell.name,
+    )
+
+
 def _attach_heating_trigger(
     tally: openmc.Tally,
     config: NervaConfig,
@@ -294,6 +308,49 @@ def build_tallies(
                     "heating-local",
                 ]
                 tallies.append(fuel_axial_instance)
+
+
+        fuel_sector_cells = _cells_named_prefix(
+            geometry,
+            "fuel matrix channel sector ",
+        )
+        for sector_index, sector_cell in enumerate(
+            fuel_sector_cells,
+            start=1,
+        ):
+            sector_tally = openmc.Tally(
+                name=(
+                    f"nerva_fuel_sector_"
+                    f"{sector_index:02d}_instances"
+                )
+            )
+            sector_tally.filters = [
+                openmc.DistribcellFilter(sector_cell)
+            ]
+            sector_tally.scores = [
+                "flux",
+                "fission",
+                "nu-fission",
+                "heating-local",
+            ]
+            tallies.append(sector_tally)
+
+            if instance_axial_filter is not None:
+                sector_axial = openmc.Tally(
+                    name=(
+                        f"nerva_fuel_sector_"
+                        f"{sector_index:02d}_axial_instances"
+                    )
+                )
+                sector_axial.filters = [
+                    openmc.DistribcellFilter(sector_cell),
+                    instance_axial_filter,
+                ]
+                sector_axial.scores = [
+                    "fission",
+                    "heating-local",
+                ]
+                tallies.append(sector_axial)
 
         for tie_name in sorted(_TIE_SOLID_CELL_NAMES):
             cells = _cells_named(geometry, tie_name)
