@@ -238,6 +238,30 @@ def build_tallies(
             ]
             tallies.append(tie_h2_heating)
 
+    instance_axial_filter = None
+    if config.instance_axial_tallies:
+        instance_axial_mesh = openmc.RegularMesh(
+            name="nerva_instance_axial_mesh"
+        )
+        instance_axial_mesh.dimension = (
+            1,
+            1,
+            config.axial_mesh_bins,
+        )
+        instance_axial_mesh.lower_left = (
+            -r,
+            -r,
+            -half_length,
+        )
+        instance_axial_mesh.upper_right = (
+            r,
+            r,
+            half_length,
+        )
+        instance_axial_filter = openmc.MeshFilter(
+            instance_axial_mesh
+        )
+
     # Repeated-cell instance diagnostics. These preserve the actual Monte Carlo
     # power distribution instead of averaging all repeated lattice placements.
     if geometry is not None and config.element_instance_tallies:
@@ -257,6 +281,20 @@ def build_tallies(
             ]
             tallies.append(fuel_instance)
 
+            if instance_axial_filter is not None:
+                fuel_axial_instance = openmc.Tally(
+                    name="nerva_fuel_element_axial_instances"
+                )
+                fuel_axial_instance.filters = [
+                    openmc.DistribcellFilter(fuel_cells[0]),
+                    instance_axial_filter,
+                ]
+                fuel_axial_instance.scores = [
+                    "fission",
+                    "heating-local",
+                ]
+                tallies.append(fuel_axial_instance)
+
         for tie_name in sorted(_TIE_SOLID_CELL_NAMES):
             cells = _cells_named(geometry, tie_name)
             if not cells:
@@ -275,6 +313,23 @@ def build_tallies(
                 "heating-local",
             ]
             tallies.append(tie_instance)
+
+            if instance_axial_filter is not None:
+                tie_axial_instance = openmc.Tally(
+                    name=(
+                        "nerva_tie_axial_instance_"
+                        + _safe_slug(tie_name)
+                    )
+                )
+                tie_axial_instance.filters = [
+                    openmc.DistribcellFilter(cells[0]),
+                    instance_axial_filter,
+                ]
+                tie_axial_instance.scores = [
+                    "absorption",
+                    "heating-local",
+                ]
+                tallies.append(tie_axial_instance)
 
     if geometry is not None and config.channel_instance_tallies:
         for channel_index in range(1, 20):
@@ -297,6 +352,23 @@ def build_tallies(
                 "heating-local",
             ]
             tallies.append(channel_tally)
+
+            if instance_axial_filter is not None:
+                channel_axial_tally = openmc.Tally(
+                    name=(
+                        f"nerva_hydrogen_channel_"
+                        f"{channel_index:02d}_axial_instances"
+                    )
+                )
+                channel_axial_tally.filters = [
+                    openmc.DistribcellFilter(channel_cells[0]),
+                    instance_axial_filter,
+                ]
+                channel_axial_tally.scores = [
+                    "absorption",
+                    "heating-local",
+                ]
+                tallies.append(channel_axial_tally)
 
     # Material-resolved transport and energy deposition.
     if materials is not None:
