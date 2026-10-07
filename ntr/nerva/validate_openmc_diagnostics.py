@@ -40,8 +40,11 @@ def main() -> int:
         "nerva_3d_tie_supply_hydrogen_heating",
         "nerva_3d_tie_return_hydrogen_heating",
         "nerva_fuel_element_instances",
+        "nerva_fuel_element_axial_instances",
         "nerva_hydrogen_channel_01_instances",
+        "nerva_hydrogen_channel_01_axial_instances",
         "nerva_hydrogen_channel_19_instances",
+        "nerva_hydrogen_channel_19_axial_instances",
         "nerva_material_transport",
         "nerva_material_energy_transport",
         "nerva_fuel_spectrum",
@@ -51,6 +54,10 @@ def main() -> int:
     }
     missing = required - set(tallies)
     assert not missing, f"missing diagnostics tallies: {sorted(missing)}"
+    assert any(
+        name.startswith("nerva_tie_axial_instance_")
+        for name in tallies
+    )
 
     mesh_scores = set(tallies["nerva_3d_neutronics"].scores)
     assert {
