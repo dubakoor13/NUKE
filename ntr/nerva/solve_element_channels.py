@@ -5,9 +5,11 @@ direct fuel-element x axial and coolant-channel x axial heating tallies. The
 solver uses those native axial shapes on their own mesh and renormalizes them
 to the global power totals for strict energy closure.
 
-Older statepoints that do not contain instance-axial tallies fall back to the
-global axial shape. The remaining first-order assumption is equal solid-wall
-power sharing among the 19 coolant channels inside one fuel element.
+Older statepoints that do not contain instance-axial or fuel-sector tallies
+fall back to the global axial shape and equal 1/19 wall-power sharing. Current
+statepoints use direct nearest-channel fuel-sector solid heating. Parallel
+channel flow remains equal by default, with an optional common-pressure-drop
+balancing iteration.
 """
 
 from __future__ import annotations
