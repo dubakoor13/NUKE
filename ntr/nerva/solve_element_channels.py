@@ -393,6 +393,14 @@ def main() -> int:
             np.max(peak_fuel_temperatures)
         ),
         "hottest_channel": hottest,
+        "inlet_temperature_K": args.inlet_temperature_k,
+        "inlet_pressure_Pa": args.inlet_pressure_mpa * 1.0e6,
+        "fuel_matrix_conductivity_W_m_K": (
+            args.fuel_conductivity_w_m_k
+        ),
+        "zrc_conductivity_W_m_K": (
+            args.zrc_conductivity_w_m_k
+        ),
         "hydrogen_property_model": args.hydrogen_model,
         "reconstruction_assumptions": [
             (
