@@ -398,6 +398,8 @@ def main() -> int:
         ),
         "hottest_tie_instance": hottest_index,
         "thermal_axial_bins": n_axial,
+        "inlet_temperature_K": args.inlet_temperature_k,
+        "inlet_pressure_Pa": args.inlet_pressure_mpa * 1.0e6,
         "hydrogen_property_model": args.hydrogen_model,
         "supply_heat_fraction": (
             hottest.supply_heat_fraction
