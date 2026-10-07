@@ -88,6 +88,15 @@ def main() -> int:
         data["fuel_power_density_w_cm3"],
         dtype=float,
     )
+    if "fuel_hydrogen_power_density_w_cm3" in data.files:
+        fuel_hydrogen_power_density = np.asarray(
+            data["fuel_hydrogen_power_density_w_cm3"],
+            dtype=float,
+        )
+    else:
+        fuel_hydrogen_power_density = np.zeros_like(
+            fuel_power_density
+        )
     lower_left = np.asarray(data["lower_left_cm"], dtype=float)
     upper_right = np.asarray(data["upper_right_cm"], dtype=float)
     dimension = np.asarray(data["dimension"], dtype=int)
@@ -103,6 +112,10 @@ def main() -> int:
     voxel_volume_cm3 = float(np.prod(spacing_cm))
     axial_fuel_power_w = (
         np.sum(fuel_power_density, axis=(0, 1))
+        * voxel_volume_cm3
+    )
+    axial_direct_hydrogen_power_w = (
+        np.sum(fuel_hydrogen_power_density, axis=(0, 1))
         * voxel_volume_cm3
     )
 
@@ -128,6 +141,9 @@ def main() -> int:
         channel_diameter_m=config.coolant_bore_diameter_cm / 100.0,
         properties=HydrogenProperties(),
         property_model=property_model,
+        axial_direct_coolant_power_w=(
+            axial_direct_hydrogen_power_w
+        ),
     )
 
     solid = estimate_fuel_solid_temperatures(
@@ -155,6 +171,8 @@ def main() -> int:
                 "htc_W_m2_K",
                 "heat_flux_W_m2",
                 "channel_power_W",
+                "wall_heat_power_W",
+                "direct_nuclear_coolant_power_W",
             )
         )
         for row in zip(
@@ -168,6 +186,8 @@ def main() -> int:
             solution.heat_transfer_coefficient_w_m2_k,
             solution.heat_flux_w_m2,
             solution.channel_power_w,
+            solution.wall_heat_power_w,
+            solution.direct_coolant_power_w,
         ):
             writer.writerow(row)
 
@@ -177,7 +197,16 @@ def main() -> int:
         "fuel_mass_flow_kg_s": args.fuel_mass_flow_kg_s,
         "mass_flow_per_channel_kg_s": mass_flow_per_channel,
         "fuel_power_W": float(np.sum(axial_fuel_power_w)),
+        "direct_fuel_channel_hydrogen_power_W": float(
+            np.sum(axial_direct_hydrogen_power_w)
+        ),
         "representative_channel_power_W": solution.absorbed_power_w,
+        "representative_channel_wall_power_W": (
+            solution.wall_transferred_power_w
+        ),
+        "representative_channel_direct_nuclear_power_W": (
+            solution.direct_nuclear_coolant_power_w
+        ),
         "inlet_temperature_K": args.inlet_temperature_k,
         "outlet_temperature_K": solution.outlet_temperature_k,
         "inlet_pressure_Pa": args.inlet_pressure_mpa * 1.0e6,
@@ -206,7 +235,11 @@ def main() -> int:
     print("NERVA representative fuel-channel thermal solve complete:")
     print(f"  fuel elements: {fuel_elements}")
     print(f"  fuel channels: {fuel_channels}")
-    print(f"  fuel power: {summary['fuel_power_W'] / 1.0e6:.6g} MW")
+    print(f"  fuel solid power: {summary['fuel_power_W'] / 1.0e6:.6g} MW")
+    print(
+        f"  direct fuel-channel H2 nuclear heating: "
+        f"{summary['direct_fuel_channel_hydrogen_power_W'] / 1.0e6:.6g} MW"
+    )
     print(f"  outlet temperature: {solution.outlet_temperature_k:.3f} K")
     print(f"  outlet pressure: {solution.outlet_pressure_pa / 1.0e6:.6f} MPa")
     print(
