@@ -64,6 +64,29 @@ def parse_args() -> argparse.Namespace:
         choices=("constant", "coolprop"),
         default="constant",
     )
+    parser.add_argument(
+        "--balance-parallel-flow",
+        action="store_true",
+        help=(
+            "Enable common-pressure-drop hydraulic balancing for the "
+            "fuel-channel and tie-tube parallel branches."
+        ),
+    )
+    parser.add_argument(
+        "--flow-balance-max-iterations",
+        type=int,
+        default=6,
+    )
+    parser.add_argument(
+        "--flow-balance-tolerance",
+        type=float,
+        default=1.0e-3,
+    )
+    parser.add_argument(
+        "--flow-balance-relaxation",
+        type=float,
+        default=0.5,
+    )
     parser.add_argument("--no-plots", action="store_true")
     parser.add_argument(
         "--output-root",
@@ -199,6 +222,18 @@ def main() -> int:
                 str(volumes_dir / "volume_results.json"),
             ]
         )
+    if args.balance_parallel_flow:
+        analysis_command.extend(
+            [
+                "--balance-parallel-flow",
+                "--flow-balance-max-iterations",
+                str(args.flow_balance_max_iterations),
+                "--flow-balance-tolerance",
+                str(args.flow_balance_tolerance),
+                "--flow-balance-relaxation",
+                str(args.flow_balance_relaxation),
+            ]
+        )
     if args.no_plots:
         analysis_command.append("--no-plots")
 
@@ -231,6 +266,18 @@ def main() -> int:
         ),
         "engineering_report_json": str(
             args.output_root / "NERVA_RUN_REPORT.json"
+        ),
+        "parallel_flow_balance_requested": (
+            args.balance_parallel_flow
+        ),
+        "flow_balance_max_iterations": (
+            args.flow_balance_max_iterations
+        ),
+        "flow_balance_tolerance": (
+            args.flow_balance_tolerance
+        ),
+        "flow_balance_relaxation": (
+            args.flow_balance_relaxation
         ),
         "interpretation": (
             "One explicit OpenMC transport + engineering analysis. "
