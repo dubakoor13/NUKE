@@ -24,9 +24,10 @@ def build_fuel_element_universe(
         boundary_type="transmission",
     )
 
+    positions = coolant_channel_positions(config)
     outer_cylinders = []
     cells = []
-    for index, (x, y) in enumerate(coolant_channel_positions(config), start=1):
+    for index, (x, y) in enumerate(positions, start=1):
         inner = openmc.ZCylinder(
             x0=x,
             y0=y,
@@ -57,13 +58,51 @@ def build_fuel_element_universe(
     for outer in outer_cylinders:
         fuel_region &= +outer
 
-    cells.append(
-        openmc.Cell(
-            name="fuel matrix",
-            fill=materials["fuel"],
-            region=fuel_region,
+    # Partition the fuel matrix into 19 nearest-channel Voronoi sectors.
+    # All sectors use the same fuel material and all internal planes are
+    # transmission boundaries, so this increases scoring resolution without
+    # changing the material layout or adding a physical interface.
+    pair_planes: dict[tuple[int, int], openmc.Plane] = {}
+    for i in range(len(positions)):
+        xi, yi = positions[i]
+        for j in range(i + 1, len(positions)):
+            xj, yj = positions[j]
+            a = xj - xi
+            b = yj - yi
+            d = 0.5 * (
+                xj * xj
+                + yj * yj
+                - xi * xi
+                - yi * yi
+            )
+            pair_planes[(i, j)] = openmc.Plane(
+                a=a,
+                b=b,
+                c=0.0,
+                d=d,
+                name=(
+                    f"fuel channel Voronoi boundary "
+                    f"{i + 1:02d}-{j + 1:02d}"
+                ),
+            )
+
+    for i in range(len(positions)):
+        sector_region = fuel_region
+        for j in range(len(positions)):
+            if i == j:
+                continue
+            if i < j:
+                sector_region &= -pair_planes[(i, j)]
+            else:
+                sector_region &= +pair_planes[(j, i)]
+
+        cells.append(
+            openmc.Cell(
+                name=f"fuel matrix channel sector {i + 1:02d}",
+                fill=materials["fuel"],
+                region=sector_region,
+            )
         )
-    )
     cells.append(
         openmc.Cell(
             name="outer ZrC coating",
