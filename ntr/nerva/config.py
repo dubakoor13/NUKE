@@ -64,6 +64,7 @@ class NervaConfig:
     # Fine-grained repeated-cell diagnostics.
     element_instance_tallies: bool = True
     channel_instance_tallies: bool = True
+    instance_axial_tallies: bool = True
 
     # Optional tally-driven numerical convergence. Disabled by default so
     # existing run lengths remain deterministic unless explicitly requested.
