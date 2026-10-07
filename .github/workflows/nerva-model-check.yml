@@ -93,6 +93,18 @@ jobs:
       - name: Check NERVA element/channel thermal CLI
         run: python -m ntr.nerva.solve_element_channels --help
 
+      - name: Check NERVA element/channel plotting CLI
+        run: python -m ntr.nerva.plot_element_channels --help
+
+      - name: Check NERVA VTK exporter CLI
+        run: python -m ntr.nerva.export_vtk --help
+
+      - name: Check NERVA run-comparison CLI
+        run: python -m ntr.nerva.compare_runs --help
+
+      - name: Check NERVA numerical-convergence CLI
+        run: python -m ntr.nerva.summarize_convergence --help
+
       - name: Validate NERVA nuclear-data preflight parser
         run: python -m ntr.nerva.validate_nuclear_data
 
@@ -195,6 +207,13 @@ jobs:
             --tie-supply-profile build/nerva_synthetic/tie/tie_supply_profile.csv \
             --tie-return-profile build/nerva_synthetic/tie/tie_return_profile.csv \
             --output build/nerva_synthetic/plots
+
+      - name: Export synthetic NERVA VTK fields
+        run: |
+          python -m ntr.nerva.export_vtk \
+            build/nerva_synthetic/nerva_mesh_fields.npz \
+            --output build/nerva_synthetic/nerva_fields.vtk
+          test -s build/nerva_synthetic/nerva_fields.vtk
 
       - name: Verify synthetic pipeline products
         run: |
