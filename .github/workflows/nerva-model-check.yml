@@ -71,6 +71,12 @@ jobs:
       - name: Validate NERVA engine performance layer
         run: python -m ntr.nerva.validate_engine_performance
 
+      - name: Validate physics-based NERVA engine solver
+        run: python -m ntr.nerva.validate_nerva_engine
+
+      - name: Check physics-based NERVA engine CLI
+        run: python -m ntr.nerva.run_nerva_engine --help
+
       - name: Validate published NERVA historical presets
         run: python -m ntr.nerva.validate_historical_presets
 
