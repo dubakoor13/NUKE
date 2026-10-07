@@ -91,6 +91,9 @@ def main() -> int:
     element_channels_path = (
         root / "element_channels" / "element_channel_summary.json"
     )
+    tie_instances_path = (
+        root / "tie_instances" / "tie_instance_summary.json"
+    )
 
     power = _load_json(power_path)
     diagnostics = _load_json(diagnostics_path)
@@ -99,6 +102,11 @@ def main() -> int:
     element_channels = (
         _load_json(element_channels_path)
         if element_channels_path.is_file()
+        else None
+    )
+    tie_instances = (
+        _load_json(tie_instances_path)
+        if tie_instances_path.is_file()
         else None
     )
 
@@ -395,6 +403,85 @@ def main() -> int:
                 "element/channel maximum peak fuel temperature must be positive"
             )
 
+
+    if tie_instances is not None:
+        _assert_close(
+            _finite_number(
+                tie_instances[
+                    "reconstructed_tie_solid_power_W"
+                ],
+                "tie_instances.reconstructed_tie_solid_power_W",
+            ),
+            tie_power_w,
+            "per-tie reconstructed solid power",
+            rel_tol=1.0e-6,
+            abs_tol=1.0e-2,
+        )
+
+        expected_supply_direct = _finite_number(
+            power.get(
+                "tie_supply_hydrogen_direct_power_W",
+                0.0,
+            ),
+            "tie_supply_hydrogen_direct_power_W",
+        )
+        expected_return_direct = _finite_number(
+            power.get(
+                "tie_return_hydrogen_direct_power_W",
+                0.0,
+            ),
+            "tie_return_hydrogen_direct_power_W",
+        )
+
+        if expected_supply_direct > 0.0:
+            _assert_close(
+                _finite_number(
+                    tie_instances[
+                        "reconstructed_direct_supply_hydrogen_power_W"
+                    ],
+                    "tie_instances.reconstructed_direct_supply_hydrogen_power_W",
+                ),
+                expected_supply_direct,
+                "per-tie direct supply H2 power",
+                rel_tol=1.0e-6,
+                abs_tol=1.0e-2,
+            )
+
+        if expected_return_direct > 0.0:
+            _assert_close(
+                _finite_number(
+                    tie_instances[
+                        "reconstructed_direct_return_hydrogen_power_W"
+                    ],
+                    "tie_instances.reconstructed_direct_return_hydrogen_power_W",
+                ),
+                expected_return_direct,
+                "per-tie direct return H2 power",
+                rel_tol=1.0e-6,
+                abs_tol=1.0e-2,
+            )
+
+        tie_instance_inlet = _finite_number(
+            tie_instances["inlet_temperature_K"],
+            "tie_instances.inlet_temperature_K",
+        )
+        tie_instance_max_outlet = _finite_number(
+            tie_instances["maximum_outlet_temperature_K"],
+            "tie_instances.maximum_outlet_temperature_K",
+        )
+        if tie_instance_max_outlet < tie_instance_inlet:
+            raise ValueError(
+                "all-tie maximum outlet temperature is below inlet"
+            )
+
+        if _finite_number(
+            tie_instances["maximum_wall_temperature_K"],
+            "tie_instances.maximum_wall_temperature_K",
+        ) <= 0.0:
+            raise ValueError(
+                "all-tie maximum wall temperature must be positive"
+            )
+
     with np.load(fields_path) as fields:
         required_arrays = {
             "power_density_w_cm3",
@@ -450,6 +537,9 @@ def main() -> int:
             "normalized_field_arrays_finite": True,
             "element_channel_power_closure": (
                 element_channels is not None
+            ),
+            "tie_instance_power_closure": (
+                tie_instances is not None
             ),
         },
         "diagnostic_values": {
