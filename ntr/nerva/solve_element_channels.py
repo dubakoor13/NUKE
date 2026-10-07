@@ -25,6 +25,10 @@ from .fuel_conduction import (
     estimate_fuel_solid_temperatures,
 )
 from .hydrogen_properties import make_hydrogen_property_model
+from .parallel_flow import (
+    pressure_spread_fraction,
+    update_parallel_mass_flow,
+)
 from .thermal import HydrogenProperties, solve_fuel_channel
 
 
@@ -66,6 +70,29 @@ def parse_args() -> argparse.Namespace:
         "--zrc-conductivity-w-m-k",
         type=float,
         default=20.0,
+    )
+    parser.add_argument(
+        "--balance-flow",
+        action="store_true",
+        help=(
+            "Iteratively redistribute the fixed total fuel-channel flow "
+            "to approach a common parallel-branch pressure drop."
+        ),
+    )
+    parser.add_argument(
+        "--flow-balance-max-iterations",
+        type=int,
+        default=6,
+    )
+    parser.add_argument(
+        "--flow-balance-tolerance",
+        type=float,
+        default=1.0e-3,
+    )
+    parser.add_argument(
+        "--flow-balance-relaxation",
+        type=float,
+        default=0.5,
     )
     parser.add_argument(
         "--output",
@@ -118,6 +145,18 @@ def main() -> int:
     args = parse_args()
     if args.fuel_mass_flow_kg_s <= 0.0:
         raise ValueError("--fuel-mass-flow-kg-s must be positive")
+    if args.flow_balance_max_iterations < 1:
+        raise ValueError(
+            "--flow-balance-max-iterations must be >= 1"
+        )
+    if args.flow_balance_tolerance <= 0.0:
+        raise ValueError(
+            "--flow-balance-tolerance must be positive"
+        )
+    if not (0.0 < args.flow_balance_relaxation <= 1.0):
+        raise ValueError(
+            "--flow-balance-relaxation must lie in (0, 1]"
+        )
 
     fields = np.load(args.power_fields)
     instances = np.load(args.instance_fields)
@@ -426,6 +465,95 @@ def main() -> int:
         zrc_conductivity_w_m_k=args.zrc_conductivity_w_m_k,
     )
 
+    branch_mass_flow = np.full(
+        (n_elements, n_channels),
+        mass_flow_per_channel,
+        dtype=float,
+    )
+    flow_balance_converged: bool | None = None
+    flow_balance_iterations = 0
+    flow_balance_max_relative_change = 0.0
+
+    if args.balance_flow:
+        flow_balance_converged = False
+        for iteration in range(
+            1,
+            args.flow_balance_max_iterations + 1,
+        ):
+            delta_pressure = np.zeros_like(
+                branch_mass_flow
+            )
+
+            for element in range(n_elements):
+                for channel in range(n_channels):
+                    trial = solve_fuel_channel(
+                        axial_total_fuel_power_w=(
+                            channel_wall_axial[
+                                element,
+                                channel,
+                                :,
+                            ]
+                        ),
+                        axial_direct_coolant_power_w=(
+                            channel_direct_axial[
+                                element,
+                                channel,
+                                :,
+                            ]
+                        ),
+                        z_edges_m=z_edges_m,
+                        fuel_channel_count=1,
+                        mass_flow_per_channel_kg_s=float(
+                            branch_mass_flow[
+                                element,
+                                channel,
+                            ]
+                        ),
+                        inlet_temperature_k=(
+                            args.inlet_temperature_k
+                        ),
+                        inlet_pressure_pa=(
+                            args.inlet_pressure_mpa * 1.0e6
+                        ),
+                        channel_diameter_m=(
+                            config.coolant_bore_diameter_cm
+                            / 100.0
+                        ),
+                        properties=HydrogenProperties(),
+                        property_model=property_model,
+                    )
+                    delta_pressure[element, channel] = (
+                        args.inlet_pressure_mpa * 1.0e6
+                        - trial.outlet_pressure_pa
+                    )
+
+            update = update_parallel_mass_flow(
+                branch_mass_flow.reshape(-1),
+                delta_pressure.reshape(-1),
+                total_mass_flow_kg_s=(
+                    args.fuel_mass_flow_kg_s
+                ),
+                relaxation=(
+                    args.flow_balance_relaxation
+                ),
+            )
+            branch_mass_flow = (
+                update.mass_flow_kg_s.reshape(
+                    n_elements,
+                    n_channels,
+                )
+            )
+            flow_balance_iterations = iteration
+            flow_balance_max_relative_change = (
+                update.max_relative_change
+            )
+            if (
+                update.max_relative_change
+                <= args.flow_balance_tolerance
+            ):
+                flow_balance_converged = True
+                break
+
     rows: list[dict] = []
     hottest = None
     hottest_solution = None
@@ -442,8 +570,8 @@ def main() -> int:
                 ),
                 z_edges_m=z_edges_m,
                 fuel_channel_count=1,
-                mass_flow_per_channel_kg_s=(
-                    mass_flow_per_channel
+                mass_flow_per_channel_kg_s=float(
+                    branch_mass_flow[element, channel]
                 ),
                 inlet_temperature_k=args.inlet_temperature_k,
                 inlet_pressure_pa=args.inlet_pressure_mpa * 1.0e6,
@@ -465,6 +593,13 @@ def main() -> int:
                 "channel": channel + 1,
                 "fuel_element_power_fraction": float(
                     fuel_fraction[element]
+                ),
+                "mass_flow_kg_s": float(
+                    branch_mass_flow[element, channel]
+                ),
+                "pressure_drop_Pa": float(
+                    args.inlet_pressure_mpa * 1.0e6
+                    - solution.outlet_pressure_pa
                 ),
                 "wall_power_W": float(
                     solution.wall_transferred_power_w
@@ -556,6 +691,7 @@ def main() -> int:
         element_solid_axial_power_w=element_solid_axial,
         channel_wall_axial_power_w=channel_wall_axial,
         channel_direct_h2_axial_power_w=channel_direct_axial,
+        branch_mass_flow_kg_s=branch_mass_flow,
         z_edges_m=z_edges_m,
         native_instance_axial_mesh_used=np.asarray(
             [direct_instance_axial_available],
@@ -569,6 +705,11 @@ def main() -> int:
     peak_fuel_temperatures = np.asarray(
         [row["max_peak_fuel_temperature_K"] for row in rows]
     )
+    final_pressure_drop = np.asarray(
+        [row["pressure_drop_Pa"] for row in rows],
+        dtype=float,
+    )
+    branch_flow_flat = branch_mass_flow.reshape(-1)
 
     summary = {
         "fuel_element_instances": n_elements,
@@ -576,6 +717,30 @@ def main() -> int:
         "total_channels": total_channels,
         "fuel_mass_flow_kg_s": args.fuel_mass_flow_kg_s,
         "mass_flow_per_channel_kg_s": mass_flow_per_channel,
+        "minimum_channel_mass_flow_kg_s": float(
+            np.min(branch_flow_flat)
+        ),
+        "maximum_channel_mass_flow_kg_s": float(
+            np.max(branch_flow_flat)
+        ),
+        "reconstructed_total_fuel_mass_flow_kg_s": float(
+            np.sum(branch_flow_flat)
+        ),
+        "flow_balance_enabled": args.balance_flow,
+        "flow_balance_converged": flow_balance_converged,
+        "flow_balance_iterations": flow_balance_iterations,
+        "flow_balance_tolerance": (
+            args.flow_balance_tolerance
+        ),
+        "flow_balance_relaxation": (
+            args.flow_balance_relaxation
+        ),
+        "flow_balance_max_relative_change": (
+            flow_balance_max_relative_change
+        ),
+        "final_pressure_drop_spread_fraction": (
+            pressure_spread_fraction(final_pressure_drop)
+        ),
         "global_fuel_solid_power_W": fuel_total_w,
         "global_direct_hydrogen_nuclear_power_W": direct_total_w,
         "reconstructed_wall_power_W": float(
@@ -663,6 +828,13 @@ def main() -> int:
     print(
         f"  fuel element integrated-power peaking: "
         f"{summary['fuel_element_max_to_mean_integrated_power']:.6f}"
+    )
+    print(
+        f"  flow balance: enabled={args.balance_flow}, "
+        f"converged={flow_balance_converged}, "
+        f"iterations={flow_balance_iterations}, "
+        f"pressure-drop spread="
+        f"{summary['final_pressure_drop_spread_fraction']:.6g}"
     )
     print(
         f"  maximum channel outlet temperature: "
