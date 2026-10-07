@@ -199,15 +199,55 @@ assumptions:
   Distribcell x axial-mesh tallies;
 - **legacy fallback only:** the global axial shapes are used separably when an
   older statepoint does not contain the direct instance-axial tallies;
-- **remaining reconstruction assumption:** solid wall power within one fuel
-  element is divided equally among its 19 coolant channels.
+- **OpenMC measured:** integrated and axial solid heating in 19 same-material
+  nearest-channel Voronoi fuel sectors;
+- **current thermal assignment:** each fuel sector's solid heat is assigned to
+  its associated coolant channel;
+- **legacy fallback only:** older statepoints without sector tallies divide
+  solid wall power equally among the 19 channels.
 
-For new statepoints built by the current model, the element and direct-H2
-channel axial shapes are therefore Monte Carlo tally outputs rather than
-fabricated separable shapes.
+For new statepoints built by the current model, the element axial shape,
+channel-associated solid-heating shape, and direct-H2 channel axial shape are
+Monte Carlo tally outputs. The remaining approximation is the thermal mapping
+of each Voronoi sector's deposited heat to its associated coolant channel.
 
 Outputs include the complete element/channel table, reconstructed axial power
 arrays, and a full axial profile for the hottest reconstructed channel.
+
+
+
+### Fuel-sector scoring partition
+
+The fuel matrix is now split into 19 scoring cells using nearest-channel
+Voronoi boundaries. Every sector uses the same fuel material and every internal
+Voronoi plane is transmission-only, so this is a scoring-resolution change
+rather than a new material interface.
+
+For channel `i`, OpenMC now produces:
+
+```text
+nerva_fuel_sector_ii_instances
+nerva_fuel_sector_ii_axial_instances
+```
+
+The sector-integrated and sector-axial `heating-local` tallies are aligned to
+the repeated fuel-element instance and stored as:
+
+```text
+fuel_channel_sector_heating_w
+fuel_channel_sector_heating_std_w
+fuel_channel_sector_axial_heating_w
+fuel_channel_sector_axial_heating_std_w
+```
+
+The element/channel thermal solver uses these arrays directly for wall-power
+assignment. It still renormalizes the complete sector field to the global
+OpenMC fuel-solid power total so energy closure is exact.
+
+`validate_fuel_sectors.py` independently reconstructs the pre-partition fuel
+region, samples it densely, and checks that every sampled fuel point belongs
+to exactly one scoring sector. It also verifies that all 171 shared Voronoi
+planes are transmission boundaries.
 
 
 ### Per-tie OpenMC thermal reconstruction
