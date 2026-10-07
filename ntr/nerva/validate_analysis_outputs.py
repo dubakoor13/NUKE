@@ -88,11 +88,19 @@ def main() -> int:
     )
     fuel_path = root / "fuel" / "thermal_summary.json"
     tie_path = root / "tie" / "tie_thermal_summary.json"
+    element_channels_path = (
+        root / "element_channels" / "element_channel_summary.json"
+    )
 
     power = _load_json(power_path)
     diagnostics = _load_json(diagnostics_path)
     fuel = _load_json(fuel_path)
     tie = _load_json(tie_path)
+    element_channels = (
+        _load_json(element_channels_path)
+        if element_channels_path.is_file()
+        else None
+    )
 
     if not fields_path.is_file():
         raise FileNotFoundError(fields_path)
@@ -323,6 +331,47 @@ def main() -> int:
     if tie_p_out > tie_p_in:
         raise ValueError("tie-tube outlet pressure exceeds inlet")
 
+
+    if element_channels is not None:
+        reconstructed_wall = _finite_number(
+            element_channels["reconstructed_wall_power_W"],
+            "element_channels.reconstructed_wall_power_W",
+        )
+        _assert_close(
+            reconstructed_wall,
+            fuel_power_w,
+            "element/channel reconstructed fuel wall power",
+            rel_tol=1.0e-6,
+            abs_tol=1.0e-2,
+        )
+
+        reconstructed_direct = _finite_number(
+            element_channels[
+                "reconstructed_direct_hydrogen_power_W"
+            ],
+            "element_channels.reconstructed_direct_hydrogen_power_W",
+        )
+        expected_direct = _finite_number(
+            power.get("fuel_hydrogen_direct_power_W", 0.0),
+            "fuel_hydrogen_direct_power_W",
+        )
+        if expected_direct > 0.0:
+            _assert_close(
+                reconstructed_direct,
+                expected_direct,
+                "element/channel direct hydrogen power",
+                rel_tol=1.0e-6,
+                abs_tol=1.0e-2,
+            )
+
+        if _finite_number(
+            element_channels["maximum_peak_fuel_temperature_K"],
+            "element_channels.maximum_peak_fuel_temperature_K",
+        ) <= 0.0:
+            raise ValueError(
+                "element/channel maximum peak fuel temperature must be positive"
+            )
+
     with np.load(fields_path) as fields:
         required_arrays = {
             "power_density_w_cm3",
@@ -375,6 +424,9 @@ def main() -> int:
             "fuel_temperature_pressure_trends": True,
             "tie_temperature_pressure_trends": True,
             "normalized_field_arrays_finite": True,
+            "element_channel_power_closure": (
+                element_channels is not None
+            ),
         },
         "diagnostic_values": {
             "requested_power_MW": requested_power_mw,
