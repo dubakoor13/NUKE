@@ -107,6 +107,50 @@ def main() -> int:
     )
     plt.close(fig)
 
+    if "k_batch_mean" in data.files:
+        k_history = np.asarray(
+            data["k_batch_mean"],
+            dtype=float,
+        ).reshape(-1)
+        if k_history.size:
+            fig, ax = plt.subplots()
+            ax.plot(
+                np.arange(1, k_history.size + 1),
+                k_history,
+            )
+            ax.set_xlabel("Batch")
+            ax.set_ylabel("k estimate")
+            ax.set_title("OpenMC batch-mean k history (diagnostic only)")
+            ax.grid(True)
+            fig.tight_layout()
+            fig.savefig(
+                args.output / "openmc_k_history.png",
+                dpi=160,
+            )
+            plt.close(fig)
+
+    if "entropy" in data.files:
+        entropy = np.asarray(
+            data["entropy"],
+            dtype=float,
+        ).reshape(-1)
+        if entropy.size:
+            fig, ax = plt.subplots()
+            ax.plot(
+                np.arange(1, entropy.size + 1),
+                entropy,
+            )
+            ax.set_xlabel("Batch")
+            ax.set_ylabel("Shannon entropy")
+            ax.set_title("OpenMC source entropy history")
+            ax.grid(True)
+            fig.tight_layout()
+            fig.savefig(
+                args.output / "openmc_source_entropy.png",
+                dpi=160,
+            )
+            plt.close(fig)
+
     names, heating_mw = _material_heating(args.material_csv)
     fig, ax = plt.subplots()
     ax.bar(names, heating_mw)
@@ -161,6 +205,8 @@ def main() -> int:
     print("NERVA OpenMC diagnostic plots written:")
     for name in (
         "openmc_axial_power.png",
+        "openmc_k_history.png",
+        "openmc_source_entropy.png",
         "openmc_fuel_spectrum.png",
         "openmc_hydrogen_spectrum.png",
         "openmc_material_heating.png",
