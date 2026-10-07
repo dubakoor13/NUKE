@@ -190,3 +190,64 @@ def coupled_lantr_point(
             * BASE_ISP_S
         )),
     )
+
+
+HIGH_PRESSURE_BASE_HYDROGEN_MASS_FLOW_KG_S = (
+    HIGH_PRESSURE_LANTR_BASE_THRUST_N
+    / (G0_M_S2 * high_pressure_lantr_isp(0.0)[0])
+)
+
+
+def coupled_high_pressure_lantr_point(
+    oxygen_hydrogen_ratio: float,
+    chamber_pressure_pa: float,
+    reactor_exit_temperature_k: float = 2900.0,
+) -> CoupledLantrPoint:
+    """Scale the 2000-psia trimodal LANTR for fixed throat geometry.
+
+    The anchor is the published 15-klbf, 2000-psia, 2900 K / 5-hour reference.
+    Hydrogen choked flow scales as Pc/sqrt(Tc). Oxygen flow is MR times the
+    hydrogen flow. Delivered Isp is interpolated from the published high-
+    pressure trimodal table.
+    """
+    if chamber_pressure_pa <= 0.0:
+        raise ValueError("chamber_pressure_pa must be positive")
+    if reactor_exit_temperature_k <= 0.0:
+        raise ValueError("reactor_exit_temperature_k must be positive")
+
+    isp, _ = high_pressure_lantr_isp(oxygen_hydrogen_ratio)
+    pressure_scale = (
+        chamber_pressure_pa / HIGH_PRESSURE_LANTR_CHAMBER_PRESSURE_PA
+    )
+    temperature_scale = (2900.0 / reactor_exit_temperature_k) ** 0.5
+
+    hydrogen_flow = (
+        HIGH_PRESSURE_BASE_HYDROGEN_MASS_FLOW_KG_S
+        * pressure_scale
+        * temperature_scale
+    )
+    oxygen_flow = oxygen_hydrogen_ratio * hydrogen_flow
+    total_flow = hydrogen_flow + oxygen_flow
+    thrust = total_flow * G0_M_S2 * isp
+
+    base_thrust_at_same_pressure_temperature = (
+        HIGH_PRESSURE_BASE_HYDROGEN_MASS_FLOW_KG_S
+        * pressure_scale
+        * temperature_scale
+        * G0_M_S2
+        * high_pressure_lantr_isp(0.0)[0]
+    )
+
+    return CoupledLantrPoint(
+        oxygen_hydrogen_ratio=float(oxygen_hydrogen_ratio),
+        chamber_pressure_pa=float(chamber_pressure_pa),
+        reactor_exit_temperature_k=float(reactor_exit_temperature_k),
+        hydrogen_mass_flow_kg_s=float(hydrogen_flow),
+        oxygen_mass_flow_kg_s=float(oxygen_flow),
+        total_mass_flow_kg_s=float(total_flow),
+        delivered_isp_s=float(isp),
+        thrust_n=float(thrust),
+        thrust_augmentation_factor=float(
+            thrust / base_thrust_at_same_pressure_temperature
+        ),
+    )
