@@ -236,6 +236,28 @@ python -m ntr.nerva.run_analysis \
 Use `--hydrogen-model coolprop` after installing CoolProp, or `--no-plots`
 when matplotlib is not installed.
 
+## Historical NERVA reference presets
+
+The repository now carries source-tagged NASA reference presets in
+`ntr/nerva/historical_presets.py`. They are system-level comparison data and
+do not contain fissile loading or an exact criticality recipe.
+
+Implemented references:
+
+- **XE-Prime tested prototype** — 1140 MW, 55.4 klbf (~246.4 kN), 710 s net
+  Isp, 10:1 nozzle area ratio, ~2281 K chamber temperature, ~3.90 MPa chamber
+  pressure, 70.2 lb/s (~31.84 kg/s) H2 core flow, 1584 fuel elements, 19
+  channels per element, 35 in core diameter and 52 in active length.
+- **1972 75-klbf NERVA design reference** — 75 klbf (~333.6 kN), 2350–2500 K
+  chamber temperature, 450 psia (~3.10 MPa), 100:1 nozzle expansion ratio and
+  825–850 s specific impulse.
+- **75-klbf graphite NERVA derivative** — 2500 K, 500 psia, 200:1 and 875 s.
+- **NESS / R-1 baseline reactor** — ~1500 MW, nominal 38 in diameter x 52 in
+  long core, 19 mm / 0.75 in NERVA-type hex fuel elements with 19 channels,
+  tie-tube heating 3–7% and reflector heating 1–2%.
+
+NASA sources are stored in each preset and displayed directly by the dashboard.
+
 ## Web dashboard: thrust, Isp, temperatures and run values
 
 A Streamlit dashboard is included at the repository root:
@@ -245,10 +267,14 @@ python -m pip install -r requirements-web.txt
 streamlit run streamlit_app.py
 ```
 
-The dashboard has two modes:
+The dashboard has four modes:
 
+- **Historical NERVA reference** — select XE-Prime, 1972 75-klbf NERVA,
+  graphite derivative, or NESS/R-1 and see the published NASA values.
 - **Synthetic demo** — starts immediately with deterministic CI values. These
   values are explicitly labeled synthetic and are not an OpenMC transport run.
+- **Auto-load analysis directory** — reads a local `build/nerva_analysis`
+  result tree directly.
 - **Upload run outputs** — upload `metadata.json`,
   `thermal_summary.json`, and `tie_thermal_summary.json` from an actual
   analysis directory.
