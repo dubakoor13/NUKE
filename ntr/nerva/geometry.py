@@ -87,7 +87,13 @@ def build_fuel_element_universe(
             )
 
     for i in range(len(positions)):
-        sector_region = fuel_region
+        # Build a fresh Boolean expression for every sector. OpenMC
+        # Intersection implements in-place &=, so reusing fuel_region here
+        # would mutate the shared base expression and create gaps.
+        sector_region = -inner_hex
+        for outer in outer_cylinders:
+            sector_region &= +outer
+
         for j in range(len(positions)):
             if i == j:
                 continue
