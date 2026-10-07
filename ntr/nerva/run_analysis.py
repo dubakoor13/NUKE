@@ -65,6 +65,7 @@ def main() -> int:
     power_dir = root / "power"
     fuel_dir = root / "fuel"
     tie_dir = root / "tie"
+    diagnostics_dir = root / "openmc_diagnostics"
     plots_dir = root / "plots"
     root.mkdir(parents=True, exist_ok=True)
 
@@ -84,6 +85,19 @@ def main() -> int:
     )
 
     fields = power_dir / "nerva_mesh_fields.npz"
+
+    _run(
+        [
+            python,
+            "-m",
+            "ntr.nerva.postprocess_openmc_diagnostics",
+            str(args.statepoint),
+            "--power-metadata",
+            str(power_dir / "metadata.json"),
+            "--output",
+            str(diagnostics_dir),
+        ]
+    )
 
     _run(
         [
@@ -149,6 +163,7 @@ def main() -> int:
     print("NERVA analysis pipeline complete:")
     print(f"  root: {root}")
     print(f"  power fields: {power_dir}")
+    print(f"  OpenMC diagnostics: {diagnostics_dir}")
     print(f"  fuel thermal: {fuel_dir}")
     print(f"  tie thermal: {tie_dir}")
     if not args.no_plots:
