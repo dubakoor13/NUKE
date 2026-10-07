@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from .solve_element_channels import _normalized_shape
+from .solve_element_channels import (
+    _normalized_shape,
+    _rebin_shape_to_edges,
+)
 
 
 def main() -> int:
@@ -32,6 +35,15 @@ def main() -> int:
 
     assert np.isclose(np.sum(element_axial), total_power)
     assert np.isclose(np.sum(channel_wall) * 19.0, total_power)
+
+    rebinned = _rebin_shape_to_edges(
+        np.array([10.0, 20.0]),
+        np.array([0.0, 1.0, 2.0]),
+        np.array([0.0, 0.5, 1.5, 2.0]),
+    )
+    assert rebinned.shape == (3,)
+    assert np.isclose(np.sum(rebinned), 30.0)
+    assert np.all(rebinned >= 0.0)
 
     print("NERVA element/channel reconstruction validation: PASS")
     return 0
