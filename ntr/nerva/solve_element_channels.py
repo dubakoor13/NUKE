@@ -186,22 +186,89 @@ def main() -> int:
     fuel_axial_shape = _normalized_shape(axial_fuel_power_w)
     direct_axial_shape = _normalized_shape(axial_direct_h2_power_w)
 
-    element_solid_axial = (
-        fuel_fraction[:, None]
-        * fuel_total_w
-        * fuel_axial_shape[None, :]
+    direct_instance_axial_available = (
+        "fuel_element_axial_heating_w" in instances.files
+        and np.asarray(
+            instances["fuel_element_axial_heating_w"]
+        ).shape == (n_elements, int(dimension[2]))
+        and float(
+            np.sum(instances["fuel_element_axial_heating_w"])
+        ) > 0.0
     )
+
+    if direct_instance_axial_available:
+        raw_element_axial = np.asarray(
+            instances["fuel_element_axial_heating_w"],
+            dtype=float,
+        )
+        element_solid_axial = np.zeros_like(raw_element_axial)
+        for element in range(n_elements):
+            shape_e = _normalized_shape(
+                raw_element_axial[element, :]
+            )
+            element_solid_axial[element, :] = (
+                fuel_fraction[element]
+                * fuel_total_w
+                * shape_e
+            )
+    else:
+        element_solid_axial = (
+            fuel_fraction[:, None]
+            * fuel_total_w
+            * fuel_axial_shape[None, :]
+        )
     channel_wall_axial = (
         element_solid_axial[:, None, :]
         / float(n_channels)
     )
 
-    if direct_total_w > 0.0 and np.sum(direct_fraction) > 0.0:
-        channel_direct_axial = (
-            direct_fraction[:, :, None]
-            * direct_total_w
-            * direct_axial_shape[None, None, :]
+    direct_channel_axial_available = (
+        "channel_direct_nuclear_heating_axial_w" in instances.files
+        and np.asarray(
+            instances[
+                "channel_direct_nuclear_heating_axial_w"
+            ]
+        ).shape == (
+            n_elements,
+            n_channels,
+            int(dimension[2]),
         )
+        and float(
+            np.sum(
+                instances[
+                    "channel_direct_nuclear_heating_axial_w"
+                ]
+            )
+        ) > 0.0
+    )
+
+    if direct_total_w > 0.0 and np.sum(direct_fraction) > 0.0:
+        if direct_channel_axial_available:
+            raw_direct_axial = np.asarray(
+                instances[
+                    "channel_direct_nuclear_heating_axial_w"
+                ],
+                dtype=float,
+            )
+            channel_direct_axial = np.zeros_like(
+                raw_direct_axial
+            )
+            for element in range(n_elements):
+                for channel in range(n_channels):
+                    shape_ec = _normalized_shape(
+                        raw_direct_axial[element, channel, :]
+                    )
+                    channel_direct_axial[element, channel, :] = (
+                        direct_fraction[element, channel]
+                        * direct_total_w
+                        * shape_ec
+                    )
+        else:
+            channel_direct_axial = (
+                direct_fraction[:, :, None]
+                * direct_total_w
+                * direct_axial_shape[None, None, :]
+            )
     else:
         channel_direct_axial = np.zeros_like(channel_wall_axial)
 
@@ -402,25 +469,35 @@ def main() -> int:
             args.zrc_conductivity_w_m_k
         ),
         "hydrogen_property_model": args.hydrogen_model,
+        "direct_element_axial_openmc_used": (
+            direct_instance_axial_available
+        ),
+        "direct_channel_axial_openmc_used": (
+            direct_channel_axial_available
+        ),
         "reconstruction_assumptions": [
             (
                 "OpenMC integrated fuel-element fractions are exact tally "
                 "outputs after source-rate normalization."
             ),
             (
-                "The global fuel axial shape is applied separably to every "
-                "fuel-element integrated fraction."
+                "Fuel-element-specific OpenMC axial shapes are used when "
+                "the Distribcell x axial-mesh tallies are present; the "
+                "global fuel axial shape is only a backward-compatible "
+                "fallback."
             ),
             (
                 "Solid wall power is divided equally among the 19 channels "
                 "inside each element."
             ),
             (
-                "OpenMC direct-H2 channel-instance integrated fractions are "
-                "combined with the global direct-H2 axial shape."
+                "Channel-specific OpenMC direct-H2 axial shapes are used "
+                "when available; the global direct-H2 axial shape is only "
+                "a backward-compatible fallback."
             ),
             (
-                "No unmeasured element-specific axial shape is invented."
+                "No unmeasured element-specific axial shape is invented "
+                "when direct instance-axial tallies are available."
             ),
         ],
     }
