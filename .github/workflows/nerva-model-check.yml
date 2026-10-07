@@ -78,6 +78,21 @@ jobs:
       - name: Validate expanded NERVA OpenMC diagnostics
         run: python -m ntr.nerva.validate_openmc_diagnostics
 
+      - name: Validate NERVA stochastic-volume setup
+        run: python -m ntr.nerva.validate_volumes
+
+      - name: Check NERVA stochastic-volume CLI
+        run: python -m ntr.nerva.calculate_volumes --help
+
+      - name: Check NERVA instance-tally postprocessor CLI
+        run: python -m ntr.nerva.postprocess_instance_tallies --help
+
+      - name: Validate NERVA element/channel reconstruction
+        run: python -m ntr.nerva.validate_element_channels
+
+      - name: Check NERVA element/channel thermal CLI
+        run: python -m ntr.nerva.solve_element_channels --help
+
       - name: Validate NERVA nuclear-data preflight parser
         run: python -m ntr.nerva.validate_nuclear_data
 
