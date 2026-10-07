@@ -81,6 +81,9 @@ jobs:
       - name: Check NERVA OpenMC diagnostics postprocessor CLI
         run: python -m ntr.nerva.postprocess_openmc_diagnostics --help
 
+      - name: Check NERVA OpenMC diagnostics plotting CLI
+        run: python -m ntr.nerva.plot_openmc_diagnostics --help
+
       - name: Validate four alternative-propellant NTP cases
         run: python -m ntr.nerva.validate_alternative_propellant_cases
 
