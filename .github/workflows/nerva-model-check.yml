@@ -65,6 +65,9 @@ jobs:
       - name: Check NERVA result plotting CLI
         run: python -m ntr.nerva.plot_results --help
 
+      - name: Check NERVA analysis orchestrator CLI
+        run: python -m ntr.nerva.run_analysis --help
+
       - name: Run synthetic end-to-end thermal pipeline
         run: |
           python -m ntr.nerva.make_synthetic_fields \
