@@ -74,6 +74,7 @@ def main() -> int:
     power_dir = root / "power"
     fuel_dir = root / "fuel"
     tie_dir = root / "tie"
+    tie_instances_dir = root / "tie_instances"
     diagnostics_dir = root / "openmc_diagnostics"
     instances_dir = root / "instances"
     element_channels_dir = root / "element_channels"
@@ -224,6 +225,26 @@ def main() -> int:
         [
             python,
             "-m",
+            "ntr.nerva.solve_tie_instances",
+            str(fields),
+            str(instances_dir / "instance_power_fractions.npz"),
+            "--tie-mass-flow-kg-s",
+            str(args.tie_mass_flow_kg_s),
+            "--inlet-temperature-k",
+            str(args.inlet_temperature_k),
+            "--inlet-pressure-mpa",
+            str(args.inlet_pressure_mpa),
+            "--hydrogen-model",
+            args.hydrogen_model,
+            "--output",
+            str(tie_instances_dir),
+        ]
+    )
+
+    _run(
+        [
+            python,
+            "-m",
             "ntr.nerva.validate_analysis_outputs",
             str(root),
         ]
@@ -294,6 +315,7 @@ def main() -> int:
     )
     print(f"  fuel thermal: {fuel_dir}")
     print(f"  tie thermal: {tie_dir}")
+    print(f"  per-tie thermal: {tie_instances_dir}")
     print(f"  QA report: {root / 'analysis_validation.json'}")
     if not args.no_plots:
         print(f"  OpenMC plots: {openmc_plots_dir}")
