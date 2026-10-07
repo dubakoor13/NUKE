@@ -45,6 +45,22 @@ jobs:
             --rings 5 \
             --output build/nerva_mixed_core
 
+      - name: Export full reactor with inward-facing absorbers
+        run: |
+          python -m ntr.nerva.build_model \
+            --assembly reactor \
+            --rings 5 \
+            --drum-angle 0 \
+            --output build/nerva_reactor_in
+
+      - name: Export full reactor with outward-facing absorbers
+        run: |
+          python -m ntr.nerva.build_model \
+            --assembly reactor \
+            --rings 5 \
+            --drum-angle 180 \
+            --output build/nerva_reactor_out
+
       - name: Export small all-fuel regression core
         run: |
           python -m ntr.nerva.build_model \
@@ -53,7 +69,12 @@ jobs:
 
       - name: Verify exported OpenMC inputs
         run: |
-          for d in build/nerva_cluster build/nerva_mixed_core build/nerva_core; do
+          for d in \
+            build/nerva_cluster \
+            build/nerva_mixed_core \
+            build/nerva_reactor_in \
+            build/nerva_reactor_out \
+            build/nerva_core; do
             for f in geometry.xml materials.xml settings.xml tallies.xml plots.xml; do
               test -s "$d/$f"
               echo "$d/$f"
