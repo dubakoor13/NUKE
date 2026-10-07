@@ -69,9 +69,12 @@ def _solve(
         axial_direct_coolant_power_w=direct_power,
         z_edges_m=z_edges,
         fuel_channel_count=1,
-        mass_flow_per_channel_kg_s=summary[
-            "mass_flow_per_channel_kg_s"
-        ],
+        mass_flow_per_channel_kg_s=float(
+            summary.get(
+                "uncertainty_replay_mass_flow_kg_s",
+                summary["mass_flow_per_channel_kg_s"],
+            )
+        ),
         inlet_temperature_k=summary["inlet_temperature_K"],
         inlet_pressure_pa=summary["inlet_pressure_Pa"],
         channel_diameter_m=(
@@ -181,6 +184,13 @@ def main() -> int:
     upper_wall = wall * (1.0 + wall_rel_sigma)
     lower_direct = direct * max(0.0, 1.0 - direct_rel_sigma)
     upper_direct = direct * (1.0 + direct_rel_sigma)
+
+    summary["uncertainty_replay_mass_flow_kg_s"] = float(
+        hottest.get(
+            "mass_flow_kg_s",
+            summary["mass_flow_per_channel_kg_s"],
+        )
+    )
 
     nominal = _solve(wall, direct, z_edges, summary)
     lower = _solve(lower_wall, lower_direct, z_edges, summary)
