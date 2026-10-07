@@ -62,6 +62,19 @@ class MethanePbmCase:
     turbine_inlet_temperature_k: float
     turbine_delta_temperature_k: float
 
+    @property
+    def derived_thrust_n(self) -> float:
+        """Thrust implied by the source mdot and Isp values."""
+        return self.total_mass_flow_kg_s * 9.80665 * self.isp_s
+
+    @property
+    def chamber_pressure_mpa(self) -> float:
+        return self.state(21).pressure_mpa
+
+    @property
+    def pump_pressure_rise_mpa(self) -> float:
+        return self.state(3).pressure_mpa - self.state(1).pressure_mpa
+
     def state(self, number: int) -> FlowState:
         for item in self.states:
             if item.state == number:
