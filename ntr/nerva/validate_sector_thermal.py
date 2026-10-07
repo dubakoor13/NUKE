@@ -158,6 +158,61 @@ def main() -> int:
             rtol=1.0e-12,
         )
 
+        balanced_output = root / "balanced"
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "ntr.nerva.solve_element_channels",
+                str(fields_path),
+                str(instances_path),
+                "--fuel-mass-flow-kg-s",
+                "0.20",
+                "--inlet-temperature-k",
+                "500",
+                "--inlet-pressure-mpa",
+                "8",
+                "--hydrogen-model",
+                "constant",
+                "--balance-flow",
+                "--flow-balance-max-iterations",
+                "3",
+                "--flow-balance-tolerance",
+                "1e-4",
+                "--flow-balance-relaxation",
+                "0.5",
+                "--output",
+                str(balanced_output),
+            ],
+            check=True,
+        )
+
+        balanced = json.loads(
+            (
+                balanced_output
+                / "element_channel_summary.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert balanced["flow_balance_enabled"] is True
+        assert balanced["flow_balance_iterations"] >= 1
+        assert np.isclose(
+            balanced[
+                "reconstructed_total_fuel_mass_flow_kg_s"
+            ],
+            0.20,
+            rtol=1.0e-12,
+        )
+        assert balanced[
+            "minimum_channel_mass_flow_kg_s"
+        ] > 0.0
+        assert np.isfinite(
+            balanced["final_pressure_drop_spread_fraction"]
+        )
+        assert (
+            balanced["final_pressure_drop_spread_fraction"]
+            >= 0.0
+        )
+
     print("NERVA fuel-sector thermal coupling validation: PASS")
     return 0
 
