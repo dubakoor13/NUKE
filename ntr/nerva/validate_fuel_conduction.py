@@ -54,6 +54,8 @@ def main() -> int:
         heat_transfer_coefficient_w_m2_k=channel.heat_transfer_coefficient_w_m2_k,
         heat_flux_w_m2=np.zeros_like(channel.heat_flux_w_m2),
         channel_power_w=np.zeros_like(channel.channel_power_w),
+        wall_heat_power_w=np.zeros_like(channel.wall_heat_power_w),
+        direct_coolant_power_w=np.zeros_like(channel.direct_coolant_power_w),
         mass_flow_kg_s=channel.mass_flow_kg_s,
         channel_diameter_m=channel.channel_diameter_m,
     )
