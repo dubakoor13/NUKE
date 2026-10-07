@@ -125,6 +125,45 @@ def _keff_pair(statepoint: openmc.StatePoint) -> tuple[float | None, float | Non
     return _uncertain_pair(value)
 
 
+def _trend_metrics(
+    values: np.ndarray,
+    window: int = 20,
+) -> dict[str, float | int | None]:
+    array = np.asarray(values, dtype=float).reshape(-1)
+    array = array[np.isfinite(array)]
+    if array.size == 0:
+        return {
+            "count": 0,
+            "window_count": 0,
+            "window_mean": None,
+            "window_std": None,
+            "window_range": None,
+            "window_relative_range": None,
+            "window_slope_per_index": None,
+        }
+
+    use = array[-min(window, array.size):]
+    x = np.arange(use.size, dtype=float)
+    slope = (
+        float(np.polyfit(x, use, 1)[0])
+        if use.size >= 2
+        else 0.0
+    )
+    mean = float(np.mean(use))
+    spread = float(np.max(use) - np.min(use))
+    return {
+        "count": int(array.size),
+        "window_count": int(use.size),
+        "window_mean": mean,
+        "window_std": float(np.std(use, ddof=1)) if use.size > 1 else 0.0,
+        "window_range": spread,
+        "window_relative_range": (
+            spread / abs(mean) if mean != 0.0 else None
+        ),
+        "window_slope_per_index": slope,
+    }
+
+
 def _entropy_history(statepoint: openmc.StatePoint) -> list[float]:
     entropy = getattr(statepoint, "entropy", None)
     if entropy is None:
@@ -556,6 +595,65 @@ def main() -> int:
         keff_mean, keff_std = _keff_pair(sp)
         entropy = _entropy_history(sp)
 
+        k_generation = np.asarray(
+            getattr(sp, "k_generation", []),
+            dtype=float,
+        )
+        if k_generation.ndim == 2:
+            k_batch_mean = np.mean(k_generation, axis=1)
+        else:
+            k_batch_mean = k_generation.reshape(-1)
+
+        n_inactive = int(getattr(sp, "n_inactive", 0))
+        active_k_batch_mean = (
+            k_batch_mean[n_inactive:]
+            if k_batch_mean.size > n_inactive
+            else np.asarray([], dtype=float)
+        )
+        entropy_array = np.asarray(entropy, dtype=float)
+        active_entropy = (
+            entropy_array[n_inactive:]
+            if entropy_array.size > n_inactive
+            else np.asarray([], dtype=float)
+        )
+
+
+    with (args.output / "convergence_history.csv").open(
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as stream:
+        writer = csv.writer(stream)
+        writer.writerow(
+            (
+                "batch",
+                "active",
+                "k_batch_mean",
+                "source_entropy",
+            )
+        )
+        n_history = max(
+            len(k_batch_mean),
+            len(entropy),
+        )
+        for i in range(n_history):
+            writer.writerow(
+                (
+                    i + 1,
+                    int(i >= n_inactive),
+                    (
+                        k_batch_mean[i]
+                        if i < len(k_batch_mean)
+                        else ""
+                    ),
+                    (
+                        entropy[i]
+                        if i < len(entropy)
+                        else ""
+                    ),
+                )
+            )
+
     with (args.output / "material_transport.csv").open(
         "w",
         newline="",
@@ -741,6 +839,8 @@ def main() -> int:
         axial_fission_rate_cm3_s=axial_fission_rate,
         axial_nu_fission_rate_cm3_s=axial_nu_fission_rate,
         entropy=np.asarray(entropy, dtype=float),
+        k_generation=k_generation,
+        k_batch_mean=k_batch_mean,
         material_energy_bins_ev=material_energy_bins,
         material_energy_flux_x_source_rate=(
             material_energy_values["flux"]
@@ -809,6 +909,19 @@ def main() -> int:
         },
         "entropy_history": entropy,
         "entropy_last": None if not entropy else entropy[-1],
+        "source_convergence": {
+            "inactive_batches": n_inactive,
+            "active_k_batch_metrics": _trend_metrics(
+                active_k_batch_mean
+            ),
+            "active_entropy_metrics": _trend_metrics(
+                active_entropy
+            ),
+            "interpretation": (
+                "Trend diagnostics only. No k-effective target or automatic "
+                "criticality tuning is applied."
+            ),
+        },
         "mesh_peaking": _peaking_metrics(power_density),
         "axial_power_peaking": axial_peaking,
         "mesh_heating_relative_error": _relative_error_metrics(
