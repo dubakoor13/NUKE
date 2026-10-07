@@ -7,8 +7,10 @@ import numpy as np
 from .config import NervaConfig
 from .fuel_conduction import (
     FuelSolidProperties,
+    estimate_fuel_sector_temperatures,
     estimate_fuel_solid_temperatures,
 )
+from .fuel_sector_geometry import fuel_sector_fuel_areas_cm2
 from .thermal import HydrogenProperties, solve_fuel_channel
 
 
@@ -63,6 +65,53 @@ def main() -> int:
     assert np.allclose(
         zero.peak_fuel_temperature_k,
         zero.coolant_wall_temperature_k,
+    )
+
+    sector_area_m2 = (
+        fuel_sector_fuel_areas_cm2(config)[0] * 1.0e-4
+    )
+    sector_estimate = estimate_fuel_sector_temperatures(
+        channel,
+        z_edges_m=z_edges,
+        sector_fuel_area_m2=sector_area_m2,
+        config=config,
+        properties=FuelSolidProperties(),
+    )
+    assert sector_estimate.sector_fuel_area_m2 > 0.0
+    assert (
+        sector_estimate.equivalent_outer_radius_m
+        > sector_estimate.coating_outer_radius_m
+    )
+    assert np.all(
+        sector_estimate.fuel_surface_temperature_k
+        >= sector_estimate.coolant_wall_temperature_k
+    )
+    assert np.all(
+        sector_estimate.peak_fuel_temperature_k
+        >= sector_estimate.fuel_surface_temperature_k
+    )
+    assert np.all(
+        sector_estimate.volumetric_heating_w_m3 > 0.0
+    )
+
+    zero_sector = estimate_fuel_sector_temperatures(
+        zero_flux_channel,
+        z_edges_m=z_edges,
+        sector_fuel_area_m2=sector_area_m2,
+        config=config,
+        properties=FuelSolidProperties(),
+    )
+    assert np.allclose(
+        zero_sector.fuel_surface_temperature_k,
+        zero_sector.coolant_wall_temperature_k,
+    )
+    assert np.allclose(
+        zero_sector.peak_fuel_temperature_k,
+        zero_sector.coolant_wall_temperature_k,
+    )
+    assert np.allclose(
+        zero_sector.volumetric_heating_w_m3,
+        0.0,
     )
 
     print("NERVA fuel-solid conduction validation: PASS")
