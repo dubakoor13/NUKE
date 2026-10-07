@@ -204,6 +204,15 @@ def main() -> int:
 
     _run(analysis_command)
 
+    _run(
+        [
+            python,
+            "-m",
+            "ntr.nerva.generate_run_report",
+            str(args.output_root),
+        ]
+    )
+
     summary = {
         "schema_version": 1,
         "status": "PASS",
@@ -216,6 +225,12 @@ def main() -> int:
         "transport_provenance": str(provenance),
         "analysis_validation": str(
             analysis_dir / "analysis_validation.json"
+        ),
+        "engineering_report_markdown": str(
+            args.output_root / "NERVA_RUN_REPORT.md"
+        ),
+        "engineering_report_json": str(
+            args.output_root / "NERVA_RUN_REPORT.json"
         ),
         "interpretation": (
             "One explicit OpenMC transport + engineering analysis. "
