@@ -33,9 +33,10 @@ low-enrichment surrogate.
 - Eigenvalue settings and fissionable source.
 - 3-D mesh tallies for flux, fission rate, and local heating.
 - Statepoint postprocessor that normalizes raw tallies to requested reactor thermal power.
-- Separate fuel-material mesh heating tally for thermal-hydraulic coupling.
+- Separate fuel-material and tie-solid mesh heating tallies for thermal-hydraulic coupling.
 - NPZ, CSV, and JSON export of 3-D power-density, fuel-power, fission-rate, and flux fields.
 - First-pass 1-D hydrogen fuel-channel solver with energy balance, heat-transfer coefficient, wall-temperature estimate, Reynolds number, and Darcy pressure loss.
+- Explicit counterflow tie-tube thermal model with central H2 supply and annular H2 return paths.
 - XY material plot definitions.
 - Pure-Python geometry validation.
 - GitHub CI export checks for cluster, all-fuel core, mixed-core, and full reactor modes.
@@ -138,9 +139,11 @@ build/nerva_power/
 ```
 
 Field units are W/cm3, reactions/cm3/s, and particles/cm2/s respectively.
-The NPZ file also contains `fuel_power_density_w_cm3`, obtained from a
-fuel-material-filtered OpenMC heating tally but normalized with the same source
-rate as the whole-reactor heating field.
+The NPZ file also contains `fuel_power_density_w_cm3` and
+`tie_power_density_w_cm3`. The first comes from a fuel-material-filtered
+OpenMC heating tally. The second sums heating in the explicit tie-tube solid
+cells (Inconel tubes, ZrH, ZrC sleeve/coating, and graphite filler). Both are
+normalized with the same source rate as the whole-reactor heating field.
 
 ## Solve the representative hydrogen fuel channel
 
@@ -156,12 +159,36 @@ python -m ntr.nerva.solve_thermal \
   --output build/nerva_thermal
 ```
 
-The current thermal model distributes fuel-deposited power equally over all 19
-coolant holes in every fuel element, then solves one representative channel.
-It uses constant surrogate H2 properties, ideal-gas density, Dittus-Boelter
-heat transfer, and Darcy-Weisbach pressure loss. Tie-tube supply/return flow,
-real-gas hydrogen properties, fuel-matrix conduction, radiation, and
-temperature feedback are intentionally separate next-fidelity layers.
+The current fuel thermal model distributes fuel-deposited power equally over
+all 19 coolant holes in every fuel element, then solves one representative
+channel. It uses constant surrogate H2 properties, ideal-gas density,
+Dittus-Boelter heat transfer, and Darcy-Weisbach pressure loss.
+
+## Solve the tie-tube counterflow path
+
+The tie-tube model uses the separate OpenMC tie-solid heating field:
+
+```bash
+python -m ntr.nerva.solve_tie_tube \
+  build/nerva_power/nerva_mesh_fields.npz \
+  --rings 5 \
+  --tie-mass-flow-kg-s 0.20 \
+  --inlet-temperature-k 500 \
+  --inlet-pressure-mpa 8 \
+  --output build/nerva_tie_thermal
+```
+
+For each representative tie tube, hydrogen flows down the central inner tube
+and returns through the annulus between the ZrH moderator and outer Inconel
+tube. The default first-pass split of tie-solid heat between supply and return
+is proportional to their wetted perimeters; `--supply-heat-fraction` can
+override it explicitly. The supply and return paths preserve separate
+temperature, pressure, Reynolds-number, wall-temperature, heat-flux and
+heat-transfer-coefficient histories.
+
+Real-gas hydrogen properties, fuel-matrix conduction, radiation, local
+fuel-element power peaking, turn losses and temperature feedback remain
+next-fidelity layers.
 
 ## Current hierarchy
 
@@ -202,6 +229,7 @@ temperature feedback are intentionally separate next-fidelity layers.
 6. Replace homogenized filler with explicit partial-hex filler pieces.
 7. Add axial/radial power extraction and normalization. **DONE**
 8. Couple fuel heating to a 1-D hydrogen fuel-channel thermal model. **DONE (constant-property surrogate)**
-9. Add explicit tie-tube supply/return thermal-hydraulic paths and real-gas H2 properties.
-10. Add fuel-matrix conduction and temperature/density feedback iteration.
-11. Calibrate only against published Rover/NERVA benchmark information.
+9. Add explicit tie-tube supply/return thermal-hydraulic paths. **DONE (constant-property surrogate)**
+10. Add real-gas H2 properties and local fuel-element/tie-tube power peaking.
+11. Add fuel-matrix conduction and temperature/density feedback iteration.
+12. Calibrate only against published Rover/NERVA benchmark information.
