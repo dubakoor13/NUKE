@@ -16,6 +16,20 @@ from .engine_performance import (
     ideal_nozzle_performance,
 )
 from .historical_presets import PRESETS, HistoricalNervaPreset
+from .lantr import (
+    BASE_CHAMBER_PRESSURE_PA,
+    BASE_ISP_S,
+    BASE_NOZZLE_AREA_RATIO,
+    BASE_REACTOR_EXIT_TEMPERATURE_K,
+    BASE_REACTOR_POWER_MW,
+    BIMODAL_POWER,
+    NASA_BIMODAL_SOURCE,
+    NASA_BIMODAL_URL,
+    NASA_LANTR_SOURCE,
+    NASA_LANTR_URL,
+    lantr_point,
+    lantr_table,
+)
 
 
 def _read_json_upload(uploaded) -> dict[str, Any] | None:
@@ -196,6 +210,111 @@ def _render_historical(preset: HistoricalNervaPreset) -> None:
         "It does not supply fissile loading or an exact criticality recipe."
     )
 
+
+
+def _render_lantr(oxygen_hydrogen_ratio: float) -> None:
+    point = lantr_point(oxygen_hydrogen_ratio)
+
+    st.success("Bimodal NTR + LOX-augmented LANTR reference")
+    st.write(
+        "The same NTR reactor can operate in high-Isp LH2 propulsion mode, "
+        "LOX-augmented LANTR high-thrust mode, or low-power bimodal Brayton "
+        "electric mode during coast."
+    )
+
+    row1 = st.columns(5)
+    with row1[0]:
+        _metric("Reactor power", f"{BASE_REACTOR_POWER_MW:,.0f} MWt")
+    with row1[1]:
+        _metric("O/H mixture ratio", f"{point.oxygen_hydrogen_ratio:.2f}")
+    with row1[2]:
+        _metric("Thrust", f"{point.thrust_n / 1000.0:,.1f} kN")
+    with row1[3]:
+        _metric("Delivered Isp", f"{point.delivered_isp_s:,.0f} s")
+    with row1[4]:
+        _metric(
+            "Thrust augmentation",
+            f"{point.thrust_augmentation_factor:.3f}×",
+        )
+
+    row2 = st.columns(5)
+    with row2[0]:
+        _metric(
+            "Reactor exit temperature",
+            f"{BASE_REACTOR_EXIT_TEMPERATURE_K:,.0f} K",
+        )
+    with row2[1]:
+        _metric(
+            "Chamber pressure",
+            f"{BASE_CHAMBER_PRESSURE_PA / 1.0e6:,.3f} MPa",
+        )
+    with row2[2]:
+        _metric("Baseline NTR Isp", f"{BASE_ISP_S:,.0f} s")
+    with row2[3]:
+        _metric("Nozzle Ae/At", f"{BASE_NOZZLE_AREA_RATIO:,.0f}:1")
+    with row2[4]:
+        _metric("Engine T/W", f"{point.engine_thrust_to_weight:.2f}")
+
+    st.subheader("LANTR thrust–Isp trade")
+    table = lantr_table()
+    trade = pd.DataFrame(
+        {
+            "O/H MR": [p.oxygen_hydrogen_ratio for p in table],
+            "Thrust kN": [p.thrust_n / 1000.0 for p in table],
+            "Isp s": [p.delivered_isp_s for p in table],
+            "Thrust augmentation": [
+                p.thrust_augmentation_factor for p in table
+            ],
+            "Engine mass kg": [p.engine_mass_kg for p in table],
+        }
+    )
+    st.dataframe(trade, hide_index=True, use_container_width=True)
+    st.line_chart(
+        trade.set_index("O/H MR")[["Thrust kN", "Isp s"]],
+        height=320,
+    )
+
+    st.subheader("Bimodal electrical-power mode")
+    power_row = st.columns(4)
+    with power_row[0]:
+        _metric(
+            "Electrical power / engine",
+            f"{BIMODAL_POWER.electric_power_kwe_per_engine:.0f} kWe",
+        )
+    with power_row[1]:
+        _metric(
+            "Reference stage power",
+            f"{BIMODAL_POWER.reference_stage_power_kwe:.0f} kWe",
+        )
+    with power_row[2]:
+        _metric(
+            "Idle reactor thermal power",
+            f"{BIMODAL_POWER.idle_reactor_thermal_power_kwt:.0f} kWt",
+        )
+    with power_row[3]:
+        _metric(
+            "Reference conversion efficiency",
+            f"{100.0 * BIMODAL_POWER.conversion_efficiency:.0f}%",
+        )
+
+    st.info(
+        "Operating modes: MR=0 is pure LH2 NTR propulsion. Increasing O/H "
+        "injects oxygen downstream of the nozzle throat for supersonic "
+        "afterburning, increasing thrust while reducing Isp. Bimodal power "
+        "mode is a separate low-reactor-power coast mode using Brayton "
+        "conversion, not simultaneous full-thrust operation."
+    )
+
+    st.subheader("Public NASA sources")
+    st.markdown(f"**LANTR:** {NASA_LANTR_SOURCE}")
+    st.markdown(f"[NASA LANTR source]({NASA_LANTR_URL})")
+    st.markdown(f"**Bimodal power:** {NASA_BIMODAL_SOURCE}")
+    st.markdown(f"[NASA bimodal source]({NASA_BIMODAL_URL})")
+
+    st.warning(
+        "This is a public system-level reference model. It does not encode "
+        "reactor fissile loading or an exact criticality recipe."
+    )
 
 def _render_calculated(
     metadata: dict[str, Any],
@@ -393,6 +512,7 @@ def main() -> None:
             "Mode",
             (
                 "Historical NERVA reference",
+                "Bimodal NTR + LANTR",
                 "Synthetic demo",
                 "Auto-load analysis directory",
                 "Upload run outputs",
@@ -400,6 +520,7 @@ def main() -> None:
         )
 
         historical_preset = None
+        lantr_mr = None
         if mode == "Historical NERVA reference":
             preset_keys = list(PRESETS)
             selected = st.selectbox(
@@ -408,6 +529,20 @@ def main() -> None:
                 format_func=lambda key: PRESETS[key].name,
             )
             historical_preset = PRESETS[selected]
+            metadata = fuel = tie = {}
+            using_fallback = False
+        elif mode == "Bimodal NTR + LANTR":
+            lantr_mr = st.slider(
+                "LOX augmentation O/H mixture ratio",
+                min_value=0.0,
+                max_value=5.0,
+                value=0.0,
+                step=0.1,
+                help=(
+                    "NASA reference table spans MR 0 to 5. MR=0 is pure "
+                    "LH2 NTR; increasing MR adds downstream oxygen afterburning."
+                ),
+            )
             metadata = fuel = tie = {}
             using_fallback = False
         elif mode == "Auto-load analysis directory":
@@ -453,7 +588,7 @@ def main() -> None:
         exit_pressure_kpa = 1.0
         ambient_pressure_kpa = 0.0
 
-        if mode != "Historical NERVA reference":
+        if mode not in ("Historical NERVA reference", "Bimodal NTR + LANTR"):
             st.header("Nozzle assumptions")
             gamma = st.slider("γ", 1.10, 1.50, 1.35, 0.01)
             nozzle_efficiency = st.slider(
@@ -478,6 +613,8 @@ def main() -> None:
 
     if historical_preset is not None:
         _render_historical(historical_preset)
+    elif lantr_mr is not None:
+        _render_lantr(lantr_mr)
     else:
         _render_calculated(
             metadata=metadata,
