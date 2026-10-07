@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .config import NervaConfig
 from .geometry import cluster_summary, geometry_summary, mixed_core_summary
+from .periphery import reactor_summary
 from .model import build_model
 
 
@@ -22,9 +23,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--assembly",
-        choices=("core", "cluster", "mixed-core"),
+        choices=("core", "cluster", "mixed-core", "reactor"),
         default="core",
-        help="Export the all-fuel core, 6-fuel/1-tie cluster, or mixed fuel/tie core.",
+        help="Export a core/cluster model or the full reactor-periphery assembly.",
     )
     parser.add_argument(
         "--rings",
@@ -39,6 +40,12 @@ def parse_args() -> argparse.Namespace:
         help="Particles per batch.",
     )
     parser.add_argument(
+        "--drum-angle",
+        type=float,
+        default=0.0,
+        help="Control-drum absorber angle in degrees; 0 points the absorber half-shell inward.",
+    )
+    parser.add_argument(
         "--run",
         action="store_true",
         help="Run OpenMC after exporting XML (requires executable + nuclear data).",
@@ -48,7 +55,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    config = NervaConfig(core_rings=args.rings, particles=args.particles)
+    config = NervaConfig(
+        core_rings=args.rings,
+        particles=args.particles,
+        control_drum_angle_deg=args.drum_angle,
+    )
     config.validate()
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -59,6 +70,8 @@ def main() -> int:
         summary = cluster_summary(config)
     elif args.assembly == "mixed-core":
         summary = mixed_core_summary(config)
+    elif args.assembly == "reactor":
+        summary = reactor_summary(config)
     else:
         summary = geometry_summary(config)
     print(f"NERVA-derived {args.assembly} model exported:")
