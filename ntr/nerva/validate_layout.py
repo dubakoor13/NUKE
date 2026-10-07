@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import math
+
 from .config import NervaConfig
 from .geometry import cluster_summary
+from .periphery import reactor_summary
 from .layout import (
     coolant_channel_positions,
     minimum_channel_ligament_cm,
@@ -51,6 +54,18 @@ def main() -> int:
     assert interior_ties > 0
     assert interior_fuels > 0
 
+    drum_chord = (
+        2.0
+        * config.control_drum_center_radius_cm
+        * math.sin(math.pi / config.control_drum_count)
+    )
+    drum_clearance = drum_chord - 2.0 * config.control_drum_radius_cm
+    assert drum_clearance > 0.0, "neighboring control drums overlap"
+
+    reactor = reactor_summary(config)
+    assert reactor["control_drums"] == 12
+    assert reactor["pressure_vessel_outer_radius_cm"] > reactor["reflector_outer_radius_cm"]
+
     print("NERVA fuel-element + tie-tube layout validation: PASS")
     print(f"  fuel-element channel count: {len(channels)}")
     print(f"  bore diameter: {config.coolant_bore_diameter_cm:.5f} cm")
@@ -68,6 +83,9 @@ def main() -> int:
         f"  interior neighbor checks: "
         f"{interior_ties} tie sites + {interior_fuels} fuel sites"
     )
+    print(f"  control drums: {config.control_drum_count}")
+    print(f"  minimum drum-to-drum tangential clearance: {drum_clearance:.5f} cm")
+    print(f"  pressure vessel OD radius: {config.pressure_vessel_outer_radius_cm:.5f} cm")
     return 0
 
 
