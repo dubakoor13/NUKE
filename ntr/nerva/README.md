@@ -117,6 +117,185 @@ library are configured.
 
 
 
+
+## Instance-resolved OpenMC and channel-level thermal coupling
+
+The NERVA workflow now extracts repeated-cell OpenMC tallies rather than
+assuming that all repeated fuel elements receive the same integrated power.
+
+### Exact OpenMC repeated-cell outputs
+
+The statepoint can now contain:
+
+```text
+nerva_fuel_element_instances
+nerva_hydrogen_channel_01_instances
+...
+nerva_hydrogen_channel_19_instances
+nerva_tie_instance_*
+```
+
+These use OpenMC `DistribcellFilter` objects. The postprocessor
+
+```bash
+python -m ntr.nerva.postprocess_instance_tallies \
+  statepoint.80.h5 \
+  --power-metadata build/nerva_power/metadata.json \
+  --output build/nerva_instances
+```
+
+writes integrated OpenMC scores for each repeated fuel-matrix instance, each
+coolant-channel instance, and each explicit tie-tube solid component.
+
+It preserves Monte Carlo standard deviations for the repeated-cell heating
+scores and maps the 19 coolant-channel instances back to their parent fuel
+element using OpenMC geometry-path metadata when available. A clearly reported
+instance-index fallback is used if path metadata is unavailable.
+
+### Direct nuclear heating of hydrogen
+
+OpenMC now separately tallies direct deposited nuclear heat in:
+
+- the 19 fuel-element hydrogen passages;
+- the central tie-tube hydrogen supply passage;
+- the annular tie-tube hydrogen return passage.
+
+The thermal solvers treat these energy paths differently from solid-to-fluid
+heat transfer:
+
+```text
+fuel/tie solid heating -> wall heat flux -> convection -> bulk H2
+direct H2 nuclear heat ---------------------------> bulk H2
+```
+
+Direct H2 heating therefore raises fluid enthalpy but does not artificially
+increase wall heat flux or the solid-conduction temperature rise.
+
+### Element x 19-channel reconstruction
+
+Run:
+
+```bash
+python -m ntr.nerva.solve_element_channels \
+  build/nerva_power/nerva_mesh_fields.npz \
+  build/nerva_instances/instance_power_fractions.npz \
+  --fuel-mass-flow-kg-s 2.0 \
+  --inlet-temperature-k 500 \
+  --inlet-pressure-mpa 8 \
+  --hydrogen-model coolprop \
+  --output build/nerva_element_channels
+```
+
+The solver evaluates every repeated fuel element and all 19 channels.
+
+The current reconstruction deliberately distinguishes measured quantities from
+assumptions:
+
+- **OpenMC measured:** integrated fuel-element heating fraction;
+- **OpenMC measured:** integrated direct-H2 heating of each channel instance;
+- **OpenMC measured:** global axial fuel-heating shape;
+- **OpenMC measured:** global axial direct-H2 heating shape;
+- **reconstruction assumption:** the global axial shape is separable from the
+  element/channel integrated fractions;
+- **reconstruction assumption:** solid wall power within one fuel element is
+  divided equally among its 19 coolant channels.
+
+No element-specific axial power shape is fabricated.
+
+Outputs include the complete element/channel table, reconstructed axial power
+arrays, and a full axial profile for the hottest reconstructed channel.
+
+### Stochastic OpenMC volumes
+
+OpenMC stochastic-volume calculations can be prepared or executed with:
+
+```bash
+python -m ntr.nerva.calculate_volumes \
+  --cross-sections /path/to/cross_sections.xml \
+  --assembly reactor \
+  --rings 5 \
+  --samples 1000000 \
+  --output build/nerva_volumes \
+  --run
+```
+
+The output estimates total material volumes and total repeated-cell volumes.
+When `volume_results.json` is supplied to
+`postprocess_instance_tallies`, cell-integrated tracklength flux tallies are
+converted to approximate per-instance `cm^-2 s^-1` values using the average
+stochastic volume of the repeated cell.
+
+### Statistical stopping
+
+A relative-error trigger can be enabled without changing the reactor model:
+
+```bash
+python -m ntr.nerva.run_openmc_transport \
+  --cross-sections /path/to/cross_sections.xml \
+  --target-rel-error 0.05 \
+  --trigger-max-batches 500 \
+  --trigger-batch-interval 5 \
+  --output build/nerva_transport
+```
+
+This changes Monte Carlo stopping behavior only.
+
+### Material x energy transport
+
+In addition to fuel/H2 spectra, OpenMC now produces a material-by-energy
+diagnostic matrix for flux, absorption, fission, nu-fission, and local heating.
+When coupled photon transport is enabled, a particle-filtered heating tally
+also separates neutron and photon contributions.
+
+The diagnostics package adds:
+
+```text
+material_energy_transport.csv
+particle_heating.csv
+```
+
+### Nuclear-data temperature audit
+
+Every reproducible transport run now performs a read-only audit of the
+temperatures available in each required neutron HDF5 file and records the
+nearest data temperature for materials with an explicit model temperature.
+
+```bash
+python -m ntr.nerva.audit_nuclear_data_temperatures \
+  --cross-sections /path/to/cross_sections.xml
+```
+
+The audit does not change OpenMC interpolation, material temperature,
+composition, or thermal-scattering treatment.
+
+### Visualization and numerical QA
+
+Normalized OpenMC fields can be exported directly for ParaView:
+
+```bash
+python -m ntr.nerva.export_vtk \
+  build/nerva_power/nerva_mesh_fields.npz \
+  --output build/nerva_fields.vtk
+```
+
+Element/channel heatmaps can be generated with
+`plot_element_channels.py`.
+
+Two completed analysis directories can be compared with
+`compare_runs.py`, while multiple runs made with different Monte Carlo
+sampling/resolution settings can be summarized with
+`summarize_convergence.py`. These tools report numerical differences only and
+do not select or optimize reactor configurations.
+
+### Screening uncertainty propagation
+
+`propagate_uncertainty.py` reruns the hottest reconstructed channel with the
+integrated OpenMC fuel-element and direct-H2 heating shifted by ±1 standard
+deviation. This is explicitly a screening sensitivity envelope; it does not
+include tally covariance, nuclear-data covariance, geometry/material-property
+uncertainty, or flow-distribution uncertainty.
+
+
 ## Reproducible real-data OpenMC run
 
 The repository now has a nuclear-data preflight and provenance layer for real
