@@ -235,6 +235,15 @@ def main() -> int:
             "heating-local",
             value="std_dev",
         )
+        total_heating, _ = _mesh_score(
+            mesh_tally,
+            "heating",
+        )
+        total_heating_std, _ = _mesh_score(
+            mesh_tally,
+            "heating",
+            value="std_dev",
+        )
         absorption, _ = _mesh_score(
             mesh_tally,
             "absorption",
@@ -255,6 +264,18 @@ def main() -> int:
         )
         power_density_std = (
             heating_std * EV_TO_J * source_rate / cell_volume_cm3
+        )
+        total_heating_power_density = (
+            total_heating
+            * EV_TO_J
+            * source_rate
+            / cell_volume_cm3
+        )
+        total_heating_power_density_std = (
+            total_heating_std
+            * EV_TO_J
+            * source_rate
+            / cell_volume_cm3
         )
         absorption_rate = (
             absorption * source_rate / cell_volume_cm3
@@ -557,6 +578,12 @@ def main() -> int:
         args.output / "openmc_diagnostics.npz",
         power_density_w_cm3=power_density,
         power_density_std_w_cm3=power_density_std,
+        total_heating_power_density_w_cm3=(
+            total_heating_power_density
+        ),
+        total_heating_power_density_std_w_cm3=(
+            total_heating_power_density_std
+        ),
         absorption_rate_cm3_s=absorption_rate,
         nu_fission_rate_cm3_s=nu_fission_rate,
         energy_bins_ev=energy_bins,
@@ -581,6 +608,28 @@ def main() -> int:
         if row["score"] == "heating-local"
     }
     material_power_total = sum(material_power.values())
+
+    material_total_heating = {
+        row["material"]: float(row["value"])
+        for row in material_rows
+        if row["score"] == "heating"
+    }
+    material_total_heating_sum = sum(material_total_heating.values())
+
+    mesh_local_heating_w = float(
+        np.sum(power_density) * cell_volume_cm3
+    )
+    mesh_total_heating_w = float(
+        np.sum(total_heating_power_density) * cell_volume_cm3
+    )
+    nonlocal_heating_difference_w = (
+        mesh_total_heating_w - mesh_local_heating_w
+    )
+    nonlocal_heating_fraction = (
+        nonlocal_heating_difference_w / mesh_total_heating_w
+        if mesh_total_heating_w != 0.0
+        else 0.0
+    )
 
     axial_positive = axial_power[axial_power > 0.0]
     if axial_positive.size:
@@ -609,7 +658,25 @@ def main() -> int:
             heating,
             heating_std,
         ),
+        "energy_deposition": {
+            "mesh_heating_local_W": mesh_local_heating_w,
+            "mesh_heating_W": mesh_total_heating_w,
+            "heating_minus_heating_local_W": (
+                nonlocal_heating_difference_w
+            ),
+            "heating_minus_local_fraction": (
+                nonlocal_heating_fraction
+            ),
+            "material_heating_local_sum_W": material_power_total,
+            "material_heating_sum_W": material_total_heating_sum,
+            "interpretation": (
+                "heating-local deposits secondary photon energy locally; "
+                "heating reflects transport-aware energy deposition when "
+                "compatible neutron/photon data are used"
+            ),
+        },
         "material_power_W": material_power,
+        "material_total_heating_W": material_total_heating,
         "material_power_fractions": {
             key: (
                 value / material_power_total
