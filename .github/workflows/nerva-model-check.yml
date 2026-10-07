@@ -68,6 +68,12 @@ jobs:
       - name: Check NERVA analysis orchestrator CLI
         run: python -m ntr.nerva.run_analysis --help
 
+      - name: Validate NERVA engine performance layer
+        run: python -m ntr.nerva.validate_engine_performance
+
+      - name: Syntax-check NERVA web dashboard
+        run: python -m py_compile streamlit_app.py ntr/nerva/webapp.py
+
       - name: Run synthetic end-to-end thermal pipeline
         run: |
           python -m ntr.nerva.make_synthetic_fields \
