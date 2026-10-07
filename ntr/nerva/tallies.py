@@ -7,9 +7,13 @@ import openmc
 from .config import NervaConfig
 
 
-def build_tallies(config: NervaConfig) -> openmc.Tallies:
+def build_tallies(
+    config: NervaConfig,
+    radial_extent_cm: float | None = None,
+) -> openmc.Tallies:
+    """Create 3-D flux, fission-rate, and local-heating mesh tallies."""
     half_length = 0.5 * config.active_length_cm
-    r = config.reflector_outer_radius_cm
+    r = config.reflector_outer_radius_cm if radial_extent_cm is None else radial_extent_cm
 
     mesh = openmc.RegularMesh(name="nerva_core_mesh")
     mesh.dimension = (48, 48, 24)
