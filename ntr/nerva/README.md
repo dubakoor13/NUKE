@@ -236,6 +236,37 @@ python -m ntr.nerva.run_analysis \
 Use `--hydrogen-model coolprop` after installing CoolProp, or `--no-plots`
 when matplotlib is not installed.
 
+## Web dashboard: thrust, Isp, temperatures and run values
+
+A Streamlit dashboard is included at the repository root:
+
+```bash
+python -m pip install -r requirements-web.txt
+streamlit run streamlit_app.py
+```
+
+The dashboard has two modes:
+
+- **Synthetic demo** — starts immediately with deterministic CI values. These
+  values are explicitly labeled synthetic and are not an OpenMC transport run.
+- **Upload run outputs** — upload `metadata.json`,
+  `thermal_summary.json`, and `tie_thermal_summary.json` from an actual
+  analysis directory.
+
+Displayed quantities include reactor thermal power, fuel/tie heating split,
+fuel and tie-tube outlet state, combined hydrogen mass flow and chamber state,
+estimated thrust, Isp, effective exhaust velocity, exit Mach, nozzle expansion
+ratio, equivalent exit diameter, and fuel/tie temperature screening values.
+
+The engine layer uses the loaded thermal outlet state and a choked ideal-gas
+nozzle estimate. Nozzle gamma, efficiency, exit pressure, and ambient pressure
+are visible dashboard assumptions. This keeps the displayed thrust/Isp
+traceable rather than presenting them as direct OpenMC outputs.
+
+The built-in synthetic example is intentionally low-power (1 MW) and produces
+only a low-temperature hydrogen outlet. Its thrust/Isp are UI demonstration
+values, not representative NERVA performance.
+
 ## Plot postprocessed results
 
 The plotting CLI accepts any subset of the available result products:
