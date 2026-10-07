@@ -345,6 +345,83 @@ def main() -> int:
                     }
                 )
 
+        material_energy = sp.get_tally(
+            name="nerva_material_energy_transport"
+        )
+        material_energy_filter = material_energy.find_filter(
+            openmc.EnergyFilter
+        )
+        material_energy_bins = np.asarray(
+            material_energy_filter.bins,
+            dtype=float,
+        )
+        material_energy_values = {}
+        material_energy_std = {}
+        for score in (
+            "flux",
+            "absorption",
+            "fission",
+            "nu-fission",
+            "heating-local",
+        ):
+            values = np.asarray(
+                _tally_values(material_energy, score),
+                dtype=float,
+            )
+            std = np.asarray(
+                _tally_values(
+                    material_energy,
+                    score,
+                    value="std_dev",
+                ),
+                dtype=float,
+            )
+            if values.shape != (
+                len(material_names),
+                len(material_energy_bins),
+            ):
+                raise ValueError(
+                    f"material-energy {score} shape {values.shape} "
+                    f"!= {(len(material_names), len(material_energy_bins))}"
+                )
+            if score == "heating-local":
+                values = values * EV_TO_J * source_rate
+                std = std * EV_TO_J * source_rate
+            else:
+                values = values * source_rate
+                std = std * source_rate
+            material_energy_values[score] = values
+            material_energy_std[score] = std
+
+        try:
+            particle_heating_tally = sp.get_tally(
+                name="nerva_particle_heating"
+            )
+        except LookupError:
+            particle_heating_rows = []
+        else:
+            particle_filter = particle_heating_tally.find_filter(
+                openmc.ParticleFilter
+            )
+            particles = [str(v) for v in particle_filter.bins]
+            particle_mean = _tally_values(
+                particle_heating_tally,
+                "heating",
+            ).reshape(-1) * EV_TO_J * source_rate
+            particle_std = _tally_values(
+                particle_heating_tally,
+                "heating",
+                value="std_dev",
+            ).reshape(-1) * EV_TO_J * source_rate
+            particle_heating_rows = [
+                {
+                    "particle": particles[i],
+                    "heating_W": float(particle_mean[i]),
+                    "std_dev_W": float(particle_std[i]),
+                }
+                for i in range(len(particles))
+            ]
+
         fuel_spec = sp.get_tally(name="nerva_fuel_spectrum")
         hydrogen_spec = sp.get_tally(
             name="nerva_hydrogen_spectrum"
@@ -498,6 +575,70 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(material_rows)
 
+
+    with (args.output / "material_energy_transport.csv").open(
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as stream:
+        writer = csv.writer(stream)
+        writer.writerow(
+            (
+                "material",
+                "energy_low_eV",
+                "energy_high_eV",
+                "score",
+                "value",
+                "std_dev",
+                "units",
+            )
+        )
+        for m, material_name in enumerate(material_names):
+            for e, (elow, ehigh) in enumerate(material_energy_bins):
+                for score in (
+                    "flux",
+                    "absorption",
+                    "fission",
+                    "nu-fission",
+                    "heating-local",
+                ):
+                    units = (
+                        "W"
+                        if score == "heating-local"
+                        else (
+                            "tracklength-cm/s"
+                            if score == "flux"
+                            else "reactions/s"
+                        )
+                    )
+                    writer.writerow(
+                        (
+                            material_name,
+                            elow,
+                            ehigh,
+                            score,
+                            material_energy_values[score][m, e],
+                            material_energy_std[score][m, e],
+                            units,
+                        )
+                    )
+
+    with (args.output / "particle_heating.csv").open(
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as stream:
+        writer = csv.DictWriter(
+            stream,
+            fieldnames=(
+                "particle",
+                "heating_W",
+                "std_dev_W",
+            ),
+        )
+        writer.writeheader()
+        writer.writerows(particle_heating_rows)
+
     with (args.output / "spectra.csv").open(
         "w",
         newline="",
@@ -600,6 +741,22 @@ def main() -> int:
         axial_fission_rate_cm3_s=axial_fission_rate,
         axial_nu_fission_rate_cm3_s=axial_nu_fission_rate,
         entropy=np.asarray(entropy, dtype=float),
+        material_energy_bins_ev=material_energy_bins,
+        material_energy_flux_x_source_rate=(
+            material_energy_values["flux"]
+        ),
+        material_energy_absorption_per_s=(
+            material_energy_values["absorption"]
+        ),
+        material_energy_fission_per_s=(
+            material_energy_values["fission"]
+        ),
+        material_energy_nu_fission_per_s=(
+            material_energy_values["nu-fission"]
+        ),
+        material_energy_heating_w=(
+            material_energy_values["heating-local"]
+        ),
     )
 
     material_power = {
@@ -694,6 +851,19 @@ def main() -> int:
             hydrogen_flux,
         ),
         "vacuum_boundary_current": leakage_rows,
+        "particle_heating_W": {
+            row["particle"]: row["heating_W"]
+            for row in particle_heating_rows
+        },
+        "particle_heating_std_W": {
+            row["particle"]: row["std_dev_W"]
+            for row in particle_heating_rows
+        },
+        "material_energy_matrix": {
+            "materials": material_names,
+            "energy_groups": len(material_energy_bins),
+            "csv": "material_energy_transport.csv",
+        },
         "mesh": {
             "dimension": [int(v) for v in dimension],
             "lower_left_cm": [float(v) for v in lower_left],
