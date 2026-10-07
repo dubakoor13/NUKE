@@ -51,6 +51,15 @@ def build_materials(config: NervaConfig) -> dict[str, openmc.Material]:
     inconel.add_element("Cr", 0.18, percent_type="wo")
     inconel.add_element("Fe", 0.12, percent_type="wo")
 
+    b4c = openmc.Material(name="natural boron-carbide control absorber")
+    b4c.set_density("g/cm3", config.b4c_density_g_cm3)
+    b4c.add_element("B", 4.0, percent_type="ao")
+    b4c.add_element("C", 1.0, percent_type="ao")
+
+    aluminum = openmc.Material(name="aluminum-alloy pressure-vessel surrogate")
+    aluminum.set_density("g/cm3", config.aluminum_density_g_cm3)
+    aluminum.add_element("Al", 1.0, percent_type="ao")
+
     return {
         "fuel": fuel,
         "hydrogen": hydrogen,
@@ -59,4 +68,6 @@ def build_materials(config: NervaConfig) -> dict[str, openmc.Material]:
         "graphite": graphite,
         "zrh": zrh,
         "inconel": inconel,
+        "b4c": b4c,
+        "aluminum": aluminum,
     }
