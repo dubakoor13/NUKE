@@ -32,6 +32,8 @@ class ChannelSolution:
     heat_transfer_coefficient_w_m2_k: np.ndarray
     heat_flux_w_m2: np.ndarray
     channel_power_w: np.ndarray
+    wall_heat_power_w: np.ndarray
+    direct_coolant_power_w: np.ndarray
     mass_flow_kg_s: float
     channel_diameter_m: float
 
@@ -46,6 +48,14 @@ class ChannelSolution:
     @property
     def absorbed_power_w(self) -> float:
         return float(np.sum(self.channel_power_w))
+
+    @property
+    def wall_transferred_power_w(self) -> float:
+        return float(np.sum(self.wall_heat_power_w))
+
+    @property
+    def direct_nuclear_coolant_power_w(self) -> float:
+        return float(np.sum(self.direct_coolant_power_w))
 
 
 def evaluate_hydrogen_state(
@@ -135,6 +145,7 @@ def solve_fuel_channel(
     properties: HydrogenProperties | None = None,
     property_model=None,
     roughness_m: float = 1.0e-6,
+    axial_direct_coolant_power_w: np.ndarray | None = None,
 ) -> ChannelSolution:
     """Solve one representative fuel channel using equal power sharing.
 
@@ -147,6 +158,13 @@ def solve_fuel_channel(
 
     power = np.asarray(axial_total_fuel_power_w, dtype=float)
     z_edges = np.asarray(z_edges_m, dtype=float)
+    if axial_direct_coolant_power_w is None:
+        direct_power = np.zeros_like(power)
+    else:
+        direct_power = np.asarray(
+            axial_direct_coolant_power_w,
+            dtype=float,
+        )
 
     if power.ndim != 1:
         raise ValueError("axial_total_fuel_power_w must be one-dimensional")
@@ -156,6 +174,14 @@ def solve_fuel_channel(
         raise ValueError("z_edges_m must be strictly increasing")
     if np.any(power < 0.0):
         raise ValueError("axial power must be non-negative")
+    if direct_power.shape != power.shape:
+        raise ValueError(
+            "axial_direct_coolant_power_w must match axial fuel power shape"
+        )
+    if np.any(direct_power < 0.0):
+        raise ValueError(
+            "direct coolant nuclear heating must be non-negative"
+        )
     if fuel_channel_count < 1:
         raise ValueError("fuel_channel_count must be positive")
     if mass_flow_per_channel_kg_s <= 0.0:
@@ -175,7 +201,9 @@ def solve_fuel_channel(
     )
 
     n = power.size
-    channel_power = power / float(fuel_channel_count)
+    wall_channel_power = power / float(fuel_channel_count)
+    direct_channel_power = direct_power / float(fuel_channel_count)
+    channel_power = wall_channel_power + direct_channel_power
     dz = np.diff(z_edges)
     z_center = 0.5 * (z_edges[:-1] + z_edges[1:])
 
@@ -194,7 +222,9 @@ def solve_fuel_channel(
     pressure_in = float(inlet_pressure_pa)
 
     for i in range(n):
-        q = float(channel_power[i])
+        q_wall = float(wall_channel_power[i])
+        q_direct = float(direct_channel_power[i])
+        q_total = q_wall + q_direct
 
         inlet_state = evaluate_hydrogen_state(
             temperature_in,
@@ -202,7 +232,7 @@ def solve_fuel_channel(
             properties,
             property_model=property_model,
         )
-        delta_t = q / (
+        delta_t = q_total / (
             mass_flow_per_channel_kg_s * inlet_state.cp_j_kg_k
         )
 
@@ -214,7 +244,7 @@ def solve_fuel_channel(
                 properties,
                 property_model=property_model,
             )
-            updated_delta_t = q / (
+            updated_delta_t = q_total / (
                 mass_flow_per_channel_kg_s * state.cp_j_kg_k
             )
             if np.isclose(
@@ -251,7 +281,11 @@ def solve_fuel_channel(
         )
 
         wetted_area = wetted_per_length * dz[i]
-        q_flux = 0.0 if q == 0.0 else q / wetted_area
+        q_flux = (
+            0.0
+            if q_wall == 0.0
+            else q_wall / wetted_area
+        )
         wall_t = temperature_mean + q_flux / h
 
         f = friction_factor(re, relative_roughness)
@@ -291,6 +325,8 @@ def solve_fuel_channel(
         heat_transfer_coefficient_w_m2_k=htc,
         heat_flux_w_m2=heat_flux,
         channel_power_w=channel_power,
+        wall_heat_power_w=wall_channel_power,
+        direct_coolant_power_w=direct_channel_power,
         mass_flow_kg_s=float(mass_flow_per_channel_kg_s),
         channel_diameter_m=float(channel_diameter_m),
     )
