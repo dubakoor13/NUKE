@@ -115,6 +115,193 @@ python -m ntr.nerva.build_model \
 Add `--run` only after an OpenMC executable and compatible nuclear-data
 library are configured.
 
+
+## Full OpenMC diagnostics path
+
+The NERVA-derived model now uses OpenMC for substantially more than a single
+3-D fission/heating field. The default eigenvalue model remains the same
+non-calibrated low-enrichment surrogate, but the statepoint now carries a much
+richer diagnostic set.
+
+### Transport/settings diagnostics
+
+- eigenvalue transport with the existing fissionable source;
+- source Shannon-entropy mesh for convergence diagnostics;
+- optional coupled neutron-photon transport via `--photon-transport`;
+- configurable logarithmic neutron-energy group count;
+- configurable high-resolution axial tally mesh;
+- vacuum-boundary current/leakage tally.
+
+Example:
+
+```bash
+python -m ntr.nerva.build_model \
+  --assembly reactor \
+  --rings 5 \
+  --diagnostic-energy-groups 120 \
+  --axial-mesh-bins 132 \
+  --photon-transport \
+  --output build/nerva_reactor_detailed
+```
+
+Photon transport requires a nuclear-data library with compatible photon
+interaction data.
+
+### 3-D transport fields
+
+The `nerva_3d_neutronics` mesh now scores:
+
+```text
+flux
+absorption
+fission
+nu-fission
+heating
+heating-local
+```
+
+The normalized engineering NPZ/CSV therefore includes:
+
+```text
+power_density_w_cm3
+power_density_std_w_cm3
+total_heating_power_density_w_cm3
+flux_cm2_s
+absorption_rate_cm3_s
+fission_rate_cm3_s
+nu_fission_rate_cm3_s
+fuel_power_density_w_cm3
+tie_power_density_w_cm3
+```
+
+The standard postprocessor also reports maximum/mean-active mesh power peaking
+and Monte Carlo heating relative-error statistics.
+
+### Material-resolved transport
+
+A separate material tally reports flux, absorption, fission, nu-fission,
+`heating`, and `heating-local` for:
+
+```text
+fuel
+hydrogen
+ZrC
+beryllium reflector
+graphite
+ZrH
+Inconel
+B4C
+aluminum vessel
+```
+
+This makes it possible to quantify where deposited nuclear heat is going
+without inferring the split from geometry alone.
+
+### Energy spectra
+
+The statepoint now carries independent energy-filtered spectra for:
+
+- the conceptual fuel material: flux, absorption, fission and nu-fission;
+- the hydrogen coolant: flux, absorption and local heating.
+
+The advanced postprocessor integrates these spectra into thermal
+(<0.625 eV), epithermal and fast (>100 keV) diagnostic fractions while also
+retaining the complete energy-bin data.
+
+### Fine axial transport
+
+A separate `1 x 1 x N` OpenMC mesh provides a fine axial history of:
+
+- deposited power;
+- flux;
+- fission rate;
+- nu-fission production.
+
+This is independent of the coarser 3-D engineering mesh and is intended for
+axial power-shape and peaking diagnostics.
+
+### Leakage/current
+
+All vacuum boundaries discovered from the geometry are included in a
+`SurfaceFilter` current tally. The advanced postprocessor exports the signed
+boundary currents and their Monte Carlo standard deviations.
+
+### Advanced statepoint package
+
+After normalizing a real statepoint:
+
+```bash
+python -m ntr.nerva.postprocess_statepoint \
+  statepoint.80.h5 \
+  --power-mw 100 \
+  --output build/nerva_power
+```
+
+run:
+
+```bash
+python -m ntr.nerva.postprocess_openmc_diagnostics \
+  statepoint.80.h5 \
+  --power-metadata build/nerva_power/metadata.json \
+  --output build/nerva_openmc_diagnostics
+```
+
+Outputs:
+
+```text
+build/nerva_openmc_diagnostics/
+├── openmc_diagnostics.json
+├── openmc_diagnostics.npz
+├── material_transport.csv
+├── spectra.csv
+├── axial_profile.csv
+└── leakage_current.csv
+```
+
+The JSON report includes:
+
+- reported `k_eff` and its uncertainty;
+- source-entropy history when present in the statepoint;
+- material power fractions;
+- 3-D and axial power peaking;
+- mesh-heating uncertainty statistics;
+- fuel and hydrogen spectral fractions;
+- vacuum-boundary currents.
+
+The reported `k_eff` is diagnostic only. There is no automatic enrichment,
+geometry, or control-drum tuning loop.
+
+### OpenMC diagnostic plots
+
+```bash
+python -m ntr.nerva.plot_openmc_diagnostics \
+  --diagnostics build/nerva_openmc_diagnostics/openmc_diagnostics.npz \
+  --material-csv build/nerva_openmc_diagnostics/material_transport.csv \
+  --output build/nerva_openmc_plots
+```
+
+This generates separate plots for:
+
+- axial deposited power;
+- fuel neutron spectrum;
+- hydrogen-region neutron spectrum;
+- material heat deposition;
+- 3-D midplane local heating;
+- 3-D midplane Monte Carlo relative uncertainty.
+
+The one-command `run_analysis` workflow now runs the diagnostics
+postprocessor and these plots automatically unless `--no-plots` is used.
+
+### Deliberate fidelity boundary
+
+The expanded diagnostics do **not** change the underlying surrogate reactor
+into a validated historical NERVA reconstruction. In particular, the workflow
+does not automatically optimize enrichment, calibrate control-drum worth, or
+iterate temperatures/densities back into criticality. Those require a separate
+published-benchmark validation step before they should be interpreted
+physically.
+
+
 ## Normalize a completed OpenMC statepoint
 
 After a transport run has produced a statepoint file:
