@@ -71,6 +71,42 @@ def _score(
     return np.asarray(data[..., 0, 0], dtype=float).reshape(-1)
 
 
+
+
+def _distrib_axial_score(
+    tally: openmc.Tally,
+    score: str,
+    value: str = "mean",
+) -> tuple[np.ndarray, list[str]]:
+    """Return a Distribcell x 1x1xNz mesh score as [instance, z]."""
+    distrib = tally.find_filter(openmc.DistribcellFilter)
+    mesh_filter = tally.find_filter(openmc.MeshFilter)
+    mesh = mesh_filter.mesh
+    if not isinstance(mesh, openmc.RegularMesh):
+        raise TypeError(f"{tally.name} axial filter must use RegularMesh")
+
+    dimension = tuple(int(v) for v in mesh.dimension)
+    if dimension[0] != 1 or dimension[1] != 1:
+        raise ValueError(
+            f"{tally.name} instance axial mesh must be 1x1xNz, got {dimension}"
+        )
+
+    sliced = tally.get_slice(scores=[score])
+    data = np.asarray(
+        sliced.get_reshaped_data(
+            value=value,
+            expand_dims=False,
+        ),
+        dtype=float,
+    )
+    data = np.asarray(data[..., 0, 0], dtype=float).reshape(
+        int(distrib.num_bins),
+        int(np.prod(dimension)),
+    )
+    paths = _paths(tally, int(distrib.num_bins))
+    return data, paths
+
+
 def _paths(
     tally: openmc.Tally,
     count: int,
@@ -131,6 +167,13 @@ def main() -> int:
     channel_rows: list[dict] = []
     tie_rows: list[dict] = []
 
+    fuel_axial_raw = None
+    fuel_axial_std_raw = None
+    fuel_axial_paths: list[str] = []
+    channel_axial_raw: dict[int, np.ndarray] = {}
+    channel_axial_std_raw: dict[int, np.ndarray] = {}
+    channel_axial_paths: dict[int, list[str]] = {}
+
     with openmc.StatePoint(args.statepoint) as sp:
         try:
             fuel_tally = sp.get_tally(
@@ -176,6 +219,30 @@ def main() -> int:
                     }
                 )
 
+        try:
+            fuel_axial_tally = sp.get_tally(
+                name="nerva_fuel_element_axial_instances"
+            )
+        except LookupError:
+            fuel_axial_tally = None
+
+        if fuel_axial_tally is not None:
+            fuel_axial_raw, fuel_axial_paths = _distrib_axial_score(
+                fuel_axial_tally,
+                "heating-local",
+            )
+            fuel_axial_std_raw, _ = _distrib_axial_score(
+                fuel_axial_tally,
+                "heating-local",
+                value="std_dev",
+            )
+            fuel_axial_raw = (
+                fuel_axial_raw * EV_TO_J * source_rate
+            )
+            fuel_axial_std_raw = (
+                fuel_axial_std_raw * EV_TO_J * source_rate
+            )
+
         for channel_index in range(1, 20):
             name = (
                 f"nerva_hydrogen_channel_"
@@ -220,6 +287,34 @@ def main() -> int:
                         "flux_cm2_s": None,
                     }
                 )
+
+            try:
+                axial_tally = sp.get_tally(
+                    name=(
+                        f"nerva_hydrogen_channel_"
+                        f"{channel_index:02d}_axial_instances"
+                    )
+                )
+            except LookupError:
+                axial_tally = None
+
+            if axial_tally is not None:
+                axial_mean, axial_paths = _distrib_axial_score(
+                    axial_tally,
+                    "heating-local",
+                )
+                axial_std, _ = _distrib_axial_score(
+                    axial_tally,
+                    "heating-local",
+                    value="std_dev",
+                )
+                channel_axial_raw[channel_index] = (
+                    axial_mean * EV_TO_J * source_rate
+                )
+                channel_axial_std_raw[channel_index] = (
+                    axial_std * EV_TO_J * source_rate
+                )
+                channel_axial_paths[channel_index] = axial_paths
 
         for tally in sp.tallies.values():
             if not tally.name.startswith("nerva_tie_instance_"):
@@ -374,6 +469,75 @@ def main() -> int:
             float(row["heating_std_W"])
         )
 
+
+    axial_bins = 0
+    if fuel_axial_raw is not None:
+        axial_bins = int(fuel_axial_raw.shape[1])
+    elif channel_axial_raw:
+        axial_bins = int(next(iter(channel_axial_raw.values())).shape[1])
+
+    fuel_element_axial_heating_w = np.zeros(
+        (len(fuel_rows), axial_bins),
+        dtype=float,
+    )
+    fuel_element_axial_heating_std_w = np.zeros_like(
+        fuel_element_axial_heating_w
+    )
+    unmatched_fuel_axial_rows = 0
+
+    if fuel_axial_raw is not None:
+        for i in range(fuel_axial_raw.shape[0]):
+            key = _parent_path(
+                fuel_axial_paths[i] if i < len(fuel_axial_paths) else "",
+                i,
+            )
+            element_index = fuel_key_to_index.get(key)
+            if element_index is None and i < len(fuel_rows):
+                element_index = i
+            if element_index is None:
+                unmatched_fuel_axial_rows += 1
+                continue
+            fuel_element_axial_heating_w[element_index, :] = (
+                fuel_axial_raw[i, :]
+            )
+            fuel_element_axial_heating_std_w[element_index, :] = (
+                fuel_axial_std_raw[i, :]
+            )
+
+    channel_direct_axial_w = np.zeros(
+        (len(fuel_rows), 19, axial_bins),
+        dtype=float,
+    )
+    channel_direct_axial_std_w = np.zeros_like(
+        channel_direct_axial_w
+    )
+    unmatched_channel_axial_rows = 0
+
+    for channel_index, axial_values in channel_axial_raw.items():
+        paths = channel_axial_paths[channel_index]
+        axial_std_values = channel_axial_std_raw[channel_index]
+        for i in range(axial_values.shape[0]):
+            key = _parent_path(
+                paths[i] if i < len(paths) else "",
+                i,
+            )
+            element_index = fuel_key_to_index.get(key)
+            if element_index is None and i < len(fuel_rows):
+                element_index = i
+            if element_index is None:
+                unmatched_channel_axial_rows += 1
+                continue
+            channel_direct_axial_w[
+                element_index,
+                channel_index - 1,
+                :,
+            ] = axial_values[i, :]
+            channel_direct_axial_std_w[
+                element_index,
+                channel_index - 1,
+                :,
+            ] = axial_std_values[i, :]
+
     channel_power_by_number = {}
     for channel_index in range(1, 20):
         values = [
@@ -401,6 +565,16 @@ def main() -> int:
         fuel_element_power_fraction=fuel_fractions,
         channel_direct_nuclear_heating_w=channel_direct_matrix,
         channel_direct_nuclear_heating_std_w=channel_direct_std_matrix,
+        fuel_element_axial_heating_w=fuel_element_axial_heating_w,
+        fuel_element_axial_heating_std_w=(
+            fuel_element_axial_heating_std_w
+        ),
+        channel_direct_nuclear_heating_axial_w=(
+            channel_direct_axial_w
+        ),
+        channel_direct_nuclear_heating_axial_std_w=(
+            channel_direct_axial_std_w
+        ),
     )
 
     summary = {
@@ -418,6 +592,15 @@ def main() -> int:
         "hydrogen_channel_row_count": len(channel_rows),
         "channel_element_alignment_mode": channel_alignment_mode,
         "unmatched_channel_rows": unmatched_channel_rows,
+        "direct_element_axial_tally_available": (
+            fuel_axial_raw is not None
+        ),
+        "direct_channel_axial_tallies_available": (
+            len(channel_axial_raw) == 19
+        ),
+        "instance_axial_bins": axial_bins,
+        "unmatched_fuel_axial_rows": unmatched_fuel_axial_rows,
+        "unmatched_channel_axial_rows": unmatched_channel_axial_rows,
         "direct_hydrogen_nuclear_heating_by_channel_W": (
             channel_power_by_number
         ),
@@ -433,9 +616,10 @@ def main() -> int:
                 "the convective heat transferred from the fuel matrix."
             ),
             "axial_distribution": (
-                "No per-instance axial shape is inferred in this file. "
-                "Use the separate axial OpenMC tally or a clearly labeled "
-                "reconstruction model for axial thermal coupling."
+                "When present, fuel-element and channel-instance axial "
+                "heating arrays come directly from Distribcell x axial-mesh "
+                "OpenMC tallies. Integrated instance tallies remain the "
+                "normalization reference for element/channel totals."
             ),
             "flux_units": (
                 "flux_tally_x_source_rate is the cell-integrated "
