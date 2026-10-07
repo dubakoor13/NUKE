@@ -56,6 +56,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--diagnostic-energy-groups", type=int, default=80)
     parser.add_argument("--axial-mesh-bins", type=int, default=96)
     parser.add_argument(
+        "--target-rel-error",
+        type=float,
+        default=None,
+        help=(
+            "Optional OpenMC heating-local relative-error trigger. "
+            "This affects statistical stopping only."
+        ),
+    )
+    parser.add_argument("--trigger-max-batches", type=int, default=500)
+    parser.add_argument("--trigger-batch-interval", type=int, default=5)
+    parser.add_argument(
         "--output",
         type=Path,
         default=Path("build/nerva_transport"),
@@ -133,6 +144,9 @@ def main() -> int:
         photon_transport=args.photon_transport,
         diagnostic_energy_groups=args.diagnostic_energy_groups,
         axial_mesh_bins=args.axial_mesh_bins,
+        tally_rel_err_trigger=args.target_rel_error,
+        trigger_max_batches=args.trigger_max_batches,
+        trigger_batch_interval=args.trigger_batch_interval,
     )
     config.validate()
 
@@ -189,6 +203,9 @@ def main() -> int:
             "photon_transport": config.photon_transport,
             "diagnostic_energy_groups": config.diagnostic_energy_groups,
             "axial_mesh_bins": config.axial_mesh_bins,
+            "tally_rel_err_trigger": config.tally_rel_err_trigger,
+            "trigger_max_batches": config.trigger_max_batches,
+            "trigger_batch_interval": config.trigger_batch_interval,
             "uranium_enrichment_wt_percent": (
                 config.uranium_enrichment_wt_percent
             ),
@@ -229,6 +246,10 @@ def main() -> int:
     print(f"  nuclear data: {report.cross_sections_xml}")
     print(f"  nuclear-data SHA-256: {report.sha256}")
     print(f"  photon transport: {config.photon_transport}")
+    print(
+        f"  tally relative-error trigger: "
+        f"{config.tally_rel_err_trigger}"
+    )
     print(
         f"  explicit XS temperature coverage: "
         f"{temperature_audit['model_explicit_temperature_coverage_ok']}"
