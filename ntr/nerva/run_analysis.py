@@ -28,6 +28,14 @@ def parse_args() -> argparse.Namespace:
         default="constant",
     )
     parser.add_argument(
+        "--solid-conduction-model",
+        choices=(
+            "ligament-slab",
+            "equivalent-annulus-sector",
+        ),
+        default="ligament-slab",
+    )
+    parser.add_argument(
         "--balance-parallel-flow",
         action="store_true",
         help=(
@@ -178,6 +186,8 @@ def main() -> int:
         str(args.inlet_pressure_mpa),
         "--hydrogen-model",
         args.hydrogen_model,
+        "--solid-conduction-model",
+        args.solid_conduction_model,
         "--output",
         str(element_channels_dir),
     ]
