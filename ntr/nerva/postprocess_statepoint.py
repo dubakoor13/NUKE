@@ -33,14 +33,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _score_mesh_field(tally: openmc.Tally, score: str) -> np.ndarray:
+def _score_mesh_field(
+    tally: openmc.Tally,
+    score: str,
+    value: str = "mean",
+) -> np.ndarray:
     """Return a mesh score, summing any filters that follow the mesh filter."""
     mesh_filter = tally.find_filter(openmc.MeshFilter)
     mesh_shape = tuple(int(value) for value in mesh_filter.mesh.dimension)
 
     sliced = tally.get_slice(scores=[score])
     values = np.asarray(
-        sliced.get_reshaped_data(value="mean", expand_dims=True),
+        sliced.get_reshaped_data(value=value, expand_dims=True),
         dtype=float,
     )
 
@@ -88,7 +92,15 @@ def main() -> int:
         cell_volume_cm3 = float(np.prod(spacing))
 
         heating = _score_mesh_field(tally, "heating-local")
+        heating_std = _score_mesh_field(
+            tally,
+            "heating-local",
+            value="std_dev",
+        )
+        total_heating = _score_mesh_field(tally, "heating")
+        absorption = _score_mesh_field(tally, "absorption")
         fission = _score_mesh_field(tally, "fission")
+        nu_fission = _score_mesh_field(tally, "nu-fission")
         flux = _score_mesh_field(tally, "flux")
 
         fuel_tally = statepoint.get_tally(name="nerva_3d_fuel_heating")
@@ -126,6 +138,28 @@ def main() -> int:
         power_density = normalized.power_density_w_cm3
         fission_rate = normalized.fission_rate_cm3_s
         flux_rate = normalized.flux_cm2_s
+        absorption_rate = (
+            absorption
+            * normalized.source_rate_s
+            / cell_volume_cm3
+        )
+        nu_fission_rate = (
+            nu_fission
+            * normalized.source_rate_s
+            / cell_volume_cm3
+        )
+        total_heating_power_density = (
+            total_heating
+            * EV_TO_J
+            * normalized.source_rate_s
+            / cell_volume_cm3
+        )
+        power_density_std = (
+            heating_std
+            * EV_TO_J
+            * normalized.source_rate_s
+            / cell_volume_cm3
+        )
         fuel_power_density = (
             fuel_heating * EV_TO_J * normalized.source_rate_s / cell_volume_cm3
         )
@@ -138,6 +172,10 @@ def main() -> int:
         power_density_w_cm3=power_density,
         fission_rate_cm3_s=fission_rate,
         flux_cm2_s=flux_rate,
+        absorption_rate_cm3_s=absorption_rate,
+        nu_fission_rate_cm3_s=nu_fission_rate,
+        total_heating_power_density_w_cm3=total_heating_power_density,
+        power_density_std_w_cm3=power_density_std,
         fuel_power_density_w_cm3=fuel_power_density,
         tie_power_density_w_cm3=tie_power_density,
         lower_left_cm=lower_left,
@@ -167,6 +205,10 @@ def main() -> int:
                 "power_density_W_cm3",
                 "fission_rate_cm3_s",
                 "flux_cm2_s",
+                "absorption_rate_cm3_s",
+                "nu_fission_rate_cm3_s",
+                "total_heating_power_density_W_cm3",
+                "power_density_std_W_cm3",
                 "fuel_power_density_W_cm3",
                 "tie_power_density_W_cm3",
             )
@@ -185,6 +227,10 @@ def main() -> int:
                             power_density[i, j, k],
                             fission_rate[i, j, k],
                             flux_rate[i, j, k],
+                            absorption_rate[i, j, k],
+                            nu_fission_rate[i, j, k],
+                            total_heating_power_density[i, j, k],
+                            power_density_std[i, j, k],
                             fuel_power_density[i, j, k],
                             tie_power_density[i, j, k],
                         )
@@ -192,6 +238,41 @@ def main() -> int:
 
     fuel_power_w = float(np.sum(fuel_power_density) * cell_volume_cm3)
     tie_power_w = float(np.sum(tie_power_density) * cell_volume_cm3)
+
+    maximum_power_density = float(np.max(power_density))
+    active_mask = power_density > 1.0e-9 * maximum_power_density
+    mean_active_power_density = (
+        float(np.mean(power_density[active_mask]))
+        if np.any(active_mask)
+        else 0.0
+    )
+    mesh_power_peaking = (
+        maximum_power_density / mean_active_power_density
+        if mean_active_power_density > 0.0
+        else 0.0
+    )
+
+    uncertainty_mask = np.abs(power_density) > (
+        1.0e-8 * maximum_power_density
+    )
+    relative_error = np.zeros_like(power_density)
+    relative_error[uncertainty_mask] = (
+        np.abs(
+            power_density_std[uncertainty_mask]
+            / power_density[uncertainty_mask]
+        )
+    )
+    valid_relative_error = relative_error[uncertainty_mask]
+    if valid_relative_error.size:
+        median_relative_error = float(
+            np.median(valid_relative_error)
+        )
+        p95_relative_error = float(
+            np.percentile(valid_relative_error, 95.0)
+        )
+    else:
+        median_relative_error = 0.0
+        p95_relative_error = 0.0
 
     metadata = {
         "statepoint": str(args.statepoint),
@@ -202,6 +283,11 @@ def main() -> int:
         "fuel_power_fraction": fuel_power_w / normalized.total_power_w,
         "tie_power_W": tie_power_w,
         "tie_power_fraction": tie_power_w / normalized.total_power_w,
+        "mesh_power_peaking_max_to_mean_active": mesh_power_peaking,
+        "maximum_power_density_W_cm3": maximum_power_density,
+        "mean_active_power_density_W_cm3": mean_active_power_density,
+        "mesh_heating_median_relative_error": median_relative_error,
+        "mesh_heating_p95_relative_error": p95_relative_error,
         "cell_volume_cm3": normalized.cell_volume_cm3,
         "dimension": [int(value) for value in dimension],
         "lower_left_cm": [float(value) for value in lower_left],
@@ -210,6 +296,10 @@ def main() -> int:
             "power_density": "W/cm3",
             "fission_rate": "reactions/cm3/s",
             "flux": "particles/cm2/s",
+            "absorption_rate": "reactions/cm3/s",
+            "nu_fission_rate": "neutrons/cm3/s",
+            "total_heating_power_density": "W/cm3",
+            "power_density_std": "W/cm3",
             "fuel_power_density": "W/cm3",
             "tie_power_density": "W/cm3",
         },
@@ -227,6 +317,8 @@ def main() -> int:
     print(f"  fuel power fraction: {fuel_power_w / normalized.total_power_w:.6f}")
     print(f"  tie-solid power: {tie_power_w / 1.0e6:.6g} MW")
     print(f"  tie power fraction: {tie_power_w / normalized.total_power_w:.6f}")
+    print(f"  mesh max/mean-active power peaking: {mesh_power_peaking:.6f}")
+    print(f"  mesh heating p95 relative error: {p95_relative_error:.6f}")
     print(f"  mesh: {tuple(int(value) for value in dimension)}")
     print(f"  output: {args.output}")
     return 0
