@@ -52,7 +52,9 @@
     "coolant_channel_axial_instance_tallies": true,
     "tie_component_axial_instance_tallies": true,
     "tie_supply_hydrogen_axial_instance_tallies": true,
-    "tie_return_hydrogen_axial_instance_tallies": true
+    "tie_return_hydrogen_axial_instance_tallies": true,
+    "fuel_channel_sector_integrated_tallies": true,
+    "fuel_channel_sector_axial_tallies": true
   },
   "geometry": {
     "fuel_element": {
@@ -78,6 +80,14 @@
       "control_drums": 12,
       "control_drum_dimensions": "engineering surrogate",
       "pressure_vessel": "aluminum-alloy surrogate"
+    },
+    "fuel_matrix_scoring_partition": {
+      "implemented": true,
+      "sectors_per_element": 19,
+      "method": "nearest-channel Voronoi partition",
+      "material_change": false,
+      "internal_boundary_type": "transmission",
+      "purpose": "channel-associated solid-heating scoring"
     }
   },
   "thermal_hydraulics": {
@@ -107,7 +117,8 @@
       "direct_hydrogen_heating_source": "OpenMC channel-instance heating-local tally",
       "element_specific_axial_shape": true,
       "axial_reconstruction": "direct OpenMC Distribcell x axial-mesh shapes when present; global axial shape only for legacy-statepoint fallback",
-      "solid_wall_power_within_element": "equal 1/19 split pending channel-resolved solid deposition within the fuel matrix"
+      "solid_wall_power_within_element": "direct OpenMC fuel-sector integrated and axial heating for current statepoints; equal 1/19 split only for legacy fallback",
+      "fuel_sector_thermal_assignment": "nearest-channel Voronoi scoring sector heat is assigned to the associated coolant channel"
     },
     "direct_nuclear_coolant_heating": {
       "fuel_channels": true,
@@ -152,9 +163,11 @@
     "nuclear_data_temperature_audit": true,
     "engineering_report_cli": true,
     "tie_instance_reconstruction_math": true,
-    "tie_instance_power_closure": true
+    "tie_instance_power_closure": true,
+    "fuel_sector_partition_coverage": true,
+    "fuel_sector_power_closure": true
   },
-  "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked. Fuel-element, coolant-channel, and tie-tube integrated/axial heating shapes are OpenMC tally outputs when current statepoints are used. Equal solid-wall sharing among the 19 fuel channels and equal tie-flow sharing among tie instances remain thermal reconstruction assumptions.",
+  "interpretation_rule": "Do not treat keff, control worth, temperatures, thrust, or performance as historical NERVA predictions until explicitly benchmarked. Fuel-element, channel-associated fuel-sector, coolant-channel, and tie-tube integrated/axial heating shapes are OpenMC tally outputs for current statepoints. The fuel-sector-to-channel thermal assignment and equal tie-flow sharing remain engineering reconstruction assumptions.",
   "results": {
     "vtk_paraview_export": true,
     "element_channel_heatmaps": true,
@@ -167,6 +180,7 @@
     "engineering_run_report_json": true,
     "full_run_report_generated_automatically": true,
     "tie_instance_summary": true,
-    "tie_instance_plots": true
+    "tie_instance_plots": true,
+    "fuel_sector_channel_wall_power": true
   }
 }
