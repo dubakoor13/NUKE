@@ -29,11 +29,26 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install .
 
-      - name: Validate NERVA fuel-element geometry
+      - name: Validate NERVA fuel and tie-tube geometry
         run: python -m ntr.nerva.validate_layout
 
-      - name: Export NERVA OpenMC XML
-        run: python -m ntr.nerva.build_model --output build/nerva_demo
+      - name: Export seven-position cluster
+        run: |
+          python -m ntr.nerva.build_model \
+            --assembly cluster \
+            --output build/nerva_cluster
 
-      - name: Show exported files
-        run: find build/nerva_demo -maxdepth 1 -type f -print -exec test -s {} \;
+      - name: Export small all-fuel regression core
+        run: |
+          python -m ntr.nerva.build_model \
+            --assembly core \
+            --output build/nerva_core
+
+      - name: Verify exported OpenMC inputs
+        run: |
+          for d in build/nerva_cluster build/nerva_core; do
+            for f in geometry.xml materials.xml settings.xml tallies.xml plots.xml; do
+              test -s "$d/$f"
+              echo "$d/$f"
+            done
+          done
