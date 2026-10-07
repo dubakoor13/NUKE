@@ -280,8 +280,10 @@ totals so that the per-tie reconstruction preserves total solid and direct-H2
 power exactly. Each tie is then solved independently through the existing
 counterflow model.
 
-The remaining tie-flow assumption is explicit: total tie-tube hydrogen mass
-flow is divided equally among the repeated tie instances. The older
+Tie-tube hydrogen mass flow is divided equally among repeated tie instances by
+default. With `--balance-flow` on the per-tie solver, or
+`--balance-parallel-flow` on the orchestrator, the same fixed total flow can
+instead be redistributed iteratively toward a common pressure drop. The older
 representative tie-tube solver is retained for backward compatibility and
 cross-checking.
 
@@ -297,6 +299,51 @@ hottest_tie_return_profile.csv
 
 `plot_tie_instances.py` generates the per-tie power, outlet-temperature,
 wall-temperature, and hottest-tie axial plots.
+
+
+
+### Optional parallel-flow balancing
+
+By default, the resolved fuel coolant channels and tie-tube branches still use
+equal shares of their user-supplied total mass flows. An opt-in hydraulic
+network iteration can instead redistribute those fixed totals toward a common
+parallel-branch pressure drop:
+
+```bash
+python -m ntr.nerva.run_analysis \
+  statepoint.80.h5 \
+  --power-mw 100 \
+  --rings 5 \
+  --fuel-mass-flow-kg-s 2.0 \
+  --tie-mass-flow-kg-s 0.40 \
+  --inlet-temperature-k 500 \
+  --inlet-pressure-mpa 8 \
+  --hydrogen-model coolprop \
+  --balance-parallel-flow \
+  --flow-balance-max-iterations 6 \
+  --flow-balance-tolerance 1e-3 \
+  --flow-balance-relaxation 0.5 \
+  --output-root build/nerva_analysis_balanced
+```
+
+Each iteration reruns the complete branch thermal-hydraulic solve, forms an
+iteration-local effective resistance
+
+```text
+R_i = DeltaP_i / mdot_i^2
+```
+
+and updates the branch target flows from the common-pressure-drop relation
+`mdot_i proportional to 1/sqrt(R_i)`. Relaxation is applied before the branch
+flows are renormalized to preserve the requested total mass flow exactly.
+
+The output summaries record whether balancing was enabled, whether the flow
+update met the requested tolerance, iteration count, minimum/maximum branch
+flow, total-flow closure, and the final pressure-drop spread.
+
+This is a screening parallel-network balance. It does **not** yet represent
+explicit inlet/outlet manifolds, plenum pressure fields, pump/turbopump maps,
+branch minor-loss coefficients, or inter-channel crossflow.
 
 
 ### Stochastic OpenMC volumes
@@ -800,9 +847,11 @@ The fuel-channel output now also estimates solid temperatures by adding
 half of the minimum fuel ligament. Fuel and ZrC conductivities are explicit CLI
 parameters so this screening model does not hide material assumptions.
 
-Real-gas hydrogen properties, 2-D/3-D fuel conduction, radiation, local
-fuel-element power peaking, tie-tube turn losses and temperature feedback
-remain next-fidelity layers.
+The current detailed path already includes optional real-fluid H2 properties,
+OpenMC-resolved local fuel/tie power, and optional parallel-flow redistribution.
+2-D/3-D fuel conduction, radiation, explicit tie-tube turn/minor losses,
+manifold/plenum hydraulics, and temperature-density feedback remain
+next-fidelity layers.
 
 ## Run the complete post-OpenMC analysis in one command
 
