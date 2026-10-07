@@ -33,10 +33,36 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _score_field(tally: openmc.Tally, score: str) -> np.ndarray:
+def _score_mesh_field(tally: openmc.Tally, score: str) -> np.ndarray:
+    """Return a mesh score, summing any filters that follow the mesh filter."""
+    mesh_filter = tally.find_filter(openmc.MeshFilter)
+    mesh_shape = tuple(int(value) for value in mesh_filter.mesh.dimension)
+
     sliced = tally.get_slice(scores=[score])
-    values = sliced.get_reshaped_data(value="mean", expand_dims=True)
-    return np.asarray(values, dtype=float).squeeze()
+    values = np.asarray(
+        sliced.get_reshaped_data(value="mean", expand_dims=True),
+        dtype=float,
+    )
+
+    # Last two dimensions are nuclide and score. Both are singleton after
+    # score slicing in the tallies used here.
+    if values.shape[-2:] != (1, 1):
+        raise ValueError(
+            f"unexpected trailing tally dimensions {values.shape[-2:]}"
+        )
+    values = values[..., 0, 0]
+
+    if values.shape[: len(mesh_shape)] != mesh_shape:
+        raise ValueError(
+            f"expanded mesh tally starts with shape {values.shape}, "
+            f"expected mesh prefix {mesh_shape}"
+        )
+
+    if values.ndim > len(mesh_shape):
+        axes = tuple(range(len(mesh_shape), values.ndim))
+        values = np.sum(values, axis=axes)
+
+    return values
 
 
 def main() -> int:
@@ -61,12 +87,19 @@ def main() -> int:
         spacing = (upper_right - lower_left) / dimension
         cell_volume_cm3 = float(np.prod(spacing))
 
-        heating = _score_field(tally, "heating-local")
-        fission = _score_field(tally, "fission")
-        flux = _score_field(tally, "flux")
+        heating = _score_mesh_field(tally, "heating-local")
+        fission = _score_mesh_field(tally, "fission")
+        flux = _score_mesh_field(tally, "flux")
 
         fuel_tally = statepoint.get_tally(name="nerva_3d_fuel_heating")
-        fuel_heating = _score_field(fuel_tally, "heating-local")
+        fuel_heating = _score_mesh_field(fuel_tally, "heating-local")
+
+        try:
+            tie_tally = statepoint.get_tally(name="nerva_3d_tie_heating")
+        except LookupError:
+            tie_heating = np.zeros_like(fuel_heating)
+        else:
+            tie_heating = _score_mesh_field(tie_tally, "heating-local")
 
         normalized = normalize_regular_mesh(
             heating_ev_per_source=heating,
@@ -85,12 +118,19 @@ def main() -> int:
             raise ValueError(
                 f"fuel heating mesh has shape {fuel_heating.shape}, expected {shape}"
             )
+        if tie_heating.shape != shape:
+            raise ValueError(
+                f"tie heating mesh has shape {tie_heating.shape}, expected {shape}"
+            )
 
         power_density = normalized.power_density_w_cm3
         fission_rate = normalized.fission_rate_cm3_s
         flux_rate = normalized.flux_cm2_s
         fuel_power_density = (
             fuel_heating * EV_TO_J * normalized.source_rate_s / cell_volume_cm3
+        )
+        tie_power_density = (
+            tie_heating * EV_TO_J * normalized.source_rate_s / cell_volume_cm3
         )
 
     np.savez_compressed(
@@ -99,6 +139,7 @@ def main() -> int:
         fission_rate_cm3_s=fission_rate,
         flux_cm2_s=flux_rate,
         fuel_power_density_w_cm3=fuel_power_density,
+        tie_power_density_w_cm3=tie_power_density,
         lower_left_cm=lower_left,
         upper_right_cm=upper_right,
         dimension=dimension,
@@ -127,6 +168,7 @@ def main() -> int:
                 "fission_rate_cm3_s",
                 "flux_cm2_s",
                 "fuel_power_density_W_cm3",
+                "tie_power_density_W_cm3",
             )
         )
         for i in range(dimension[0]):
@@ -144,10 +186,12 @@ def main() -> int:
                             fission_rate[i, j, k],
                             flux_rate[i, j, k],
                             fuel_power_density[i, j, k],
+                            tie_power_density[i, j, k],
                         )
                     )
 
     fuel_power_w = float(np.sum(fuel_power_density) * cell_volume_cm3)
+    tie_power_w = float(np.sum(tie_power_density) * cell_volume_cm3)
 
     metadata = {
         "statepoint": str(args.statepoint),
@@ -156,6 +200,8 @@ def main() -> int:
         "source_rate_per_s": normalized.source_rate_s,
         "fuel_power_W": fuel_power_w,
         "fuel_power_fraction": fuel_power_w / normalized.total_power_w,
+        "tie_power_W": tie_power_w,
+        "tie_power_fraction": tie_power_w / normalized.total_power_w,
         "cell_volume_cm3": normalized.cell_volume_cm3,
         "dimension": [int(value) for value in dimension],
         "lower_left_cm": [float(value) for value in lower_left],
@@ -165,6 +211,7 @@ def main() -> int:
             "fission_rate": "reactions/cm3/s",
             "flux": "particles/cm2/s",
             "fuel_power_density": "W/cm3",
+            "tie_power_density": "W/cm3",
         },
     }
     (args.output / "metadata.json").write_text(
@@ -178,6 +225,8 @@ def main() -> int:
     print(f"  source rate: {normalized.source_rate_s:.6e} source/s")
     print(f"  fuel-deposited power: {fuel_power_w / 1.0e6:.6g} MW")
     print(f"  fuel power fraction: {fuel_power_w / normalized.total_power_w:.6f}")
+    print(f"  tie-solid power: {tie_power_w / 1.0e6:.6g} MW")
+    print(f"  tie power fraction: {tie_power_w / normalized.total_power_w:.6f}")
     print(f"  mesh: {tuple(int(value) for value in dimension)}")
     print(f"  output: {args.output}")
     return 0
