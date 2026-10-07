@@ -62,6 +62,7 @@ def build_model(
         config,
         radial_extent_cm=radial_extent,
         fuel_material=material_map["fuel"],
+        geometry=geometry,
     )
 
     plot = openmc.SlicePlot(name=f"nerva_{assembly}_xy")
