@@ -11,6 +11,10 @@ import numpy as np
 
 from .config import NervaConfig
 from .hydrogen_properties import make_hydrogen_property_model
+from .parallel_flow import (
+    pressure_spread_fraction,
+    update_parallel_mass_flow,
+)
 from .tie_tube_thermal import solve_tie_tube_counterflow
 
 
@@ -48,6 +52,29 @@ def parse_args() -> argparse.Namespace:
         "--supply-heat-fraction",
         type=float,
         default=None,
+    )
+    parser.add_argument(
+        "--balance-flow",
+        action="store_true",
+        help=(
+            "Iteratively redistribute the fixed total tie-tube flow "
+            "to approach a common pressure drop across parallel ties."
+        ),
+    )
+    parser.add_argument(
+        "--flow-balance-max-iterations",
+        type=int,
+        default=6,
+    )
+    parser.add_argument(
+        "--flow-balance-tolerance",
+        type=float,
+        default=1.0e-3,
+    )
+    parser.add_argument(
+        "--flow-balance-relaxation",
+        type=float,
+        default=0.5,
     )
     parser.add_argument(
         "--output",
@@ -126,6 +153,18 @@ def main() -> int:
         raise ValueError("--inlet-temperature-k must be positive")
     if args.inlet_pressure_mpa <= 0.0:
         raise ValueError("--inlet-pressure-mpa must be positive")
+    if args.flow_balance_max_iterations < 1:
+        raise ValueError(
+            "--flow-balance-max-iterations must be >= 1"
+        )
+    if args.flow_balance_tolerance <= 0.0:
+        raise ValueError(
+            "--flow-balance-tolerance must be positive"
+        )
+    if not (0.0 < args.flow_balance_relaxation <= 1.0):
+        raise ValueError(
+            "--flow-balance-relaxation must lie in (0, 1]"
+        )
 
     fields = np.load(args.power_fields)
     instances = np.load(args.instance_fields)
@@ -171,17 +210,15 @@ def main() -> int:
         )
 
     supply_raw = np.asarray(
-        instances.get(
-            "tie_supply_hydrogen_axial_heating_w",
-            np.zeros_like(tie_raw),
-        ),
+        instances["tie_supply_hydrogen_axial_heating_w"]
+        if "tie_supply_hydrogen_axial_heating_w" in instances.files
+        else np.zeros_like(tie_raw),
         dtype=float,
     )
     return_raw = np.asarray(
-        instances.get(
-            "tie_return_hydrogen_axial_heating_w",
-            np.zeros_like(tie_raw),
-        ),
+        instances["tie_return_hydrogen_axial_heating_w"]
+        if "tie_return_hydrogen_axial_heating_w" in instances.files
+        else np.zeros_like(tie_raw),
         dtype=float,
     )
     if supply_raw.shape != tie_raw.shape:
@@ -243,6 +280,78 @@ def main() -> int:
         args.hydrogen_model
     )
 
+    tie_mass_flow = np.full(
+        n_ties,
+        mass_flow_per_tie,
+        dtype=float,
+    )
+    flow_balance_converged: bool | None = None
+    flow_balance_iterations = 0
+    flow_balance_max_relative_change = 0.0
+
+    if args.balance_flow:
+        flow_balance_converged = False
+        for iteration in range(
+            1,
+            args.flow_balance_max_iterations + 1,
+        ):
+            delta_pressure = np.zeros(
+                n_ties,
+                dtype=float,
+            )
+
+            for tie_index in range(n_ties):
+                trial = solve_tie_tube_counterflow(
+                    axial_total_tie_power_w=(
+                        tie_solid_axial[tie_index, :]
+                    ),
+                    axial_direct_supply_hydrogen_power_w=(
+                        tie_supply_h2_axial[tie_index, :]
+                    ),
+                    axial_direct_return_hydrogen_power_w=(
+                        tie_return_h2_axial[tie_index, :]
+                    ),
+                    z_edges_m=z_edges_m,
+                    tie_tube_count=1,
+                    mass_flow_per_tie_kg_s=float(
+                        tie_mass_flow[tie_index]
+                    ),
+                    inlet_temperature_k=(
+                        args.inlet_temperature_k
+                    ),
+                    inlet_pressure_pa=(
+                        args.inlet_pressure_mpa * 1.0e6
+                    ),
+                    config=config,
+                    property_model=property_model,
+                    supply_heat_fraction=(
+                        args.supply_heat_fraction
+                    ),
+                )
+                delta_pressure[tie_index] = (
+                    args.inlet_pressure_mpa * 1.0e6
+                    - trial.outlet_pressure_pa
+                )
+
+            update = update_parallel_mass_flow(
+                tie_mass_flow,
+                delta_pressure,
+                total_mass_flow_kg_s=args.tie_mass_flow_kg_s,
+                relaxation=args.flow_balance_relaxation,
+            )
+            tie_mass_flow = update.mass_flow_kg_s
+            flow_balance_iterations = iteration
+            flow_balance_max_relative_change = (
+                update.max_relative_change
+            )
+
+            if (
+                update.max_relative_change
+                <= args.flow_balance_tolerance
+            ):
+                flow_balance_converged = True
+                break
+
     rows: list[dict] = []
     solutions = []
     hottest_index = -1
@@ -262,7 +371,9 @@ def main() -> int:
             ),
             z_edges_m=z_edges_m,
             tie_tube_count=1,
-            mass_flow_per_tie_kg_s=mass_flow_per_tie,
+            mass_flow_per_tie_kg_s=float(
+                tie_mass_flow[tie_index]
+            ),
             inlet_temperature_k=args.inlet_temperature_k,
             inlet_pressure_pa=args.inlet_pressure_mpa * 1.0e6,
             config=config,
@@ -281,6 +392,13 @@ def main() -> int:
 
         row = {
             "tie_instance": tie_index,
+            "mass_flow_kg_s": float(
+                tie_mass_flow[tie_index]
+            ),
+            "pressure_drop_Pa": float(
+                args.inlet_pressure_mpa * 1.0e6
+                - solution.outlet_pressure_pa
+            ),
             "solid_power_W": float(
                 np.sum(tie_solid_axial[tie_index, :])
             ),
@@ -347,6 +465,7 @@ def main() -> int:
         tie_solid_axial_power_w=tie_solid_axial,
         tie_supply_direct_h2_axial_power_w=tie_supply_h2_axial,
         tie_return_direct_h2_axial_power_w=tie_return_h2_axial,
+        tie_mass_flow_kg_s=tie_mass_flow,
         z_edges_m=z_edges_m,
     )
 
@@ -362,11 +481,39 @@ def main() -> int:
         [row["solid_power_W"] for row in rows],
         dtype=float,
     )
+    final_pressure_drop = np.asarray(
+        [row["pressure_drop_Pa"] for row in rows],
+        dtype=float,
+    )
 
     summary = {
         "tie_instances": n_ties,
         "tie_mass_flow_kg_s": args.tie_mass_flow_kg_s,
         "mass_flow_per_tie_kg_s": mass_flow_per_tie,
+        "minimum_tie_mass_flow_kg_s": float(
+            np.min(tie_mass_flow)
+        ),
+        "maximum_tie_mass_flow_kg_s": float(
+            np.max(tie_mass_flow)
+        ),
+        "reconstructed_total_tie_mass_flow_kg_s": float(
+            np.sum(tie_mass_flow)
+        ),
+        "flow_balance_enabled": args.balance_flow,
+        "flow_balance_converged": flow_balance_converged,
+        "flow_balance_iterations": flow_balance_iterations,
+        "flow_balance_tolerance": (
+            args.flow_balance_tolerance
+        ),
+        "flow_balance_relaxation": (
+            args.flow_balance_relaxation
+        ),
+        "flow_balance_max_relative_change": (
+            flow_balance_max_relative_change
+        ),
+        "final_pressure_drop_spread_fraction": (
+            pressure_spread_fraction(final_pressure_drop)
+        ),
         "global_tie_solid_power_W": global_tie_power_w,
         "reconstructed_tie_solid_power_W": float(
             np.sum(tie_solid_axial)
@@ -418,8 +565,10 @@ def main() -> int:
                 "global OpenMC mesh totals for exact energy closure."
             ),
             (
-                "Total tie mass flow is currently divided equally among "
-                "tie-tube instances."
+                "Total tie mass flow is divided equally by default. "
+                "With --balance-flow, an iterative effective-resistance "
+                "update redistributes the fixed total flow toward a common "
+                "parallel-branch pressure drop."
             ),
         ],
     }
@@ -433,6 +582,13 @@ def main() -> int:
     print(
         f"  tie solid power max/mean: "
         f"{summary['tie_integrated_power_max_to_mean']:.6f}"
+    )
+    print(
+        f"  flow balance: enabled={args.balance_flow}, "
+        f"converged={flow_balance_converged}, "
+        f"iterations={flow_balance_iterations}, "
+        f"pressure-drop spread="
+        f"{summary['final_pressure_drop_spread_fraction']:.6g}"
     )
     print(
         f"  maximum outlet temperature: "
