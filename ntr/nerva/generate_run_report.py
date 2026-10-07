@@ -227,7 +227,15 @@ def main() -> int:
             "- Fuel loading remains a deliberately non-calibrated low-enrichment surrogate.",
             "- Reported k_eff is diagnostic only; no enrichment or control-worth tuning is performed.",
             "- Fuel-element integrated powers are direct OpenMC repeated-cell tally outputs.",
-            "- Element-specific axial reconstruction currently applies the global OpenMC axial shape separably.",
+            (
+                "- Direct element-specific OpenMC axial heating used: "
+                + str(element.get("direct_element_axial_openmc_used"))
+            ),
+            (
+                "- Direct channel-specific OpenMC axial H2 heating used: "
+                + str(element.get("direct_channel_axial_openmc_used"))
+            ),
+            "- Global axial separability is retained only as a legacy-statepoint fallback.",
             "- Solid wall power is divided equally among the 19 coolant channels within one fuel element.",
             "- Direct H2 nuclear heating is tallied separately and added to fluid enthalpy, not wall heat flux.",
             "- The hottest-channel 1-sigma result is a screening sensitivity envelope, not covariance-aware propagation.",
