@@ -187,6 +187,15 @@ def main() -> int:
     fuel_axial_raw = None
     fuel_axial_std_raw = None
     fuel_axial_paths: list[str] = []
+    fuel_sector_integrated_raw: dict[int, np.ndarray] = {}
+    fuel_sector_integrated_std_raw: dict[int, np.ndarray] = {}
+    fuel_sector_fission_raw: dict[int, np.ndarray] = {}
+    fuel_sector_nu_fission_raw: dict[int, np.ndarray] = {}
+    fuel_sector_flux_raw: dict[int, np.ndarray] = {}
+    fuel_sector_paths: dict[int, list[str]] = {}
+    fuel_sector_axial_raw: dict[int, np.ndarray] = {}
+    fuel_sector_axial_std_raw: dict[int, np.ndarray] = {}
+    fuel_sector_axial_paths: dict[int, list[str]] = {}
     instance_axial_z_edges_m = np.asarray([], dtype=float)
     channel_axial_raw: dict[int, np.ndarray] = {}
     channel_axial_std_raw: dict[int, np.ndarray] = {}
@@ -202,6 +211,82 @@ def main() -> int:
     tie_return_axial_paths: list[str] = []
 
     with openmc.StatePoint(args.statepoint) as sp:
+        for sector_index in range(1, 20):
+            sector_name = (
+                f"nerva_fuel_sector_"
+                f"{sector_index:02d}_instances"
+            )
+            try:
+                sector_tally = sp.get_tally(name=sector_name)
+            except LookupError:
+                sector_tally = None
+
+            if sector_tally is not None:
+                heating = _score(
+                    sector_tally,
+                    "heating-local",
+                )
+                heating_std = _score(
+                    sector_tally,
+                    "heating-local",
+                    value="std_dev",
+                )
+                fuel_sector_integrated_raw[sector_index] = (
+                    heating * EV_TO_J * source_rate
+                )
+                fuel_sector_integrated_std_raw[sector_index] = (
+                    heating_std * EV_TO_J * source_rate
+                )
+                fuel_sector_fission_raw[sector_index] = (
+                    _score(sector_tally, "fission")
+                    * source_rate
+                )
+                fuel_sector_nu_fission_raw[sector_index] = (
+                    _score(sector_tally, "nu-fission")
+                    * source_rate
+                )
+                fuel_sector_flux_raw[sector_index] = (
+                    _score(sector_tally, "flux")
+                    * source_rate
+                )
+                fuel_sector_paths[sector_index] = _paths(
+                    sector_tally,
+                    len(heating),
+                )
+
+            axial_name = (
+                f"nerva_fuel_sector_"
+                f"{sector_index:02d}_axial_instances"
+            )
+            try:
+                sector_axial_tally = sp.get_tally(
+                    name=axial_name
+                )
+            except LookupError:
+                sector_axial_tally = None
+
+            if sector_axial_tally is not None:
+                axial_mean, axial_paths = _distrib_axial_score(
+                    sector_axial_tally,
+                    "heating-local",
+                )
+                axial_std, _ = _distrib_axial_score(
+                    sector_axial_tally,
+                    "heating-local",
+                    value="std_dev",
+                )
+                fuel_sector_axial_raw[sector_index] = (
+                    axial_mean * EV_TO_J * source_rate
+                )
+                fuel_sector_axial_std_raw[sector_index] = (
+                    axial_std * EV_TO_J * source_rate
+                )
+                fuel_sector_axial_paths[sector_index] = axial_paths
+                if instance_axial_z_edges_m.size == 0:
+                    instance_axial_z_edges_m = _axial_z_edges_m(
+                        sector_axial_tally
+                    )
+
         try:
             fuel_tally = sp.get_tally(
                 name="nerva_fuel_element_instances"
@@ -476,6 +561,84 @@ def main() -> int:
                 instance_axial_z_edges_m = _axial_z_edges_m(
                     tie_return_axial_tally
                 )
+
+
+    # Current geometry partitions the fuel material into 19 same-material
+    # Voronoi scoring sectors. Aggregate them back to one row per repeated
+    # fuel element for backward-compatible element-level outputs.
+    if not fuel_rows and fuel_sector_integrated_raw:
+        sector_element_accumulator: dict[str, dict] = {}
+        for sector_index in sorted(
+            fuel_sector_integrated_raw
+        ):
+            heating = fuel_sector_integrated_raw[sector_index]
+            heating_std = fuel_sector_integrated_std_raw[
+                sector_index
+            ]
+            fission = fuel_sector_fission_raw[sector_index]
+            nu_fission = fuel_sector_nu_fission_raw[
+                sector_index
+            ]
+            flux = fuel_sector_flux_raw[sector_index]
+            paths = fuel_sector_paths[sector_index]
+
+            for i in range(len(heating)):
+                path = paths[i] if i < len(paths) else ""
+                key = _parent_path(path, i)
+                row = sector_element_accumulator.setdefault(
+                    key,
+                    {
+                        "path": path,
+                        "heating_W": 0.0,
+                        "heating_variance_W2": 0.0,
+                        "fission_per_s": 0.0,
+                        "nu_fission_per_s": 0.0,
+                        "flux_tally_x_source_rate": 0.0,
+                    },
+                )
+                row["heating_W"] += float(heating[i])
+                row["heating_variance_W2"] += float(
+                    heating_std[i] ** 2
+                )
+                row["fission_per_s"] += float(fission[i])
+                row["nu_fission_per_s"] += float(
+                    nu_fission[i]
+                )
+                row["flux_tally_x_source_rate"] += float(
+                    flux[i]
+                )
+
+        for instance, (key, values) in enumerate(
+            sector_element_accumulator.items()
+        ):
+            heating_w = float(values["heating_W"])
+            heating_std_w = float(
+                np.sqrt(values["heating_variance_W2"])
+            )
+            fuel_rows.append(
+                {
+                    "instance": instance,
+                    "path": values["path"],
+                    "element_key": key,
+                    "heating_W": heating_w,
+                    "heating_std_W": heating_std_w,
+                    "heating_rel_err": (
+                        abs(heating_std_w / heating_w)
+                        if heating_w != 0.0
+                        else 0.0
+                    ),
+                    "fission_per_s": values[
+                        "fission_per_s"
+                    ],
+                    "nu_fission_per_s": values[
+                        "nu_fission_per_s"
+                    ],
+                    "flux_tally_x_source_rate": values[
+                        "flux_tally_x_source_rate"
+                    ],
+                    "flux_cm2_s": None,
+                }
+            )
 
 
     if fuel_rows and "fuel matrix" in repeated_cell_volumes:
