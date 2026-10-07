@@ -61,6 +61,16 @@ class NervaConfig:
     entropy_mesh_xy: int = 16
     entropy_mesh_z: int = 8
 
+    # Fine-grained repeated-cell diagnostics.
+    element_instance_tallies: bool = True
+    channel_instance_tallies: bool = True
+
+    # Optional tally-driven numerical convergence. Disabled by default so
+    # existing run lengths remain deterministic unless explicitly requested.
+    tally_rel_err_trigger: float | None = None
+    trigger_max_batches: int = 500
+    trigger_batch_interval: int = 5
+
     @property
     def fuel_edge_length_cm(self) -> float:
         return self.fuel_flat_to_flat_cm / math.sqrt(3.0)
@@ -171,6 +181,19 @@ class NervaConfig:
             raise ValueError("axial_mesh_bins must be >= 8")
         if self.entropy_mesh_xy < 2 or self.entropy_mesh_z < 2:
             raise ValueError("entropy mesh dimensions must be >= 2")
+        if self.tally_rel_err_trigger is not None:
+            if not (0.0 < self.tally_rel_err_trigger < 1.0):
+                raise ValueError(
+                    "tally_rel_err_trigger must lie in (0, 1)"
+                )
+            if self.trigger_max_batches <= self.batches:
+                raise ValueError(
+                    "trigger_max_batches must exceed batches"
+                )
+            if self.trigger_batch_interval < 1:
+                raise ValueError(
+                    "trigger_batch_interval must be >= 1"
+                )
         if self.control_drum_count < 3:
             raise ValueError("control_drum_count must be at least 3")
         if self.control_drum_radius_cm <= 0.0:
