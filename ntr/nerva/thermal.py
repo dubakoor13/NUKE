@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .hydrogen_properties import HydrogenState
+
 
 @dataclass(frozen=True)
 class HydrogenProperties:
@@ -46,6 +48,53 @@ class ChannelSolution:
         return float(np.sum(self.channel_power_w))
 
 
+def evaluate_hydrogen_state(
+    temperature_k: float,
+    pressure_pa: float,
+    properties: HydrogenProperties,
+    property_model=None,
+) -> HydrogenState:
+    """Return local hydrogen properties from constant or state-dependent data."""
+    if temperature_k <= 0.0 or pressure_pa <= 0.0:
+        raise ValueError("hydrogen temperature and pressure must be positive")
+
+    if property_model is not None:
+        state = property_model.state(temperature_k, pressure_pa)
+        values = (
+            state.density_kg_m3,
+            state.cp_j_kg_k,
+            state.dynamic_viscosity_pa_s,
+            state.thermal_conductivity_w_m_k,
+            state.prandtl,
+        )
+        if any(value <= 0.0 for value in values):
+            raise ValueError("property model returned a non-positive value")
+        return state
+
+    values = (
+        properties.cp_j_kg_k,
+        properties.dynamic_viscosity_pa_s,
+        properties.thermal_conductivity_w_m_k,
+        properties.prandtl,
+        properties.gas_constant_j_kg_k,
+    )
+    if any(value <= 0.0 for value in values):
+        raise ValueError("constant hydrogen properties must be positive")
+
+    density = pressure_pa / (
+        properties.gas_constant_j_kg_k * temperature_k
+    )
+    return HydrogenState(
+        density_kg_m3=float(density),
+        cp_j_kg_k=float(properties.cp_j_kg_k),
+        dynamic_viscosity_pa_s=float(properties.dynamic_viscosity_pa_s),
+        thermal_conductivity_w_m_k=float(
+            properties.thermal_conductivity_w_m_k
+        ),
+        prandtl=float(properties.prandtl),
+    )
+
+
 def friction_factor(
     reynolds: float,
     relative_roughness: float = 0.0,
@@ -84,15 +133,14 @@ def solve_fuel_channel(
     inlet_pressure_pa: float,
     channel_diameter_m: float,
     properties: HydrogenProperties | None = None,
+    property_model=None,
     roughness_m: float = 1.0e-6,
 ) -> ChannelSolution:
     """Solve one representative fuel channel using equal power sharing.
 
-    The model performs a steady 1-D energy balance, ideal-gas density estimate,
-    Dittus-Boelter heat-transfer estimate, and Darcy-Weisbach pressure loss.
-    Axial conduction, acceleration pressure loss, real-gas effects, radiation,
-    and fuel-matrix conduction are intentionally deferred to later fidelity
-    stages.
+    By default this uses the original constant-property ideal-gas surrogate.
+    Passing a property model with a state(T, P) method enables state-dependent
+    density, heat capacity, viscosity, conductivity, and Prandtl number.
     """
     if properties is None:
         properties = HydrogenProperties()
@@ -119,16 +167,12 @@ def solve_fuel_channel(
     if roughness_m < 0.0:
         raise ValueError("roughness must be non-negative")
 
-    props = properties
-    for name, value in (
-        ("cp_j_kg_k", props.cp_j_kg_k),
-        ("dynamic_viscosity_pa_s", props.dynamic_viscosity_pa_s),
-        ("thermal_conductivity_w_m_k", props.thermal_conductivity_w_m_k),
-        ("prandtl", props.prandtl),
-        ("gas_constant_j_kg_k", props.gas_constant_j_kg_k),
-    ):
-        if value <= 0.0:
-            raise ValueError(f"{name} must be positive")
+    evaluate_hydrogen_state(
+        inlet_temperature_k,
+        inlet_pressure_pa,
+        properties,
+        property_model=property_model,
+    )
 
     n = power.size
     channel_power = power / float(fuel_channel_count)
@@ -151,19 +195,60 @@ def solve_fuel_channel(
 
     for i in range(n):
         q = float(channel_power[i])
-        delta_t = q / (mass_flow_per_channel_kg_s * props.cp_j_kg_k)
-        temperature_mean = temperature_in + 0.5 * delta_t
 
-        density = pressure_in / (props.gas_constant_j_kg_k * temperature_mean)
+        inlet_state = evaluate_hydrogen_state(
+            temperature_in,
+            pressure_in,
+            properties,
+            property_model=property_model,
+        )
+        delta_t = q / (
+            mass_flow_per_channel_kg_s * inlet_state.cp_j_kg_k
+        )
+
+        for _ in range(6):
+            temperature_mean = temperature_in + 0.5 * delta_t
+            state = evaluate_hydrogen_state(
+                temperature_mean,
+                pressure_in,
+                properties,
+                property_model=property_model,
+            )
+            updated_delta_t = q / (
+                mass_flow_per_channel_kg_s * state.cp_j_kg_k
+            )
+            if np.isclose(
+                updated_delta_t,
+                delta_t,
+                rtol=1.0e-8,
+                atol=1.0e-10,
+            ):
+                delta_t = updated_delta_t
+                break
+            delta_t = updated_delta_t
+
+        temperature_mean = temperature_in + 0.5 * delta_t
+        state = evaluate_hydrogen_state(
+            temperature_mean,
+            pressure_in,
+            properties,
+            property_model=property_model,
+        )
+
+        density = state.density_kg_m3
         velocity = mass_flow_per_channel_kg_s / (density * area)
         re = (
             density
             * velocity
             * channel_diameter_m
-            / props.dynamic_viscosity_pa_s
+            / state.dynamic_viscosity_pa_s
         )
-        nu = nusselt_number(re, props.prandtl)
-        h = nu * props.thermal_conductivity_w_m_k / channel_diameter_m
+        nu = nusselt_number(re, state.prandtl)
+        h = (
+            nu
+            * state.thermal_conductivity_w_m_k
+            / channel_diameter_m
+        )
 
         wetted_area = wetted_per_length * dz[i]
         q_flux = 0.0 if q == 0.0 else q / wetted_area
