@@ -324,6 +324,33 @@ def build_tallies(
 
         energy_filter = openmc.EnergyFilter(_energy_edges(config))
 
+        if material_list:
+            material_energy = openmc.Tally(
+                name="nerva_material_energy_transport"
+            )
+            material_energy.filters = [
+                openmc.MaterialFilter(material_list),
+                energy_filter,
+            ]
+            material_energy.scores = [
+                "flux",
+                "absorption",
+                "fission",
+                "nu-fission",
+                "heating-local",
+            ]
+            tallies.append(material_energy)
+
+        if config.photon_transport:
+            particle_heating = openmc.Tally(
+                name="nerva_particle_heating"
+            )
+            particle_heating.filters = [
+                openmc.ParticleFilter(["neutron", "photon"])
+            ]
+            particle_heating.scores = ["heating"]
+            tallies.append(particle_heating)
+
         fuel = materials.get("fuel")
         if fuel is not None:
             fuel_spectrum = openmc.Tally(name="nerva_fuel_spectrum")
