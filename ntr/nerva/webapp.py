@@ -88,14 +88,43 @@ def main() -> None:
         st.header("Result source")
         mode = st.radio(
             "Mode",
-            ("Synthetic demo", "Upload run outputs"),
+            (
+                "Synthetic demo",
+                "Auto-load analysis directory",
+                "Upload run outputs",
+            ),
             help=(
                 "Synthetic demo uses the repository's deterministic CI example. "
                 "Upload mode reads your analysis JSON outputs."
             ),
         )
 
-        if mode == "Upload run outputs":
+        if mode == "Auto-load analysis directory":
+            analysis_root = Path(
+                st.text_input(
+                    "Analysis directory",
+                    value="build/nerva_analysis",
+                )
+            )
+            metadata_path = analysis_root / "power" / "metadata.json"
+            fuel_path = analysis_root / "fuel" / "thermal_summary.json"
+            tie_path = analysis_root / "tie" / "tie_thermal_summary.json"
+
+            if metadata_path.is_file() and fuel_path.is_file() and tie_path.is_file():
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                fuel = json.loads(fuel_path.read_text(encoding="utf-8"))
+                tie = json.loads(tie_path.read_text(encoding="utf-8"))
+                using_fallback = False
+                st.success(f"Loaded analysis from {analysis_root}")
+            else:
+                st.info(
+                    "Analysis JSON files were not found yet; showing the "
+                    "synthetic demo until a local run exists."
+                )
+                metadata, fuel, tie = _synthetic_demo()
+                using_fallback = True
+
+        elif mode == "Upload run outputs":
             metadata_upload = st.file_uploader(
                 "metadata.json",
                 type=["json"],
