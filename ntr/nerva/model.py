@@ -31,13 +31,13 @@ def build_model(config: NervaConfig | None = None) -> openmc.Model:
         space=openmc.stats.Box(
             (-source_radius, -source_radius, -0.8 * half_length),
             (source_radius, source_radius, 0.8 * half_length),
-            only_fissionable=True,
-        )
+        ),
+        constraints={"fissionable": True},
     )
 
     tallies = build_tallies(config)
 
-    plot = openmc.Plot(name="nerva_xy")
+    plot = openmc.SlicePlot(name="nerva_xy")
     plot.basis = "xy"
     plot.origin = (0.0, 0.0, 0.0)
     width = 2.05 * config.reflector_outer_radius_cm
