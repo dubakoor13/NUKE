@@ -191,6 +191,15 @@ def main() -> int:
     channel_axial_raw: dict[int, np.ndarray] = {}
     channel_axial_std_raw: dict[int, np.ndarray] = {}
     channel_axial_paths: dict[int, list[str]] = {}
+    tie_component_axial_raw: dict[str, np.ndarray] = {}
+    tie_component_axial_std_raw: dict[str, np.ndarray] = {}
+    tie_component_axial_paths: dict[str, list[str]] = {}
+    tie_supply_axial_raw = None
+    tie_supply_axial_std_raw = None
+    tie_supply_axial_paths: list[str] = []
+    tie_return_axial_raw = None
+    tie_return_axial_std_raw = None
+    tie_return_axial_paths: list[str] = []
 
     with openmc.StatePoint(args.statepoint) as sp:
         try:
@@ -360,6 +369,7 @@ def main() -> int:
                         "component": component,
                         "instance": i,
                         "path": paths[i],
+                        "tie_key": _parent_path(paths[i], i),
                         "heating_W": (
                             heating[i] * EV_TO_J * source_rate
                         ),
@@ -371,6 +381,100 @@ def main() -> int:
                             absorption[i] * source_rate
                         ),
                     }
+                )
+
+
+        for tally in sp.tallies.values():
+            if not tally.name.startswith(
+                "nerva_tie_axial_instance_"
+            ):
+                continue
+            component = tally.name.removeprefix(
+                "nerva_tie_axial_instance_"
+            )
+            axial_mean, axial_paths = _distrib_axial_score(
+                tally,
+                "heating-local",
+            )
+            axial_std, _ = _distrib_axial_score(
+                tally,
+                "heating-local",
+                value="std_dev",
+            )
+            tie_component_axial_raw[component] = (
+                axial_mean * EV_TO_J * source_rate
+            )
+            tie_component_axial_std_raw[component] = (
+                axial_std * EV_TO_J * source_rate
+            )
+            tie_component_axial_paths[component] = axial_paths
+            if instance_axial_z_edges_m.size == 0:
+                instance_axial_z_edges_m = _axial_z_edges_m(
+                    tally
+                )
+
+        try:
+            tie_supply_axial_tally = sp.get_tally(
+                name="nerva_tie_supply_hydrogen_axial_instances"
+            )
+        except LookupError:
+            tie_supply_axial_tally = None
+
+        if tie_supply_axial_tally is not None:
+            tie_supply_axial_raw, tie_supply_axial_paths = (
+                _distrib_axial_score(
+                    tie_supply_axial_tally,
+                    "heating-local",
+                )
+            )
+            tie_supply_axial_std_raw, _ = _distrib_axial_score(
+                tie_supply_axial_tally,
+                "heating-local",
+                value="std_dev",
+            )
+            tie_supply_axial_raw = (
+                tie_supply_axial_raw * EV_TO_J * source_rate
+            )
+            tie_supply_axial_std_raw = (
+                tie_supply_axial_std_raw
+                * EV_TO_J
+                * source_rate
+            )
+            if instance_axial_z_edges_m.size == 0:
+                instance_axial_z_edges_m = _axial_z_edges_m(
+                    tie_supply_axial_tally
+                )
+
+        try:
+            tie_return_axial_tally = sp.get_tally(
+                name="nerva_tie_return_hydrogen_axial_instances"
+            )
+        except LookupError:
+            tie_return_axial_tally = None
+
+        if tie_return_axial_tally is not None:
+            tie_return_axial_raw, tie_return_axial_paths = (
+                _distrib_axial_score(
+                    tie_return_axial_tally,
+                    "heating-local",
+                )
+            )
+            tie_return_axial_std_raw, _ = _distrib_axial_score(
+                tie_return_axial_tally,
+                "heating-local",
+                value="std_dev",
+            )
+            tie_return_axial_raw = (
+                tie_return_axial_raw * EV_TO_J * source_rate
+            )
+            tie_return_axial_std_raw = (
+                tie_return_axial_std_raw
+                * EV_TO_J
+                * source_rate
+            )
+            if instance_axial_z_edges_m.size == 0:
+                instance_axial_z_edges_m = _axial_z_edges_m(
+                    tie_return_axial_tally
                 )
 
 
@@ -496,6 +600,12 @@ def main() -> int:
         axial_bins = int(fuel_axial_raw.shape[1])
     elif channel_axial_raw:
         axial_bins = int(next(iter(channel_axial_raw.values())).shape[1])
+    elif tie_component_axial_raw:
+        axial_bins = int(
+            next(iter(tie_component_axial_raw.values())).shape[1]
+        )
+    elif tie_supply_axial_raw is not None:
+        axial_bins = int(tie_supply_axial_raw.shape[1])
 
     fuel_element_axial_heating_w = np.zeros(
         (len(fuel_rows), axial_bins),
@@ -559,6 +669,105 @@ def main() -> int:
                 :,
             ] = axial_std_values[i, :]
 
+
+    tie_keys: list[str] = []
+    tie_key_to_index: dict[str, int] = {}
+    for row in tie_rows:
+        key = str(row["tie_key"])
+        if key not in tie_key_to_index:
+            tie_key_to_index[key] = len(tie_keys)
+            tie_keys.append(key)
+
+    if not tie_keys:
+        path_sources = list(tie_component_axial_paths.values())
+        if tie_supply_axial_paths:
+            path_sources.append(tie_supply_axial_paths)
+        if tie_return_axial_paths:
+            path_sources.append(tie_return_axial_paths)
+        for paths in path_sources:
+            for i, path in enumerate(paths):
+                key = _parent_path(path, i)
+                if key not in tie_key_to_index:
+                    tie_key_to_index[key] = len(tie_keys)
+                    tie_keys.append(key)
+
+    tie_count = len(tie_keys)
+    tie_solid_axial_w = np.zeros(
+        (tie_count, axial_bins),
+        dtype=float,
+    )
+    tie_solid_axial_variance_w2 = np.zeros_like(
+        tie_solid_axial_w
+    )
+    unmatched_tie_axial_rows = 0
+
+    for component, axial_values in tie_component_axial_raw.items():
+        paths = tie_component_axial_paths[component]
+        std_values = tie_component_axial_std_raw[component]
+        for i in range(axial_values.shape[0]):
+            key = _parent_path(
+                paths[i] if i < len(paths) else "",
+                i,
+            )
+            tie_index = tie_key_to_index.get(key)
+            if tie_index is None and i < tie_count:
+                tie_index = i
+            if tie_index is None:
+                unmatched_tie_axial_rows += 1
+                continue
+            tie_solid_axial_w[tie_index, :] += axial_values[i, :]
+            tie_solid_axial_variance_w2[tie_index, :] += (
+                std_values[i, :] ** 2
+            )
+
+    tie_solid_axial_std_w = np.sqrt(
+        tie_solid_axial_variance_w2
+    )
+
+    def align_tie_hydrogen(
+        values: np.ndarray | None,
+        std_values: np.ndarray | None,
+        paths: list[str],
+    ) -> tuple[np.ndarray, np.ndarray, int]:
+        aligned = np.zeros((tie_count, axial_bins), dtype=float)
+        aligned_std = np.zeros_like(aligned)
+        unmatched = 0
+        if values is None or std_values is None:
+            return aligned, aligned_std, unmatched
+        for i in range(values.shape[0]):
+            key = _parent_path(
+                paths[i] if i < len(paths) else "",
+                i,
+            )
+            tie_index = tie_key_to_index.get(key)
+            if tie_index is None and i < tie_count:
+                tie_index = i
+            if tie_index is None:
+                unmatched += 1
+                continue
+            aligned[tie_index, :] = values[i, :]
+            aligned_std[tie_index, :] = std_values[i, :]
+        return aligned, aligned_std, unmatched
+
+    (
+        tie_supply_hydrogen_axial_w,
+        tie_supply_hydrogen_axial_std_w,
+        unmatched_tie_supply_rows,
+    ) = align_tie_hydrogen(
+        tie_supply_axial_raw,
+        tie_supply_axial_std_raw,
+        tie_supply_axial_paths,
+    )
+    (
+        tie_return_hydrogen_axial_w,
+        tie_return_hydrogen_axial_std_w,
+        unmatched_tie_return_rows,
+    ) = align_tie_hydrogen(
+        tie_return_axial_raw,
+        tie_return_axial_std_raw,
+        tie_return_axial_paths,
+    )
+
     channel_power_by_number = {}
     for channel_index in range(1, 20):
         values = [
@@ -597,6 +806,20 @@ def main() -> int:
             channel_direct_axial_std_w
         ),
         instance_axial_z_edges_m=instance_axial_z_edges_m,
+        tie_solid_axial_heating_w=tie_solid_axial_w,
+        tie_solid_axial_heating_std_w=tie_solid_axial_std_w,
+        tie_supply_hydrogen_axial_heating_w=(
+            tie_supply_hydrogen_axial_w
+        ),
+        tie_supply_hydrogen_axial_heating_std_w=(
+            tie_supply_hydrogen_axial_std_w
+        ),
+        tie_return_hydrogen_axial_heating_w=(
+            tie_return_hydrogen_axial_w
+        ),
+        tie_return_hydrogen_axial_heating_std_w=(
+            tie_return_hydrogen_axial_std_w
+        ),
     )
 
     summary = {
@@ -627,6 +850,19 @@ def main() -> int:
             channel_power_by_number
         ),
         "tie_component_row_count": len(tie_rows),
+        "tie_instance_count": tie_count,
+        "direct_tie_solid_axial_tallies_available": (
+            len(tie_component_axial_raw) > 0
+        ),
+        "direct_tie_supply_axial_tally_available": (
+            tie_supply_axial_raw is not None
+        ),
+        "direct_tie_return_axial_tally_available": (
+            tie_return_axial_raw is not None
+        ),
+        "unmatched_tie_axial_rows": unmatched_tie_axial_rows,
+        "unmatched_tie_supply_rows": unmatched_tie_supply_rows,
+        "unmatched_tie_return_rows": unmatched_tie_return_rows,
         "tie_heating_by_component_W": tie_power_by_component,
         "important_interpretation": {
             "fuel_instance_heating": (
