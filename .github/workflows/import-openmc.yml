@@ -1,0 +1,60 @@
+name: Import OpenMC upstream
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout NUKE
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Clone OpenMC develop
+        run: |
+          git clone --depth 1 --branch develop https://github.com/openmc-dev/openmc.git /tmp/openmc
+          cd /tmp/openmc
+          git rev-parse HEAD > /tmp/openmc-upstream-sha
+
+      - name: Replace repository contents with OpenMC snapshot
+        run: |
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/workflows/import-openmc.yml' \
+            /tmp/openmc/ ./
+
+          UPSTREAM_SHA="$(cat /tmp/openmc-upstream-sha)"
+          cat > UPSTREAM.md <<EOF
+          # Upstream provenance
+
+          This repository contains a snapshot of the public OpenMC repository.
+
+          - Upstream repository: https://github.com/openmc-dev/openmc
+          - Upstream branch: `develop`
+          - Imported commit: `${UPSTREAM_SHA}`
+          - License: MIT (see `LICENSE`)
+
+          OpenMC's original copyright, license, citation, and source files are retained.
+          EOF
+
+      - name: Commit full snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to import."
+            exit 0
+          fi
+          git commit -m "Import OpenMC develop snapshot"
+          git push origin HEAD:main
