@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import NervaConfig
+from .hydrogen_properties import make_hydrogen_property_model
 from .layout import mixed_core_counts
 from .tie_tube_thermal import solve_tie_tube_counterflow
 
@@ -32,6 +33,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--inlet-temperature-k", type=float, required=True)
     parser.add_argument("--inlet-pressure-mpa", type=float, required=True)
+    parser.add_argument(
+        "--hydrogen-model",
+        choices=("constant", "coolprop"),
+        default="constant",
+        help="Hydrogen property backend; CoolProp is optional.",
+    )
     parser.add_argument(
         "--supply-heat-fraction",
         type=float,
@@ -124,6 +131,7 @@ def main() -> int:
     mass_flow_per_tie = args.tie_mass_flow_kg_s / tie_tubes
 
     config = NervaConfig(core_rings=args.rings)
+    property_model = make_hydrogen_property_model(args.hydrogen_model)
     solution = solve_tie_tube_counterflow(
         axial_total_tie_power_w=axial_tie_power_w,
         z_edges_m=z_edges_m,
@@ -132,6 +140,7 @@ def main() -> int:
         inlet_temperature_k=args.inlet_temperature_k,
         inlet_pressure_pa=args.inlet_pressure_mpa * 1.0e6,
         config=config,
+        property_model=property_model,
         supply_heat_fraction=args.supply_heat_fraction,
     )
 
@@ -156,7 +165,7 @@ def main() -> int:
         "max_return_wall_temperature_K": float(
             np.max(solution.return_path.wall_temperature_k)
         ),
-        "model": "constant-property ideal-gas counterflow surrogate",
+        "model": args.hydrogen_model,
     }
     (args.output / "tie_thermal_summary.json").write_text(
         json.dumps(summary, indent=2) + "\n",
