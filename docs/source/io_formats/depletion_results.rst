@@ -1,0 +1,50 @@
+.. _io_depletion_results:
+
+=============================
+Depletion Results File Format
+=============================
+
+The current version of the depletion results file format is 1.3.
+
+**/**
+
+:Attributes: - **filetype** (*char[]*) -- String indicating the type of file.
+             - **version** (*int[2]*) -- Major and minor version of the
+               statepoint file format.
+
+:Datasets: - **eigenvalues** (*double[][2]*) -- k-eigenvalues at each timestep.
+             This array has shape (number of timesteps, 2). The second axis
+             contains the eigenvalue and its associated uncertainty.
+           - **number** (*double[][][]*) -- Total number of atoms at each
+             timestep. This array has shape (number of timesteps, number of
+             materials, number of nuclides).
+           - **reaction rates** (*double[][][][]*) -- Reaction rates at each
+             timestep. This array has shape (number of timesteps, number of
+             materials, number of nuclides, number of reactions). Only stored if
+             write_rates=True.
+           - **time** (*double[][2]*) -- Time in [s] at beginning/end of each
+             step.
+           - **source_rate** (*double[]*) -- Power in [W] or source rate in
+             [neutron/sec] for each timestep.
+           - **depletion time** (*double[]*) -- Average process time in [s]
+             spent depleting a material across all burnable materials and,
+             if applicable, MPI processes.
+           - **keff_search_root** (*double[]*) -- Root of the keff search at the
+             end of the timestep, if applicable.
+
+**/materials/<id>/**
+
+:Attributes: - **index** (*int*) -- Index used in results for this material
+             - **volume** (*double*) -- Volume of this material in [cm^3]
+             - **name** (*char[]*) -- Name of this material
+
+**/nuclides/<name>/**
+
+:Attributes: - **atom number index** (*int*) -- Index in array of total atoms
+               for this nuclide
+             - **reaction rate index** (*int*) -- Index in array of reaction
+               rates for this nuclide
+
+**/reactions/<name>/**
+
+:Attributes: - **index** (*int*) -- Index user in results for this reaction

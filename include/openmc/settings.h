@@ -1,0 +1,213 @@
+#ifndef OPENMC_SETTINGS_H
+#define OPENMC_SETTINGS_H
+
+//! \file settings.h
+//! \brief Settings for OpenMC
+
+#include <cstdint>
+#include <string>
+#include <unordered_set>
+
+#include "pugixml.hpp"
+
+#include "openmc/array.h"
+#include "openmc/constants.h"
+#include "openmc/vector.h"
+
+namespace openmc {
+
+// Type of surface source write
+enum class SSWCellType {
+  None,
+  Both,
+  From,
+  To,
+};
+
+struct CollisionTrackConfig {
+  bool mcpl_write {false}; //!< Write collision tracks using MCPL?
+  std::unordered_set<int>
+    cell_ids; //!< Cell ids where collisions will be written
+  std::unordered_set<int>
+    mt_numbers; //!< MT Numbers where collisions will be written
+  std::unordered_set<int>
+    universe_ids; //!< Universe IDs where collisions will be written
+  std::unordered_set<int>
+    material_ids; //!< Material IDs where collisions will be written
+  std::unordered_set<std::string>
+    nuclides; //!< Nuclides where collisions will be written
+  double deposited_energy_threshold {0.0}; //!< Minimum deposited energy [eV]
+  int64_t max_collisions {
+    1000};               //!< Maximum events recorded per collision track file
+  int64_t max_files {1}; //!< Maximum number of collision track files
+};
+
+//==============================================================================
+// Global variable declarations
+//==============================================================================
+
+namespace settings {
+
+// Boolean flags
+extern bool assume_separate;      //!< assume tallies are spatially separate?
+extern bool check_overlaps;       //!< check overlaps in geometry?
+extern bool collision_track;      //!< flag to use collision track feature?
+extern bool confidence_intervals; //!< use confidence intervals for results?
+extern bool
+  create_fission_neutrons; //!< create fission neutrons (fixed source)?
+extern bool create_delayed_neutrons; //!< create delayed fission neutrons?
+extern bool cmfd_run;                //!< is a CMFD run?
+extern bool
+  delayed_photon_scaling; //!< Scale fission photon yield to include delayed
+extern bool entropy_on;   //!< calculate Shannon entropy?
+extern bool event_based;  //!< use event-based mode (instead of history-based)
+extern bool ifp_delayed_group_on; //!< Store delayed group IFP data?
+extern bool ifp_lifetime_on;      //!< Store lifetime IFP data?
+extern bool legendre_to_tabular; //!< convert Legendre distributions to tabular?
+extern bool material_cell_offsets;   //!< create material cells offsets?
+extern bool output_summary;          //!< write summary.h5?
+extern bool output_tallies;          //!< write tallies.out?
+extern bool particle_restart_run;    //!< particle restart run?
+extern bool photon_transport;        //!< photon transport turned on?
+extern bool atomic_relaxation;       //!< atomic relaxation enabled?
+extern bool reduce_tallies;          //!< reduce tallies at end of batch?
+extern bool res_scat_on;             //!< use resonance upscattering method?
+extern bool restart_run;             //!< restart run?
+extern bool run_CE;                  //!< run with continuous-energy data?
+extern bool source_latest;           //!< write latest source at each batch?
+extern bool source_separate;         //!< write source to separate file?
+extern bool source_write;            //!< write source in HDF5 files?
+extern bool source_mcpl_write;       //!< write source in mcpl files?
+extern bool surf_source_write;       //!< write surface source file?
+extern bool surf_mcpl_write;         //!< write surface mcpl file?
+extern bool survival_biasing;        //!< use survival biasing?
+extern bool survival_normalization;  //!< use survival normalization?
+extern bool temperature_multipole;   //!< use multipole data?
+extern bool trigger_on;              //!< tally triggers enabled?
+extern bool trigger_predict;         //!< predict batches for triggers?
+extern bool uniform_source_sampling; //!< sample sources uniformly?
+extern bool ufs_on;                  //!< uniform fission site method on?
+extern bool urr_ptables_on;          //!< use unresolved resonance prob. tables?
+extern bool use_decay_photons;       //!< use decay photons for D1S
+extern bool use_shared_secondary_bank; //!< Use shared bank for secondaries
+extern bool weight_windows_on;         //!< are weight windows are enabled?
+extern bool weight_window_checkpoint_surface;   //!< enable weight window check
+                                                //!< upon surface crossing?
+extern bool weight_window_checkpoint_collision; //!< enable weight window check
+                                                //!< upon collision?
+extern bool write_all_tracks;     //!< write track files for every particle?
+extern bool write_initial_source; //!< write out initial source file?
+
+// Paths to various files
+extern std::string path_cross_sections; //!< path to cross_sections.xml
+extern std::string path_input;  //!< directory where main .xml files resides
+extern std::string path_output; //!< directory where output files are written
+extern std::string path_particle_restart; //!< path to a particle restart file
+extern std::string path_sourcepoint;      //!< path to a source file
+extern std::string path_statepoint;       //!< path to a statepoint file
+extern std::string weight_windows_file;   //!< Location of weight window file to
+                                          //!< load on simulation initialization
+extern std::string properties_file;       //!< Location of properties file to
+                                          //!< load on simulation initialization
+
+extern int32_t n_inactive;         //!< number of inactive batches
+extern int32_t max_lost_particles; //!< maximum number of lost particles
+extern double
+  rel_max_lost_particles; //!< maximum number of lost particles, relative to the
+                          //!< total number of particles
+extern int32_t max_write_lost_particles; //!< maximum number of lost particles
+                                         //!< to be written to files
+extern int32_t gen_per_batch;            //!< number of generations per batch
+extern int64_t n_particles;              //!< number of particles per generation
+
+extern int64_t
+  max_particles_in_flight;      //!< Max num. event-based particles in flight
+extern int max_particle_events; //!< Maximum number of particle events
+extern ElectronTreatment
+  electron_treatment; //!< how to treat secondary electrons
+extern array<double, 4>
+  energy_cutoff; //!< Energy cutoff in [eV] for each particle type
+extern array<double, 4>
+  time_cutoff; //!< Time cutoff in [s] for each particle type
+extern int
+  ifp_n_generation; //!< Number of generation for Iterated Fission Probability
+extern int
+  legendre_to_tabular_points; //!< number of points to convert Legendres
+extern int max_order;         //!< Maximum Legendre order for multigroup data
+extern int n_log_bins;        //!< number of bins for logarithmic energy grid
+extern int n_batches;         //!< number of (inactive+active) batches
+extern int n_max_batches;     //!< Maximum number of batches
+extern int max_tracks; //!< Maximum number of particle tracks written to file
+extern ResScatMethod res_scat_method; //!< resonance upscattering method
+extern double res_scat_energy_min; //!< Min energy in [eV] for res. upscattering
+extern double res_scat_energy_max; //!< Max energy in [eV] for res. upscattering
+extern vector<std::string>
+  res_scat_nuclides;           //!< Nuclides using res. upscattering treatment
+extern RunMode run_mode;       //!< Run mode (eigenvalue, fixed src, etc.)
+extern SolverType solver_type; //!< Solver Type (Monte Carlo or Random Ray)
+extern std::unordered_set<int>
+  sourcepoint_batch; //!< Batches when source should be written
+extern std::unordered_set<int>
+  statepoint_batch; //!< Batches when state should be written
+extern std::unordered_set<int>
+  source_write_surf_id; //!< Surface ids where sources will be written
+extern CollisionTrackConfig collision_track_config;
+extern double source_rejection_fraction; //!< Minimum fraction of source sites
+                                         //!< that must be accepted
+extern double free_gas_threshold;        //!< Threshold multiplier for free gas
+                                         //!< scattering treatment
+
+extern int
+  max_history_splits; //!< maximum number of particle splits for weight windows
+extern int max_secondaries;       //!< maximum number of secondaries in the bank
+extern int64_t ssw_max_particles; //!< maximum number of particles to be
+                                  //!< banked on surfaces per process
+extern int64_t ssw_max_files;     //!< maximum number of surface source files
+                                  //!<  to be created
+extern int64_t ssw_cell_id;       //!< Cell id for the surface source
+                                  //!< write setting
+extern SSWCellType ssw_cell_type; //!< Type of option for the cell
+                                  //!< argument of surface source write
+extern double surface_grazing_cutoff; //!< surface flux cosine cutoff
+extern double surface_grazing_ratio;  //!< surface flux substitution ratio
+extern TemperatureMethod
+  temperature_method; //!< method for choosing temperatures
+extern double
+  temperature_tolerance; //!< Tolerance in [K] on choosing temperatures
+extern double temperature_default; //!< Default T in [K]
+extern array<double, 2>
+  temperature_range;           //!< Min/max T in [K] over which to load xs
+extern int trace_batch;        //!< Batch to trace particle on
+extern int trace_gen;          //!< Generation to trace particle on
+extern int64_t trace_particle; //!< Particle ID to enable trace on
+extern vector<array<int, 3>>
+  track_identifiers;               //!< Particle numbers for writing tracks
+extern int trigger_batch_interval; //!< Batch interval for triggers
+extern int verbosity;              //!< How verbose to make output
+extern double weight_cutoff;       //!< Weight cutoff for Russian roulette
+extern double weight_survive;      //!< Survival weight after Russian roulette
+
+//! Whether Iterated Fission Probability is in use at all.
+inline bool ifp_on()
+{
+  return ifp_delayed_group_on || ifp_lifetime_on;
+}
+
+} // namespace settings
+
+//==============================================================================
+// Functions
+//==============================================================================
+
+//! Read settings from XML file
+void read_settings_xml();
+
+//! Read settings from XML node
+//! \param[in] root XML node for <settings>
+void read_settings_xml(pugi::xml_node root);
+
+void free_memory_settings();
+
+} // namespace openmc
+
+#endif // OPENMC_SETTINGS_H

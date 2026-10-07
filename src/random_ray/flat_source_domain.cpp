@@ -1,0 +1,2799 @@
+#include "openmc/random_ray/flat_source_domain.h"
+
+#include "openmc/cell.h"
+#include "openmc/constants.h"
+#include "openmc/eigenvalue.h"
+#include "openmc/geometry.h"
+#include "openmc/material.h"
+#include "openmc/message_passing.h"
+#include "openmc/mgxs_interface.h"
+#include "openmc/output.h"
+#include "openmc/plot.h"
+#include "openmc/random_ray/decomposition_map.h"
+#include "openmc/random_ray/random_ray.h"
+#include "openmc/simulation.h"
+#include "openmc/tallies/filter.h"
+#include "openmc/tallies/tally.h"
+#include "openmc/tallies/tally_scoring.h"
+#include "openmc/timer.h"
+#include "openmc/weight_windows.h"
+
+#include <cstdio>
+#include <numeric>
+
+namespace openmc {
+
+//==============================================================================
+// FlatSourceDomain implementation
+//==============================================================================
+
+// Static Variable Declarations
+RandomRayVolumeEstimator FlatSourceDomain::volume_estimator_ {
+  RandomRayVolumeEstimator::AUTO};
+RandomRayVolumeEstimator FlatSourceDomain::resolved_volume_estimator_ {
+  RandomRayVolumeEstimator::AUTO};
+bool FlatSourceDomain::volume_normalized_flux_tallies_ {false};
+bool FlatSourceDomain::adjoint_requested_ {false};
+bool FlatSourceDomain::source_gradient_limiter_ {false};
+RandomRaySolve FlatSourceDomain::solve_ {RandomRaySolve::FORWARD};
+bool FlatSourceDomain::fw_cadis_local_ {false};
+double FlatSourceDomain::diagonal_stabilization_rho_ {1.0};
+std::unordered_map<int, vector<std::pair<Source::DomainType, int>>>
+  FlatSourceDomain::mesh_domain_map_;
+std::vector<size_t> FlatSourceDomain::fw_cadis_local_targets_;
+
+FlatSourceDomain::FlatSourceDomain() : negroups_(data::mg.num_energy_groups_)
+{
+  // Count the number of source regions, compute the cell offset
+  // indices, and store the material type The reason for the offsets is that
+  // some cell types may not have material fills, and therefore do not
+  // produce FSRs. Thus, we cannot index into the global arrays directly
+  int base_source_regions = 0;
+  for (const auto& c : model::cells) {
+    if (c->type_ != Fill::MATERIAL) {
+      source_region_offsets_.push_back(-1);
+    } else {
+      source_region_offsets_.push_back(base_source_regions);
+      base_source_regions += c->n_instances();
+    }
+  }
+
+  // Initialize source regions.
+  bool is_linear = RandomRay::source_shape_ != RandomRaySourceShape::FLAT;
+  bool is_adaptive = is_adaptive_family(resolved_volume_estimator_);
+  bool is_strict_adaptive =
+    resolved_volume_estimator_ == RandomRayVolumeEstimator::STRICT_ADAPTIVE;
+  // The sampled bounding boxes exist only for the source gradient limiter
+  source_regions_ = SourceRegionContainer(negroups_, is_linear, is_adaptive,
+    is_strict_adaptive, is_linear && source_gradient_limiter_);
+
+  // Initialize tally volumes
+  if (volume_normalized_flux_tallies_) {
+    tally_volumes_.resize(model::tallies.size());
+    for (int i = 0; i < model::tallies.size(); i++) {
+      //  Get the shape of the 3D result tensor
+      auto shape = model::tallies[i]->results().shape();
+
+      // Create a new 2D tensor with the same size as the first
+      // two dimensions of the 3D tensor
+      tally_volumes_[i] = tensor::Tensor<double>({shape[0], shape[1]});
+    }
+  }
+
+  // Compute simulation domain volume based on ray source
+  auto* is = dynamic_cast<IndependentSource*>(RandomRay::ray_source_.get());
+  SpatialDistribution* space_dist = is->space();
+  SpatialBox* sb = dynamic_cast<SpatialBox*>(space_dist);
+  Position dims = sb->upper_right() - sb->lower_left();
+  simulation_volume_ = dims.x * dims.y * dims.z;
+}
+
+void FlatSourceDomain::batch_reset()
+{
+// Reset scalar fluxes and iteration volume tallies to zero
+#pragma omp parallel for
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+    source_regions_.centroid_iteration(sr) = {0.0, 0.0, 0.0};
+    source_regions_.volume(sr) = 0.0;
+    source_regions_.volume_sq(sr) = 0.0;
+  }
+
+#pragma omp parallel for
+  for (int64_t se = 0; se < n_source_elements(); se++) {
+    source_regions_.scalar_flux_new(se) = 0.0;
+  }
+}
+
+void FlatSourceDomain::accumulate_iteration_flux()
+{
+#pragma omp parallel for
+  for (int64_t se = 0; se < n_source_elements(); se++) {
+    source_regions_.scalar_flux_final(se) +=
+      source_regions_.scalar_flux_new(se);
+  }
+}
+
+// Demotion step for the adaptive volume estimator (no-op for the
+// others). Rather than reacting to per-iteration negatives, this estimator
+// runs the unmodified simulation-averaged update and accumulates every
+// batch's flux into a running sum (scalar_flux_t, kept separate from the
+// active-only tally accumulator), from which it makes two demotion
+// decisions:
+//
+//  1. Accumulated-negative (sign): any region whose accumulated flux is
+//     negative in any group is demoted to the naive (iteration) volume
+//     estimator, a positively weighted estimator that cannot go negative
+//     with a non-negative source. During the active phase the test also
+//     watches the active-only tally accumulation (scalar_flux_final), the
+//     quantity tally means are actually computed from. Because the decision
+//     is made on accumulated means rather than on individual fluctuations,
+//     the lower tail of the noise distribution is not clipped, so regions
+//     that are merely noisy (and average non-negative) are left unbiased.
+//
+//  2. Strong-feed latch: any region whose flux-independent feed (cross-group
+//     in-scatter, fission, and external source), evaluated from the same
+//     accumulated flux, exceeds ADAPTIVE_VOLUME_KAPPA times its own
+//     accumulated flux in any group is likewise demoted. This is the same
+//     physical condition the per-iteration strong-source test targets,
+//     decided from accumulated data: the per-iteration test, evaluated on
+//     noisy iterates, cannot fire in the joint excursion where a bad
+//     iteration drags a region's source and flux negative together, so a
+//     strong region would otherwise ride such excursions on unprotected
+//     simulation-averaged updates and can accumulate a negative window
+//     average. The latch removes the whole strong-feed class. A region with
+//     no cross-group or external feed can never latch, so sign-locked (e.g.
+//     one-group) noise cannot cause demotion through this path.
+//
+// Both conditions are first decided at the inactive->active transition and
+// then re-evaluated every active batch as the accumulation keeps growing.
+// Decisions are demote-only: a set flag is never released, so the estimator
+// choice cannot churn with active-batch noise (a release/re-demote cycle
+// conditioned on tallied iterations would bias the tallies), and a marginal
+// region whose accumulated ratio converges below the threshold is never
+// eroded into demotion by continued re-evaluation. The active-phase
+// re-evaluation exists for solves whose inactive phase is too short to
+// converge deep regions: there the transition-time decision alone misses
+// chronically unstable regions whose accumulated flux only turns negative
+// (or whose feed ratio only crosses the threshold) after active batches
+// begin, and an escapee left on unprotected simulation-averaged updates can
+// corrupt the solution far beyond its own boundary through scattering
+// feedback.
+//
+// The decisions are recorded in converged_negative (1 = sign, 2 = latch;
+// > 0 == demoted), consumed by the volume switch and miss treatment in
+// add_source_to_scalar_flux and by the linear-source gradient fallback.
+void FlatSourceDomain::demotion_step()
+{
+  if (!is_adaptive_family(resolved_volume_estimator_))
+    return;
+
+#pragma omp parallel for
+  for (int64_t se = 0; se < n_source_elements(); se++) {
+    source_regions_.scalar_flux_t(se) += source_regions_.scalar_flux_new(se);
+  }
+
+  // Decisions start on the last inactive batch and continue every active
+  // batch thereafter.
+  if (simulation::current_batch < settings::n_inactive)
+    return;
+
+#pragma omp parallel for
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+    // Demote-only: settled regions are never re-evaluated or released.
+    if (source_regions_.converged_negative(sr) > 0)
+      continue;
+    bool negative = false;
+    for (int g = 0; g < negroups_; g++) {
+      if (source_regions_.scalar_flux_t(sr, g) < 0.0) {
+        negative = true;
+        break;
+      }
+    }
+    // During the active phase, a negative accumulated tally flux
+    // (scalar_flux_final, the active-only sum that tally means are computed
+    // from) also demotes, as a region with a strong positive inactive
+    // accumulation can hold the running sum positive while the active-only
+    // sum that is actually reported goes negative. This branch fires only
+    // when the reported mean has already lost positivity, so it clips
+    // realized-negative outcomes rather than one tail of a healthy region's
+    // noise.
+    if (!negative && simulation::current_batch > settings::n_inactive) {
+      for (int g = 0; g < negroups_; g++) {
+        if (source_regions_.scalar_flux_final(sr, g) < 0.0) {
+          negative = true;
+          break;
+        }
+      }
+    }
+    bool latched = false;
+    int material = source_regions_.material(sr);
+    if (!negative && material != MATERIAL_VOID) {
+      int temp = source_regions_.temperature_idx(sr);
+      const int material_offset = (material * ntemperature_ + temp) * negroups_;
+      const int scatter_offset =
+        (material * ntemperature_ + temp) * negroups_ * negroups_;
+      double inverse_k_eff = 1.0 / k_eff_;
+      for (int g = 0; g < negroups_ && !latched; g++) {
+        double feed = 0.0;
+        double chi = chi_[material_offset + g];
+        for (int gp = 0; gp < negroups_; gp++) {
+          double phi = std::max(source_regions_.scalar_flux_t(sr, gp), 0.0);
+          if (gp != g) {
+            feed += sigma_s_[scatter_offset + g * negroups_ + gp] * phi;
+          }
+          if (settings::create_fission_neutrons) {
+            feed +=
+              chi * nu_sigma_f_[material_offset + gp] * phi * inverse_k_eff;
+          }
+        }
+        double sigma_t = sigma_t_[material_offset + g];
+        double q_indep = feed / sigma_t;
+        // The external source arrays are only allocated in fixed source
+        // mode, so the external term must not be read in an eigenvalue
+        // solve (where no external sources exist). The external source is a
+        // per-batch quantity while the flux is an accumulated one, so the
+        // term is scaled by the number of accumulated batches.
+        if (settings::run_mode == RunMode::FIXED_SOURCE) {
+          q_indep +=
+            simulation::current_batch * source_regions_.external_source(sr, g);
+        }
+        if (q_indep > ADAPTIVE_VOLUME_KAPPA *
+                        std::max(source_regions_.scalar_flux_t(sr, g), 0.0)) {
+          latched = true;
+        }
+      }
+    }
+    if (negative) {
+      source_regions_.converged_negative(sr) = 1;
+    } else if (latched) {
+      source_regions_.converged_negative(sr) = 2;
+    }
+  }
+  // No separate decision-count bookkeeping is needed here: demote-only flags
+  // can only accumulate, so the final-batch by-cause snapshot in
+  // add_source_to_scalar_flux (which counts them with first priority)
+  // reports the settled decisions exactly.
+}
+
+void FlatSourceDomain::update_single_neutron_source(SourceRegionHandle& srh)
+{
+  // Reset all source regions to zero (important for void regions)
+  for (int g = 0; g < negroups_; g++) {
+    srh.source(g) = 0.0;
+  }
+
+  // Add scattering + fission source
+  int material = srh.material();
+  int temp = srh.temperature_idx();
+  double density_mult = srh.density_mult();
+  if (material != MATERIAL_VOID) {
+    double inverse_k_eff = 1.0 / k_eff_;
+    const int material_offset = (material * ntemperature_ + temp) * negroups_;
+    const int scatter_offset =
+      (material * ntemperature_ + temp) * negroups_ * negroups_;
+    for (int g_out = 0; g_out < negroups_; g_out++) {
+      double sigma_t = sigma_t_[material_offset + g_out] * density_mult;
+      double scatter_source = 0.0;
+      double fission_source = 0.0;
+
+      for (int g_in = 0; g_in < negroups_; g_in++) {
+        double scalar_flux = srh.scalar_flux_old(g_in);
+        double sigma_s =
+          sigma_s_[scatter_offset + g_out * negroups_ + g_in] * density_mult;
+        double nu_sigma_f = nu_sigma_f_[material_offset + g_in] * density_mult;
+        double chi = chi_[material_offset + g_out];
+
+        scatter_source += sigma_s * scalar_flux;
+        if (settings::create_fission_neutrons) {
+          fission_source += nu_sigma_f * scalar_flux * chi;
+        }
+      }
+      srh.source(g_out) =
+        (scatter_source + fission_source * inverse_k_eff) / sigma_t;
+    }
+  }
+
+  // Add external source if in fixed source mode
+  if (settings::run_mode == RunMode::FIXED_SOURCE) {
+    for (int g = 0; g < negroups_; g++) {
+      srh.source(g) += srh.external_source(g);
+    }
+  }
+}
+
+// Compute new estimate of scattering + fission sources in each source region
+// based on the flux estimate from the previous iteration.
+void FlatSourceDomain::update_all_neutron_sources()
+{
+  simulation::time_update_src.start();
+
+#pragma omp parallel for
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+    SourceRegionHandle srh = source_regions_.get_source_region_handle(sr);
+    update_single_neutron_source(srh);
+  }
+
+  simulation::time_update_src.stop();
+}
+
+// Normalizes flux and updates simulation-averaged volume estimate
+void FlatSourceDomain::normalize_scalar_flux_and_volumes(
+  double total_active_distance_per_iteration)
+{
+  double normalization_factor = 1.0 / total_active_distance_per_iteration;
+  double volume_normalization_factor =
+    1.0 / (total_active_distance_per_iteration * simulation::current_batch);
+
+// Normalize scalar flux to total distance travelled by all rays this
+// iteration
+#pragma omp parallel for
+  for (int64_t se = 0; se < n_source_elements(); se++) {
+    source_regions_.scalar_flux_new(se) *= normalization_factor;
+  }
+
+// Accumulate cell-wise ray length tallies collected this iteration, then
+// update the simulation-averaged cell-wise volume estimates
+#pragma omp parallel for
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+    source_regions_.centroid_t(sr) += source_regions_.centroid_iteration(sr);
+    source_regions_.volume_t(sr) += source_regions_.volume(sr);
+    source_regions_.volume_sq_t(sr) += source_regions_.volume_sq(sr);
+    source_regions_.volume_naive(sr) =
+      source_regions_.volume(sr) * normalization_factor;
+    source_regions_.volume_sq(sr) =
+      source_regions_.volume_sq_t(sr) / source_regions_.volume_t(sr);
+    source_regions_.volume(sr) =
+      source_regions_.volume_t(sr) * volume_normalization_factor;
+    if (source_regions_.volume_t(sr) > 0.0) {
+      double inv_volume = 1.0 / source_regions_.volume_t(sr);
+      source_regions_.centroid(sr) = source_regions_.centroid_t(sr);
+      source_regions_.centroid(sr) *= inv_volume;
+    }
+  }
+}
+
+// The additive term of the flux update for a source region and group,
+// given whether the update divides the transport term by the region's own
+// batch volume (as opposed to its simulation-averaged volume). A material
+// region adds its reduced source q/Sigma_t. A void region has no such term
+// and instead adds a bounded contribution from its external source, which
+// is nonzero only in fixed source mode. The same term is used by the strict
+// estimator's rescue, which rescales only the transport part of an update,
+// so the two cannot drift apart. The linear source solver's term depends on
+// the volume choice (see its override); the flat source term does not.
+double FlatSourceDomain::flux_additive_term(
+  int64_t sr, int g, bool batch_volume) const
+{
+  if (source_regions_.material(sr) == MATERIAL_VOID) {
+    if (settings::run_mode == RunMode::FIXED_SOURCE) {
+      return 0.5f * source_regions_.external_source(sr, g) *
+             source_regions_.volume_sq(sr);
+    }
+    return 0.0;
+  }
+  return source_regions_.source(sr, g);
+}
+
+void FlatSourceDomain::set_flux_to_flux_plus_source(
+  int64_t sr, double volume, bool batch_volume, int g)
+{
+  int material = source_regions_.material(sr);
+  int temp = source_regions_.temperature_idx(sr);
+  if (material == MATERIAL_VOID) {
+    source_regions_.scalar_flux_new(sr, g) /= volume;
+  } else {
+    double sigma_t =
+      sigma_t_[(material * ntemperature_ + temp) * negroups_ + g] *
+      source_regions_.density_mult(sr);
+    source_regions_.scalar_flux_new(sr, g) /= (sigma_t * volume);
+  }
+  source_regions_.scalar_flux_new(sr, g) +=
+    flux_additive_term(sr, g, batch_volume);
+}
+
+// Applies the "diagonal stabilization" technique developed by Gunow et al.
+// to one flux iterate:
+//
+// Geoffrey Gunow, Benoit Forget, Kord Smith, Stabilization of multi-group
+// neutron transport with transport-corrected cross-sections, Annals of Nuclear
+// Energy, Volume 126, 2019, Pages 211-219, ISSN 0306-4549,
+// https://doi.org/10.1016/j.anucene.2018.10.036.
+//
+// Returns the given iterate unchanged unless the region's within-group
+// scattering cross section for the group is negative, in which case the
+// stabilized iterate is returned. The stabilization is part of the flux
+// update rather than a separate pass, so that every candidate value the
+// update considers, including the strict estimator's rescued and floored
+// candidates, is assessed in stabilized form. With transport-corrected
+// cross sections a raw iterate can legitimately be negative and stabilize
+// to a positive value, and a positivity fixup applied to the raw value
+// would instead freeze the iteration, since the previous iterate is a
+// fixed point of the stabilization.
+double FlatSourceDomain::stabilized_flux(
+  int64_t sr, int g, double phi_new) const
+{
+  // Nothing to do if all in-group scattering cross sections are positive
+  if (!is_transport_stabilization_needed_) {
+    return phi_new;
+  }
+  int material = source_regions_.material(sr);
+  if (material == MATERIAL_VOID) {
+    return phi_new;
+  }
+  int temp = source_regions_.temperature_idx(sr);
+  double density_mult = source_regions_.density_mult(sr);
+
+  // Only apply stabilization if the diagonal (in-group) scattering XS is
+  // negative
+  double sigma_s =
+    sigma_s_[((material * ntemperature_ + temp) * negroups_ + g) * negroups_ +
+             g] *
+    density_mult;
+  if (sigma_s >= 0.0) {
+    return phi_new;
+  }
+  double sigma_t =
+    sigma_t_[(material * ntemperature_ + temp) * negroups_ + g] * density_mult;
+  double phi_old = source_regions_.scalar_flux_old(sr, g);
+
+  // Equation 18 in the above Gunow et al. 2019 paper. For a default
+  // rho of 1.0, this ensures there are no negative diagonal elements
+  // in the iteration matrix. A lesser rho could be used (or exposed
+  // as a user input parameter) to reduce the negative impact on
+  // convergence rate though would need to be experimentally tested to see
+  // if it doesn't become unstable. rho = 1.0 is good as it gives the
+  // highest assurance of stability, and the impacts on convergence rate
+  // are pretty mild.
+  double D = diagonal_stabilization_rho_ * sigma_s / sigma_t;
+
+  // Equation 16 in the above Gunow et al. 2019 paper
+  return (phi_new - D * phi_old) / (1.0 - D);
+}
+
+void FlatSourceDomain::set_flux_to_old_flux(int64_t sr, int g)
+{
+  source_regions_.scalar_flux_new(sr, g) =
+    source_regions_.scalar_flux_old(sr, g);
+}
+
+void FlatSourceDomain::set_flux_to_source(int64_t sr, int g)
+{
+  source_regions_.scalar_flux_new(sr, g) = source_regions_.source(sr, g);
+}
+
+bool FlatSourceDomain::region_has_strong_source(
+  const float* reduced_source, const double* flux_old, bool include_ratio) const
+{
+  for (int g = 0; g < negroups_; g++) {
+    double src = reduced_source[g];
+    // A negative reduced source counts as strong only when the region's own
+    // previous flux is non-negative. That is the transport-corrected (TCP0)
+    // signature, where negative within-group scattering drives the source
+    // negative independently of the flux. When the previous flux is itself
+    // negative, a negative source is just the sign-locked image of that
+    // fluctuation (exactly so in one-group problems, where q = c*phi +
+    // q_external), and reacting to it iteration-by-iteration would condition
+    // the estimator choice on the sign of the noise, which is the bias the
+    // converged-negative demotion exists to avoid. Chronically negative
+    // regions are handled by that demotion instead.
+    if (src < 0.0 && flux_old[g] >= 0.0) {
+      return true;
+    }
+    // The ratio condition is consulted only while the source is converging
+    // (include_ratio is false in the active batches): evaluated on noisy
+    // single-batch iterates, it demotes a churning population of regions
+    // whose converged ratios are below kappa, and that noise-conditioned,
+    // one-sided treatment biases the accumulated tallies. Once the
+    // transition decisions are made from the converged flux, the stable
+    // classifications (the strong-feed latch, the converged-negative sign
+    // demotion, and the hit-starved treatment) govern the tallied batches.
+    if (include_ratio &&
+        src > ADAPTIVE_VOLUME_KAPPA * std::max(flux_old[g], 0.0)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Combine transport flux contributions and flat source contributions from the
+// previous iteration to generate this iteration's estimate of scalar flux.
+int64_t FlatSourceDomain::add_source_to_scalar_flux()
+{
+  int64_t n_hits = 0;
+  double inverse_batch = 1.0 / simulation::current_batch;
+  int64_t n_naive = 0;
+  int64_t n_latch = 0;
+  int64_t n_strong = 0;
+  int64_t n_sign = 0;
+  int64_t n_small = 0;
+  bool final_iteration = (simulation::current_batch == settings::n_batches);
+  // The adaptive estimator uses the proactive strong-source (kappa) test, the
+  // demote-to-naive volume switch, and the previous-flux miss treatment, with
+  // demote-only decisions made from the running accumulated flux (recorded
+  // as a flag in converged_negative by demotion_step).
+  const bool is_adaptive = is_adaptive_family(resolved_volume_estimator_);
+  // The strict adaptive estimator additionally enforces non-negativity on
+  // the flux iterates each batch (see the enforcement step below).
+  const bool is_strict =
+    resolved_volume_estimator_ == RandomRayVolumeEstimator::STRICT_ADAPTIVE;
+  int64_t n_rescued = 0;
+  int64_t n_floored = 0;
+  int64_t n_chronic = 0;
+
+#pragma omp parallel for reduction(+ : n_hits, n_naive, n_latch, n_strong,     \
+    n_sign, n_small, n_rescued, n_floored, n_chronic)
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+
+    double volume_simulation_avg = source_regions_.volume(sr);
+    double volume_iteration = source_regions_.volume_naive(sr);
+
+    // Increment the number of hits if cell was hit this iteration
+    if (volume_iteration) {
+      n_hits++;
+    }
+
+    // Set the SR to small status if its expected number of hits
+    // per iteration is less than 1.5
+    if (source_regions_.n_hits(sr) * inverse_batch < MIN_HITS_PER_BATCH) {
+      source_regions_.is_small(sr) = 1;
+    } else {
+      source_regions_.is_small(sr) = 0;
+    }
+
+    // Determine if the source region has a "strong" inhomogeneous source,
+    // defined as any group whose reduced source greatly exceeds the previous
+    // iteration's scalar flux. In that condition the cell sits far below its
+    // own infinite-medium flux (q/Sigma_t), which arises when an optically
+    // thin cell holds a source that does not derive from its own local flux
+    // (an external source, or in-scatter from other groups). The
+    // flux update in such cells is a near-cancellation of the transport term
+    // against q/Sigma_t, which is only exact when the volumes used by the two
+    // terms are consistent. These cells therefore require the naive
+    // (iteration) volume estimator and the previous-flux miss treatment to
+    // avoid error
+    // terms proportional to (q/Sigma_t) * (1 - V_iteration/V_average) that
+    // can greatly exceed the physical flux.
+    //
+    // A reduced source that is itself negative is also treated as strong. This
+    // arises under transport-corrected (e.g. TCP0) cross sections, whose
+    // within-group scattering term can be negative, driving q/Sigma_t below
+    // zero even for a non-negative flux. It can also arise transiently from a
+    // negative previous-iteration flux, which the estimator permits by design
+    // (individual iterations are never modified). The diagonal (Gunow)
+    // stabilization keeps the TCP0 iteration convergent but acts on the flux,
+    // not on the source sign, so such regions still need the consistent
+    // (naive) volume and previous-flux miss treatment to keep a negative
+    // source from depositing negative flux through the miss path. In a normal
+    // slowing-down spectrum the positive in-scatter from faster groups
+    // dominates the negative within-group term, so in practice this condition
+    // rarely fires.
+    //
+    // Only the adaptive estimator consults the strong-source flag, so the
+    // other estimators skip the test (and its end-of-run report) entirely.
+    // Void (and effectively-void, sub-MINIMUM_MACRO_XS) regions are also
+    // excluded. They carry no q/Sigma_t term, as their flux is the streaming
+    // tally plus a bounded external contribution, so the near-cancellation
+    // the test guards against cannot occur and demoting them to the naive
+    // volume would only add ratio bias. This matches the linear domain, which
+    // already gates its strong-source gradient fallback on MATERIAL_VOID.
+    bool strong_source =
+      is_adaptive && source_regions_.material(sr) != MATERIAL_VOID &&
+      region_has_strong_source(&source_regions_.source(sr, 0),
+        &source_regions_.scalar_flux_old(sr, 0),
+        simulation::current_batch <= settings::n_inactive);
+    // Per-region demotion reasons, all g-independent. The hit-starved
+    // (small) flag is re-evaluated every iteration. The strong-source flag
+    // is also re-evaluated every iteration, though in the active batches it
+    // reduces to the negative-source (TCP0) condition, as the stable
+    // accumulated-flux decisions govern there instead. converged_neg is the
+    // demote-only flag set from the running accumulated flux by
+    // demotion_step. The external-source flag drives only the hybrid policy
+    // and the default miss treatment, since the adaptive estimator catches a
+    // low-cross-section external region through the kappa strong-source test
+    // (during the inactive batches) and the strong-feed latch (thereafter),
+    // its external term being folded into q/Sigma_t.
+    bool external = source_regions_.external_source_present(sr);
+    bool small = source_regions_.is_small(sr);
+    int conv_flag = is_adaptive ? source_regions_.converged_negative(sr) : 0;
+    bool converged_neg = conv_flag > 0;
+
+    // Every estimator reduces to two g-independent per-region decisions:
+    //   1. which volume to use on a hit (the simulation-averaged volume,
+    //      unless the region is demoted to the naive (iteration) volume)
+    //   2. what to substitute on a miss (the reduced source by default, or
+    //      the previous iterate)
+    // The previous-flux miss treatment is needed wherever assigning the bare
+    // reduced source q/Sigma_t to a missed region would bias it, as a low
+    // cross section region would otherwise deposit its full infinite-medium
+    // flux every time it is missed. Hybrid keys this on the external-source
+    // flag. The adaptive estimator instead extends the previous-flux
+    // treatment to every region it demotes, which (through the kappa test)
+    // already covers any region whose q/Sigma_t greatly exceeds its flux,
+    // external or not. Both decisions are made once here so the per-group
+    // loop stays estimator-agnostic.
+    bool use_naive_volume = false;
+    bool use_old_flux_on_miss = external;
+    switch (resolved_volume_estimator_) {
+    case RandomRayVolumeEstimator::NAIVE:
+      use_naive_volume = true;
+      break;
+    case RandomRayVolumeEstimator::SIMULATION_AVERAGED:
+      break;
+    case RandomRayVolumeEstimator::HYBRID:
+      use_naive_volume = external || small;
+      break;
+    case RandomRayVolumeEstimator::ADAPTIVE:
+    case RandomRayVolumeEstimator::STRICT_ADAPTIVE:
+      use_naive_volume = small || strong_source || converged_neg;
+      use_old_flux_on_miss = use_naive_volume;
+      break;
+    default:
+      fatal_error("Invalid volume estimator type");
+    }
+    double volume = use_naive_volume ? volume_iteration : volume_simulation_avg;
+
+    // On the final iteration, classify the demoted (naive-volume) regions by
+    // cause for the end-of-simulation report. The causes are mutually
+    // exclusive and assigned in priority order, so they sum to the total.
+    // The accumulated-flux demotions are counted first, as their demote-only
+    // flags can only accumulate and so equal the decisions settled by the
+    // final batch. The per-batch causes count only the remainder.
+    if (final_iteration && is_adaptive && use_naive_volume) {
+      n_naive++;
+      if (conv_flag == 2) {
+        n_latch++;
+      } else if (conv_flag == 1) {
+        n_sign++;
+      } else if (conv_flag == 3) {
+        n_chronic++;
+      } else if (strong_source) {
+        n_strong++;
+      } else if (small) {
+        n_small++;
+      }
+    }
+
+    bool region_rescued = false;
+    bool region_floored = false;
+    for (int g = 0; g < negroups_; g++) {
+      if (volume_iteration > 0.0) {
+        // Hit this iteration: the flat source from the previous iteration plus
+        // this iteration's transport contribution, normalized by the chosen
+        // volume, then stabilized.
+        set_flux_to_flux_plus_source(sr, volume, use_naive_volume, g);
+        double raw = source_regions_.scalar_flux_new(sr, g);
+        double phi = stabilized_flux(sr, g, raw);
+        // The strict adaptive estimator applies a per-batch fixup to
+        // negative flux iterates, assessed on the stabilized value. First
+        // the flux is rescued by rescaling the transport term from the
+        // volume used to the batch's own volume, algebraically reproducing
+        // the naive-volume update, with the rescued candidate stabilized in
+        // turn. If it is still negative (or the region already used the
+        // batch volume), it is floored at the previous iterate, which the
+        // stabilization leaves unchanged. A value-level fixup is needed
+        // here because demotion alone cannot prevent a region from
+        // inheriting a negative excursion through in-scatter from
+        // not-yet-demoted neighbors. The price is a small conservative
+        // (one-sided clip) bias, which is why the strict estimator is not
+        // the standard-solve default. Linear-source flux moments are left
+        // untouched, as demoted and hit-starved regions already fall back to
+        // flat shapes.
+        if (is_strict && phi < 0.0) {
+          if (volume != volume_iteration) {
+            double rescued = (raw - flux_additive_term(sr, g, false)) *
+                               (volume / volume_iteration) +
+                             flux_additive_term(sr, g, true);
+            phi = stabilized_flux(sr, g, rescued);
+            region_rescued = true;
+          }
+          if (phi < 0.0) {
+            phi = source_regions_.scalar_flux_old(sr, g);
+            region_floored = true;
+          }
+        }
+        source_regions_.scalar_flux_new(sr, g) = phi;
+      } else if (volume_simulation_avg > 0.0) {
+        // Missed this iteration but hit previously: substitute per the miss
+        // policy decided above (the previous iterate, or the reduced source),
+        // then stabilize.
+        if (use_old_flux_on_miss) {
+          set_flux_to_old_flux(sr, g);
+        } else {
+          set_flux_to_source(sr, g);
+        }
+        source_regions_.scalar_flux_new(sr, g) =
+          stabilized_flux(sr, g, source_regions_.scalar_flux_new(sr, g));
+      } else {
+        // Never hit: the iterate stays at its reset value, stabilized like
+        // every other element.
+        source_regions_.scalar_flux_new(sr, g) =
+          stabilized_flux(sr, g, source_regions_.scalar_flux_new(sr, g));
+      }
+      // Halt if NaN implosion is detected
+      if (!std::isfinite(source_regions_.scalar_flux_new(sr, g))) {
+        fatal_error("A source region scalar flux is not finite. "
+                    "This indicates a numerical instability in the "
+                    "simulation. Consider increasing ray density or adjusting "
+                    "the source region mesh.");
+      }
+    }
+    // Chronic-negativity demotion (strict adaptive only). The
+    // non-negativity floor prevents a chronically noisy region's
+    // accumulated flux from ever going negative, masking the very signal
+    // the accumulated sign demotion detects. Left alone, such a region
+    // would be clipped every batch, biasing its flux upward. Counting the
+    // batches that needed the fixup restores the escape, as after a few
+    // events the region is demoted to the naive volume and previous-flux
+    // miss treatment, where clipping
+    // is no longer needed.
+    if (is_strict && (region_rescued || region_floored)) {
+      int n = ++source_regions_.n_negative_batches(sr);
+      double threshold =
+        std::max(static_cast<double>(NEGATIVE_FLUX_DEMOTION_MIN_COUNT),
+          NEGATIVE_FLUX_DEMOTION_RATE * simulation::current_batch);
+      if (n >= threshold && source_regions_.converged_negative(sr) == 0) {
+        source_regions_.converged_negative(sr) = 3;
+      }
+    }
+    if (final_iteration) {
+      n_rescued += region_rescued;
+      n_floored += region_floored;
+    }
+  }
+
+  // Store the final-iteration treatment snapshot for reporting (adaptive only;
+  // the other estimators do not produce a by-cause naive-treatment breakdown)
+  if (final_iteration && is_adaptive) {
+    n_final_naive_ = n_naive;
+    n_final_latch_ = n_latch;
+    n_final_strong_ = n_strong;
+    n_final_sign_ = n_sign;
+    n_final_small_ = n_small;
+    n_final_chronic_ = n_chronic;
+    n_final_rescued_ = n_rescued;
+    n_final_floored_ = n_floored;
+    final_stats_valid_ = true;
+  }
+
+  // Return the number of source regions that were hit this iteration
+  return n_hits;
+}
+
+// Generates new estimate of k_eff based on the differences between this
+// iteration's estimate of the scalar flux and the last iteration's estimate.
+void FlatSourceDomain::compute_k_eff()
+{
+  double fission_rate_old = 0;
+  double fission_rate_new = 0;
+
+  // Vector for gathering fission source terms for Shannon entropy calculation
+  vector<float> p(n_source_regions(), 0.0f);
+
+#pragma omp parallel for reduction(+ : fission_rate_old, fission_rate_new)
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+
+    // If simulation averaged volume is zero, don't include this cell
+    double volume = source_regions_.volume(sr);
+    if (volume == 0.0) {
+      continue;
+    }
+
+    int material = source_regions_.material(sr);
+    int temp = source_regions_.temperature_idx(sr);
+    if (material == MATERIAL_VOID) {
+      continue;
+    }
+
+    double sr_fission_source_old = 0;
+    double sr_fission_source_new = 0;
+
+    for (int g = 0; g < negroups_; g++) {
+      double nu_sigma_f =
+        nu_sigma_f_[(material * ntemperature_ + temp) * negroups_ + g] *
+        source_regions_.density_mult(sr);
+      sr_fission_source_old +=
+        nu_sigma_f * source_regions_.scalar_flux_old(sr, g);
+      sr_fission_source_new +=
+        nu_sigma_f * source_regions_.scalar_flux_new(sr, g);
+    }
+
+    // Compute total fission rates in FSR
+    sr_fission_source_old *= volume;
+    sr_fission_source_new *= volume;
+
+    // Accumulate totals
+    fission_rate_old += sr_fission_source_old;
+    fission_rate_new += sr_fission_source_new;
+
+    // Store total fission rate in the FSR for Shannon calculation
+    p[sr] = sr_fission_source_new;
+  }
+
+  // Sum up fission rates across all ranks
+#ifdef OPENMC_MPI
+  if (mpi::n_procs > 1) {
+    simulation::time_decomposition_handling.start();
+    MPI_Allreduce(
+      MPI_IN_PLACE, &fission_rate_old, 1, MPI_DOUBLE, MPI_SUM, mpi::intracomm);
+    MPI_Allreduce(
+      MPI_IN_PLACE, &fission_rate_new, 1, MPI_DOUBLE, MPI_SUM, mpi::intracomm);
+    simulation::time_decomposition_handling.stop();
+  }
+#endif
+
+  double k_eff_new = k_eff_ * (fission_rate_new / fission_rate_old);
+
+  double H = 0.0;
+  // defining an inverse sum for better performance
+  double inverse_sum = 1 / fission_rate_new;
+
+#pragma omp parallel for reduction(+ : H)
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+    // Only if FSR has non-negative and non-zero fission source
+    if (p[sr] > 0.0f) {
+      // Normalize to total weight of bank sites. p_i for better performance
+      float p_i = p[sr] * inverse_sum;
+      // Sum values to obtain Shannon entropy.
+      H -= p_i * std::log2(p_i);
+    }
+  }
+
+#ifdef OPENMC_MPI
+  if (mpi::n_procs > 1) {
+    simulation::time_decomposition_handling.start();
+    if (mpi::master) {
+      MPI_Reduce(MPI_IN_PLACE, &H, 1, MPI_DOUBLE, MPI_SUM, 0, mpi::intracomm);
+    } else {
+      MPI_Reduce(&H, nullptr, 1, MPI_DOUBLE, MPI_SUM, 0, mpi::intracomm);
+    }
+    simulation::time_decomposition_handling.stop();
+  }
+#endif
+
+  // Adds entropy value to shared entropy vector in openmc namespace.
+  simulation::entropy.push_back(H);
+
+  fission_rate_ = fission_rate_new;
+  k_eff_ = k_eff_new;
+}
+
+// This function is responsible for generating a mapping between random
+// ray flat source regions (cell instances) and tally bins. The mapping
+// takes the form of a "TallyTask" object, which accounts for one single
+// score being applied to a single tally. Thus, a single source region
+// may have anywhere from zero to many tally tasks associated with it ---
+// meaning that the global "tally_task" data structure is in 2D. The outer
+// dimension corresponds to the source element (i.e., each entry corresponds
+// to a specific energy group within a specific source region), and the
+// inner dimension corresponds to the tallying task itself. Mechanically,
+// the mapping between FSRs and spatial filters is done by considering
+// the location of a single known ray midpoint that passed through the
+// FSR. I.e., during transport, the first ray to pass through a given FSR
+// will write down its midpoint for use with this function. This is a cheap
+// and easy way of mapping FSRs to spatial tally filters, but comes with
+// the downside of adding the restriction that spatial tally filters must
+// share boundaries with the physical geometry of the simulation (so as
+// not to subdivide any FSR). It is acceptable for a spatial tally region
+// to contain multiple FSRs, but not the other way around.
+
+// TODO: In future work, it would be preferable to offer a more general
+// (but perhaps slightly more expensive) option for handling arbitrary
+// spatial tallies that would be allowed to subdivide FSRs.
+
+// Besides generating the mapping structure, this function also keeps track
+// of whether or not all flat source regions have been hit yet. This is
+// required, as there is no guarantee that all flat source regions will
+// be hit every iteration, such that in the first few iterations some FSRs
+// may not have a known position within them yet to facilitate mapping to
+// spatial tally filters. However, after several iterations, if all FSRs
+// have been hit and have had a tally map generated, then this status will
+// be passed back to the caller to alert them that this function doesn't
+// need to be called for the remainder of the simulation.
+
+// It takes as an argument the starting index in the source region array,
+// and it will operate from that index until the end of the array. This
+// is useful as it can be called for both explicit user source regions or
+// when a source region mesh is overlaid.
+
+void FlatSourceDomain::convert_source_regions_to_tallies(int64_t start_sr_id)
+{
+  openmc::simulation::time_tallies.start();
+
+  // Tracks if we've generated a mapping yet for all source regions.
+  bool all_source_regions_mapped = true;
+
+// Attempt to generate mapping for all source regions
+#pragma omp parallel for
+  for (int64_t sr = start_sr_id; sr < n_source_regions(); sr++) {
+
+    // If this source region has not been hit by a ray yet, then
+    // we aren't going to be able to map it, so skip it.
+    if (!source_regions_.position_recorded(sr)) {
+      all_source_regions_mapped = false;
+      continue;
+    }
+
+    // A particle located at the recorded midpoint of a ray
+    // crossing through this source region is used to estabilish
+    // the spatial location of the source region
+    Particle p;
+    p.r() = source_regions_.position(sr);
+    p.r_last() = source_regions_.position(sr);
+    p.u() = {1.0, 0.0, 0.0};
+    // The return value is not checked because the position was recorded by a
+    // ray that actually traversed this source region, so the search cannot
+    // fail.
+    exhaustive_find_cell(p);
+
+    // Loop over energy groups (so as to support energy filters)
+    for (int g = 0; g < negroups_; g++) {
+
+      // Set particle to the current energy
+      p.g() = g;
+      p.g_last() = g;
+      p.E() = data::mg.energy_bin_avg_[p.g()];
+      p.E_last() = p.E();
+
+      // If this task has already been populated, we don't need to do
+      // it again.
+      if (source_regions_.tally_task(sr, g).size() > 0) {
+        continue;
+      }
+
+      // Loop over all active tallies. This logic is essentially identical
+      // to what happens when scanning for applicable tallies during
+      // MC transport.
+      for (int i_tally = 0; i_tally < model::tallies.size(); i_tally++) {
+        Tally& tally {*model::tallies[i_tally]};
+
+        // Initialize an iterator over valid filter bin combinations.
+        // If there are no valid combinations, use a continue statement
+        // to ensure we skip the assume_separate break below.
+        auto filter_iter = FilterBinIter(tally, p);
+        auto end = FilterBinIter(tally, true, &p.filter_matches());
+        if (filter_iter == end)
+          continue;
+
+        // Loop over filter bins.
+        for (; filter_iter != end; ++filter_iter) {
+          auto filter_index = filter_iter.index_;
+
+          // Loop over scores
+          for (int score = 0; score < tally.scores_.size(); score++) {
+            auto score_bin = tally.scores_[score];
+            // If a valid tally, filter, and score combination has been found,
+            // then add it to the list of tally tasks for this source element.
+            TallyTask task(i_tally, filter_index, score, score_bin);
+            source_regions_.tally_task(sr, g).push_back(task);
+
+            // Also add this task to the list of volume tasks for this source
+            // region.
+            source_regions_.volume_task(sr).insert(task);
+          }
+        }
+      }
+      // Reset all the filter matches for the next tally event.
+      for (auto& match : p.filter_matches())
+        match.bins_present_ = false;
+    }
+  }
+  openmc::simulation::time_tallies.stop();
+
+  mapped_all_tallies_ = all_source_regions_mapped;
+}
+
+// Set the volume accumulators to zero for all tallies
+void FlatSourceDomain::reset_tally_volumes()
+{
+  if (volume_normalized_flux_tallies_) {
+#pragma omp parallel for
+    for (int i = 0; i < tally_volumes_.size(); i++) {
+      auto& tensor = tally_volumes_[i];
+      tensor.fill(0.0); // Set all elements of the tensor to 0.0
+    }
+  }
+}
+
+// In fixed source mode, due to the way that volumetric fixed sources are
+// converted and applied as volumetric sources in one or more source regions,
+// we need to perform an additional normalization step to ensure that the
+// reported scalar fluxes are in units per source neutron. This allows for
+// direct comparison of reported tallies to Monte Carlo flux results.
+// This factor needs to be computed at each iteration, as it is based on the
+// volume estimate of each FSR, which improves over the course of the
+// simulation
+double FlatSourceDomain::compute_fixed_source_normalization_factor() const
+{
+  // Eigenvalue mode normalization
+  if (settings::run_mode == RunMode::EIGENVALUE) {
+    // Normalize fluxes by total number of fission neutrons produced. This
+    // ensures consistent scaling of the eigenvector such that its magnitude is
+    // comparable to the eigenvector produced by the Monte Carlo solver.
+    // Multiplying by the eigenvalue is unintuitive, but it is necessary.
+    // If the eigenvalue is 1.2, per starting source neutron, you will
+    // generate 1.2 neutrons. Thus if we normalize to generating only ONE
+    // neutron in total for the whole domain, then we don't actually have enough
+    // flux to generate the required 1.2 neutrons. We only know the flux
+    // required to generate 1 neutron (which would have required less than one
+    // starting neutron). Thus, you have to scale the flux up by the eigenvalue
+    // such that 1.2 neutrons are generated, so as to be consistent with the
+    // bookkeeping in MC which is all done per starting source neutron (not per
+    // neutron produced).
+    return k_eff_ / (fission_rate_ * simulation_volume_);
+  }
+
+  // If we are in adjoint mode of a fixed source problem, the external
+  // source is already normalized, such that all resulting fluxes are
+  // also normalized.
+  if (solve_ == RandomRaySolve::ADJOINT) {
+    return 1.0;
+  }
+
+  // Fixed source mode normalization
+
+  // Step 1 is to sum over all source regions and energy groups to get the
+  // total external source strength in the simulation.
+  double simulation_external_source_strength = 0.0;
+#pragma omp parallel for reduction(+ : simulation_external_source_strength)
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+    int material = source_regions_.material(sr);
+    int temp = source_regions_.temperature_idx(sr);
+    double volume = source_regions_.volume(sr) * simulation_volume_;
+    for (int g = 0; g < negroups_; g++) {
+      // For non-void regions, we store the external source pre-divided by
+      // sigma_t. We need to multiply non-void regions back up by sigma_t
+      // to get the total source strength in the expected units.
+      double sigma_t = 1.0;
+      if (material != MATERIAL_VOID) {
+        sigma_t = sigma_t_[(material * ntemperature_ + temp) * negroups_ + g] *
+                  source_regions_.density_mult(sr);
+      }
+      simulation_external_source_strength +=
+        source_regions_.external_source(sr, g) * sigma_t * volume;
+    }
+  }
+
+#ifdef OPENMC_MPI
+  if (mpi::n_procs > 1) {
+    MPI_Allreduce(MPI_IN_PLACE, &simulation_external_source_strength, 1,
+      MPI_DOUBLE, MPI_SUM, mpi::intracomm);
+  }
+#endif
+
+  // Step 2 is to determine the total user-specified external source strength
+  double user_external_source_strength = 0.0;
+  for (auto& ext_source : model::external_sources) {
+    user_external_source_strength += ext_source->strength();
+  }
+
+  // The correction factor is the ratio of the user-specified external source
+  // strength to the simulation external source strength.
+  double source_normalization_factor =
+    user_external_source_strength / simulation_external_source_strength;
+
+  return source_normalization_factor;
+}
+
+// Tallying in random ray is not done directly during transport, rather,
+// it is done only once after each power iteration. This is made possible
+// by way of a mapping data structure that relates spatial source regions
+// (FSRs) to tally/filter/score combinations. The mechanism by which the
+// mapping is done (and the limitations incurred) is documented in the
+// "convert_source_regions_to_tallies()" function comments above. The present
+// tally function simply traverses the mapping data structure and executes
+// the scoring operations to OpenMC's native tally result arrays.
+
+void FlatSourceDomain::random_ray_tally()
+{
+  openmc::simulation::time_tallies.start();
+
+  // Reset our tally volumes to zero
+  reset_tally_volumes();
+
+  double source_normalization_factor =
+    compute_fixed_source_normalization_factor();
+
+// We loop over all source regions and energy groups. For each
+// element, we check if there are any scores needed and apply
+// them.
+#pragma omp parallel for
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+    // The fsr.volume_ is the unitless fractional simulation averaged volume
+    // (i.e., it is the FSR's fraction of the overall simulation volume). The
+    // simulation_volume_ is the total 3D physical volume in cm^3 of the
+    // entire global simulation domain (as defined by the ray source box).
+    // Thus, the FSR's true 3D spatial volume in cm^3 is found by multiplying
+    // its fraction of the total volume by the total volume. Not important in
+    // eigenvalue solves, but useful in fixed source solves for returning the
+    // flux shape with a magnitude that makes sense relative to the fixed
+    // source strength.
+    double volume = source_regions_.volume(sr) * simulation_volume_;
+
+    double material = source_regions_.material(sr);
+    int temp = source_regions_.temperature_idx(sr);
+    double density_mult = source_regions_.density_mult(sr);
+    for (int g = 0; g < negroups_; g++) {
+      double flux =
+        source_regions_.scalar_flux_new(sr, g) * source_normalization_factor;
+
+      // Determine numerical score value
+      for (auto& task : source_regions_.tally_task(sr, g)) {
+        double score = 0.0;
+        switch (task.score_type) {
+
+        case SCORE_FLUX:
+          score = flux * volume;
+          break;
+
+        case SCORE_TOTAL:
+          if (material != MATERIAL_VOID) {
+            score =
+              flux * volume *
+              sigma_t_[(material * ntemperature_ + temp) * negroups_ + g] *
+              density_mult;
+          }
+          break;
+
+        case SCORE_FISSION:
+          if (material != MATERIAL_VOID) {
+            score =
+              flux * volume *
+              sigma_f_[(material * ntemperature_ + temp) * negroups_ + g] *
+              density_mult;
+          }
+          break;
+
+        case SCORE_NU_FISSION:
+          if (material != MATERIAL_VOID) {
+            score =
+              flux * volume *
+              nu_sigma_f_[(material * ntemperature_ + temp) * negroups_ + g] *
+              density_mult;
+          }
+          break;
+
+        case SCORE_EVENTS:
+          score = 1.0;
+          break;
+
+        case SCORE_KAPPA_FISSION:
+          if (material != MATERIAL_VOID) {
+            score =
+              flux * volume *
+              kappa_fission_[(material * ntemperature_ + temp) * negroups_ +
+                             g] *
+              density_mult;
+          }
+          break;
+
+        default:
+          fatal_error("Invalid score specified in tallies.xml. Only flux, "
+                      "total, fission, nu-fission, kappa-fission, and events "
+                      "are supported in random ray mode.");
+          break;
+        }
+        // Apply score to the appropriate tally bin
+        Tally& tally {*model::tallies[task.tally_idx]};
+#pragma omp atomic
+        tally.results_(task.filter_idx, task.score_idx, TallyResult::VALUE) +=
+          score;
+      }
+    }
+
+    // For flux tallies, the total volume of the spatial region is needed
+    // for normalizing the flux. We store this volume in a separate tensor.
+    // We only contribute to each volume tally bin once per FSR.
+    if (volume_normalized_flux_tallies_) {
+      for (const auto& task : source_regions_.volume_task(sr)) {
+        if (task.score_type == SCORE_FLUX) {
+#pragma omp atomic
+          tally_volumes_[task.tally_idx](task.filter_idx, task.score_idx) +=
+            volume;
+        }
+      }
+    }
+  } // end FSR loop
+
+  // Normalize any flux scores by the total volume of the FSRs scoring to that
+  // bin. To do this, we loop over all tallies, and then all filter bins,
+  // and then scores. For each score, we check the tally data structure to
+  // see what index that score corresponds to. If that score is a flux score,
+  // then we divide it by volume.
+  if (volume_normalized_flux_tallies_) {
+#ifdef OPENMC_MPI
+    if (mpi::n_procs > 1) {
+      for (auto& volumes : tally_volumes_) {
+        MPI_Allreduce(MPI_IN_PLACE, volumes.data(),
+          static_cast<int>(volumes.size()), MPI_DOUBLE, MPI_SUM,
+          mpi::intracomm);
+      }
+    }
+#endif
+    for (int i = 0; i < model::tallies.size(); i++) {
+      Tally& tally {*model::tallies[i]};
+#pragma omp parallel for
+      for (int64_t bin = 0; bin < tally.n_filter_bins(); bin++) {
+        for (int score_idx = 0; score_idx < tally.n_scores(); score_idx++) {
+          auto score_type = tally.scores_[score_idx];
+          if (score_type == SCORE_FLUX) {
+            double vol = tally_volumes_[i](bin, score_idx);
+            if (vol > 0.0) {
+              tally.results_(bin, score_idx, TallyResult::VALUE) /= vol;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  openmc::simulation::time_tallies.stop();
+}
+
+double FlatSourceDomain::evaluate_flux_at_point(
+  Position r, int64_t sr, int g) const
+{
+  return source_regions_.scalar_flux_final(sr, g) /
+         (settings::n_batches - settings::n_inactive);
+}
+
+// Outputs all basic material, FSR ID, multigroup flux, and
+// fission source data to .vtk file that can be directly
+// loaded and displayed by Paraview. Note that .vtk binary
+// files require big endian byte ordering, so endianness
+// is checked and flipped if necessary.
+void FlatSourceDomain::output_to_vtk() const
+{
+  // Rename .h5 plot filename(s) to .vtk filenames
+  for (int p = 0; p < model::plots.size(); p++) {
+    PlottableInterface* plot = model::plots[p].get();
+    plot->path_plot() =
+      plot->path_plot().substr(0, plot->path_plot().find_last_of('.')) + ".vtk";
+  }
+
+  // Print header information
+  print_plot();
+
+  // Outer loop over plots
+  for (int plt = 0; plt < model::plots.size(); plt++) {
+
+    // Get handle to OpenMC plot object and extract params
+    Plot* openmc_plot = dynamic_cast<Plot*>(model::plots[plt].get());
+
+    // Random ray plots only support voxel plots
+    if (!openmc_plot) {
+      warning(fmt::format("Plot {} is invalid plot type -- only voxel plotting "
+                          "is allowed in random ray mode.",
+        plt));
+      continue;
+    } else if (openmc_plot->type_ != Plot::PlotType::voxel) {
+      warning(fmt::format("Plot {} is invalid plot type -- only voxel plotting "
+                          "is allowed in random ray mode.",
+        plt));
+      continue;
+    }
+
+    int Nx = openmc_plot->pixels_[0];
+    int Ny = openmc_plot->pixels_[1];
+    int Nz = openmc_plot->pixels_[2];
+    Position origin = openmc_plot->origin_;
+    Position width = openmc_plot->width_;
+    Position ll = origin - width / 2.0;
+    double x_delta = width.x / Nx;
+    double y_delta = width.y / Ny;
+    double z_delta = width.z / Nz;
+    std::string filename = openmc_plot->path_plot();
+
+    // Tag plots written during the forward solve of an adjoint run
+    if (solve_ == RandomRaySolve::FORWARD_FOR_ADJOINT) {
+      auto dot = filename.find_last_of('.');
+      filename = filename.substr(0, dot) + ".forward" + filename.substr(dot);
+    }
+
+    // Perform sanity checks on file size
+    uint64_t bytes = Nx * Ny * Nz * (negroups_ + 1 + 1 + 1) * sizeof(float);
+    write_message(5, "Processing plot {}: {}... (Estimated size is {} MB)",
+      openmc_plot->id(), filename, bytes / 1.0e6);
+    if (bytes / 1.0e9 > 1.0) {
+      warning("Voxel plot specification is very large (>1 GB). Plotting may be "
+              "slow.");
+    } else if (bytes / 1.0e9 > 100.0) {
+      fatal_error("Voxel plot specification is too large (>100 GB). Exiting.");
+    }
+
+    // Relate voxel spatial locations to random ray source regions
+    vector<int> voxel_indices(Nx * Ny * Nz);
+    vector<Position> voxel_positions(Nx * Ny * Nz);
+    vector<double> weight_windows(Nx * Ny * Nz);
+    float min_weight = 1e20;
+#pragma omp parallel for collapse(3) reduction(min : min_weight)
+    for (int z = 0; z < Nz; z++) {
+      for (int y = 0; y < Ny; y++) {
+        for (int x = 0; x < Nx; x++) {
+          Position sample;
+          sample.z = ll.z + z_delta / 2.0 + z * z_delta;
+          sample.y = ll.y + y_delta / 2.0 + y * y_delta;
+          sample.x = ll.x + x_delta / 2.0 + x * x_delta;
+          Particle p;
+          p.r() = sample;
+          p.r_last() = sample;
+          p.E() = 1.0;
+          p.E_last() = 1.0;
+          p.u() = {1.0, 0.0, 0.0};
+
+          bool found = exhaustive_find_cell(p);
+          if (!found) {
+            voxel_indices[z * Ny * Nx + y * Nx + x] = -1;
+            voxel_positions[z * Ny * Nx + y * Nx + x] = sample;
+            weight_windows[z * Ny * Nx + y * Nx + x] = 0.0;
+            continue;
+          }
+
+          SourceRegionKey sr_key = lookup_source_region_key(p);
+          int64_t sr = -1;
+          auto it = source_region_map_.find(sr_key);
+          if (it != source_region_map_.end()) {
+            sr = it->second;
+          }
+
+          voxel_indices[z * Ny * Nx + y * Nx + x] = sr;
+          voxel_positions[z * Ny * Nx + y * Nx + x] = sample;
+
+          if (variance_reduction::weight_windows.size() == 1) {
+            auto [ww_found, ww] =
+              variance_reduction::weight_windows[0]->get_weight_window(p);
+            float weight = ww.lower_weight;
+            weight_windows[z * Ny * Nx + y * Nx + x] = weight;
+            if (weight < min_weight)
+              min_weight = weight;
+          }
+        }
+      }
+    }
+
+    // Open file for writing
+    std::FILE* plot = std::fopen(filename.c_str(), "wb");
+
+    // Write vtk metadata
+    std::fprintf(plot, "# vtk DataFile Version 2.0\n");
+    std::fprintf(plot, "Dataset File\n");
+    std::fprintf(plot, "BINARY\n");
+    std::fprintf(plot, "DATASET STRUCTURED_POINTS\n");
+    std::fprintf(plot, "DIMENSIONS %d %d %d\n", Nx, Ny, Nz);
+    std::fprintf(plot, "ORIGIN %lf %lf %lf\n", ll.x, ll.y, ll.z);
+    std::fprintf(plot, "SPACING %lf %lf %lf\n", x_delta, y_delta, z_delta);
+    std::fprintf(plot, "POINT_DATA %d\n", Nx * Ny * Nz);
+
+    int64_t num_neg = 0;
+    int64_t num_samples = 0;
+    float min_flux = 0.0;
+    float max_flux = -1.0e20;
+    // Plot multigroup flux data
+    for (int g = 0; g < negroups_; g++) {
+      std::fprintf(plot, "SCALARS flux_group_%d float\n", g);
+      std::fprintf(plot, "LOOKUP_TABLE default\n");
+      for (int i = 0; i < Nx * Ny * Nz; i++) {
+        int64_t fsr = voxel_indices[i];
+        float flux = 0;
+        if (fsr >= 0) {
+          flux = evaluate_flux_at_point(voxel_positions[i], fsr, g);
+          if (flux < 0.0)
+            flux = FlatSourceDomain::evaluate_flux_at_point(
+              voxel_positions[i], fsr, g);
+        }
+        if (flux < 0.0) {
+          num_neg++;
+          if (flux < min_flux) {
+            min_flux = flux;
+          }
+        }
+        if (flux > max_flux)
+          max_flux = flux;
+        num_samples++;
+        flux = convert_to_big_endian<float>(flux);
+        std::fwrite(&flux, sizeof(float), 1, plot);
+      }
+    }
+
+    // Slightly negative fluxes can be normal when sampling corners of linear
+    // source regions. However, very common and high magnitude negative fluxes
+    // may indicate numerical instability.
+    if (num_neg > 0) {
+      warning(fmt::format("{} plot samples ({:.4f}%) contained negative fluxes "
+                          "(minumum found = {:.2e} maximum_found = {:.2e})",
+        num_neg, (100.0 * num_neg) / num_samples, min_flux, max_flux));
+    }
+
+    // Plot FSRs
+    std::fprintf(plot, "SCALARS FSRs float\n");
+    std::fprintf(plot, "LOOKUP_TABLE default\n");
+    for (int fsr : voxel_indices) {
+      float value = future_prn(10, fsr);
+      value = convert_to_big_endian<float>(value);
+      std::fwrite(&value, sizeof(float), 1, plot);
+    }
+
+    // Plot Materials
+    std::fprintf(plot, "SCALARS Materials int\n");
+    std::fprintf(plot, "LOOKUP_TABLE default\n");
+    for (int fsr : voxel_indices) {
+      int mat = -1;
+      if (fsr >= 0)
+        mat = source_regions_.material(fsr);
+      mat = convert_to_big_endian<int>(mat);
+      std::fwrite(&mat, sizeof(int), 1, plot);
+    }
+
+    // Plot fission source
+    if (settings::run_mode == RunMode::EIGENVALUE) {
+      std::fprintf(plot, "SCALARS total_fission_source float\n");
+      std::fprintf(plot, "LOOKUP_TABLE default\n");
+      for (int i = 0; i < Nx * Ny * Nz; i++) {
+        int64_t fsr = voxel_indices[i];
+        float total_fission = 0.0;
+        if (fsr >= 0) {
+          int mat = source_regions_.material(fsr);
+          int temp = source_regions_.temperature_idx(fsr);
+          if (mat != MATERIAL_VOID) {
+            for (int g = 0; g < negroups_; g++) {
+              float flux = evaluate_flux_at_point(voxel_positions[i], fsr, g);
+              double sigma_f =
+                sigma_f_[(mat * ntemperature_ + temp) * negroups_ + g] *
+                source_regions_.density_mult(fsr);
+              total_fission += sigma_f * flux;
+            }
+          }
+        }
+        total_fission = convert_to_big_endian<float>(total_fission);
+        std::fwrite(&total_fission, sizeof(float), 1, plot);
+      }
+    } else {
+      std::fprintf(plot, "SCALARS external_source float\n");
+      std::fprintf(plot, "LOOKUP_TABLE default\n");
+      for (int i = 0; i < Nx * Ny * Nz; i++) {
+        int64_t fsr = voxel_indices[i];
+        int mat = source_regions_.material(fsr);
+        int temp = source_regions_.temperature_idx(fsr);
+        float total_external = 0.0f;
+        if (fsr >= 0) {
+          for (int g = 0; g < negroups_; g++) {
+            // External sources are already divided by sigma_t, so we need to
+            // multiply it back to get the true external source.
+            double sigma_t = 1.0;
+            if (mat != MATERIAL_VOID) {
+              sigma_t = sigma_t_[(mat * ntemperature_ + temp) * negroups_ + g] *
+                        source_regions_.density_mult(fsr);
+            }
+            total_external += source_regions_.external_source(fsr, g) * sigma_t;
+          }
+        }
+        total_external = convert_to_big_endian<float>(total_external);
+        std::fwrite(&total_external, sizeof(float), 1, plot);
+      }
+    }
+
+    // Plot weight window data
+    if (variance_reduction::weight_windows.size() == 1) {
+      std::fprintf(plot, "SCALARS weight_window_lower float\n");
+      std::fprintf(plot, "LOOKUP_TABLE default\n");
+      for (int i = 0; i < Nx * Ny * Nz; i++) {
+        float weight = weight_windows[i];
+        if (weight == 0.0)
+          weight = min_weight;
+        weight = convert_to_big_endian<float>(weight);
+        std::fwrite(&weight, sizeof(float), 1, plot);
+      }
+    }
+
+    std::fclose(plot);
+  }
+}
+
+// Variant of output_to_vtk() for domain decomposition case. Every rank
+// contributes the data of its own subdomain, reduced onto the master rank for
+// file output.
+#ifdef OPENMC_MPI
+void FlatSourceDomain::output_to_vtk_decomp() const
+{
+
+  if (mpi::master) {
+    // Rename .h5 plot filename(s) to .vtk filenames
+    for (int p = 0; p < model::plots.size(); p++) {
+      PlottableInterface* plot = model::plots[p].get();
+      plot->path_plot() =
+        plot->path_plot().substr(0, plot->path_plot().find_last_of('.')) +
+        ".vtk";
+    }
+
+    // Print header information
+    print_plot();
+  }
+
+  // Outer loop over plots
+  for (int p = 0; p < model::plots.size(); p++) {
+
+    // Get handle to OpenMC plot object and extract params
+    Plot* openmc_plot = dynamic_cast<Plot*>(model::plots[p].get());
+
+    // Random ray plots only support voxel plots
+    if (!openmc_plot) {
+      warning(fmt::format("Plot {} is invalid plot type -- only voxel plotting "
+                          "is allowed in random ray mode.",
+        p));
+      continue;
+    } else if (openmc_plot->type_ != Plot::PlotType::voxel) {
+      warning(fmt::format("Plot {} is invalid plot type -- only voxel plotting "
+                          "is allowed in random ray mode.",
+        p));
+      continue;
+    }
+
+    int Nx = openmc_plot->pixels_[0];
+    int Ny = openmc_plot->pixels_[1];
+    int Nz = openmc_plot->pixels_[2];
+    Position origin = openmc_plot->origin_;
+    Position width = openmc_plot->width_;
+    Position ll = origin - width / 2.0;
+    double x_delta = width.x / Nx;
+    double y_delta = width.y / Ny;
+    double z_delta = width.z / Nz;
+    std::string filename = openmc_plot->path_plot();
+
+    // Tag plots written during the forward solve of an adjoint run
+    if (solve_ == RandomRaySolve::FORWARD_FOR_ADJOINT) {
+      auto dot = filename.find_last_of('.');
+      filename = filename.substr(0, dot) + ".forward" + filename.substr(dot);
+    }
+
+    // Perform sanity checks on file size
+    uint64_t bytes = Nx * Ny * Nz * (negroups_ + 1 + 1 + 1) * sizeof(float);
+    write_message(5, "Processing plot {}: {}... (Estimated size is {} MB)",
+      openmc_plot->id(), filename, bytes / 1.0e6);
+    if (bytes / 1.0e9 > 1.0) {
+      if (mpi::master) {
+        warning(
+          "Voxel plot specification is very large (>1 GB). Plotting may be "
+          "slow.");
+      }
+    } else if (bytes / 1.0e9 > 100.0) {
+      if (mpi::master) {
+        fatal_error(
+          "Voxel plot specification is too large (>100 GB). Exiting.");
+      }
+    }
+
+    // Relate voxel spatial locations to random ray source regions
+    vector<int> voxel_indices(Nx * Ny * Nz);
+    vector<Position> voxel_positions(Nx * Ny * Nz);
+    vector<double> weight_windows(Nx * Ny * Nz);
+    vector<int> my_voxel_ids;
+    float min_weight = 1e20;
+#pragma omp parallel for collapse(3) reduction(min : min_weight)
+    for (int z = 0; z < Nz; z++) {
+      for (int y = 0; y < Ny; y++) {
+        for (int x = 0; x < Nx; x++) {
+          Position sample;
+          sample.z = ll.z + z_delta / 2.0 + z * z_delta;
+          sample.y = ll.y + y_delta / 2.0 + y * y_delta;
+          sample.x = ll.x + x_delta / 2.0 + x * x_delta;
+          Particle p;
+          p.r() = sample;
+          p.r_last() = sample;
+          p.E() = 1.0;
+          p.E_last() = 1.0;
+          p.u() = {1.0, 0.0, 0.0};
+
+          bool found = exhaustive_find_cell(p);
+          if (!found) {
+            voxel_indices[z * Ny * Nx + y * Nx + x] = -1;
+            voxel_positions[z * Ny * Nx + y * Nx + x] = sample;
+            weight_windows[z * Ny * Nx + y * Nx + x] = 0.0;
+            continue;
+          }
+
+          SourceRegionKey sr_key = lookup_source_region_key(p);
+          int64_t sr = -1;
+          auto it_sr = source_region_map_.find(sr_key);
+          if (it_sr != source_region_map_.end()) {
+            sr = it_sr->second;
+          }
+
+          voxel_indices[z * Ny * Nx + y * Nx + x] = sr;
+          voxel_positions[z * Ny * Nx + y * Nx + x] = sample;
+
+          // Assumed master rank = 0
+          int assigned_rank = 0;
+          // Which rank is responsible
+          auto it = mpi::decomp_map.subdomain_map_.find(sr_key);
+          if (it != mpi::decomp_map.subdomain_map_.end()) {
+            assigned_rank = it->second;
+          }
+          if (assigned_rank == mpi::rank) {
+#pragma omp critical(create_my_voxel_ids)
+            {
+              my_voxel_ids.push_back(z * Ny * Nx + y * Nx + x);
+            }
+          }
+
+          if (variance_reduction::weight_windows.size() == 1) {
+            auto [ww_found, ww] =
+              variance_reduction::weight_windows[0]->get_weight_window(p);
+            float weight = ww.lower_weight;
+            weight_windows[z * Ny * Nx + y * Nx + x] = weight;
+            if (weight < min_weight)
+              min_weight = weight;
+          }
+        }
+      }
+    }
+
+    // Open file for writing
+    std::FILE* plot = nullptr;
+    if (mpi::master) {
+      plot = std::fopen(filename.c_str(), "wb");
+
+      // Write vtk metadata
+      std::fprintf(plot, "# vtk DataFile Version 2.0\n");
+      std::fprintf(plot, "Dataset File\n");
+      std::fprintf(plot, "BINARY\n");
+      std::fprintf(plot, "DATASET STRUCTURED_POINTS\n");
+      std::fprintf(plot, "DIMENSIONS %d %d %d\n", Nx, Ny, Nz);
+      std::fprintf(plot, "ORIGIN %lf %lf %lf\n", ll.x, ll.y, ll.z);
+      std::fprintf(plot, "SPACING %lf %lf %lf\n", x_delta, y_delta, z_delta);
+      std::fprintf(plot, "POINT_DATA %d\n", Nx * Ny * Nz);
+    }
+
+    int vector_size = Nx * Ny * Nz;
+    vector<float> vector_out_float(vector_size, 0.0);
+    vector<int> vector_out_int(vector_size, 0);
+
+    int64_t num_neg = 0;
+    int64_t num_samples = 0;
+    float min_flux = 0.0;
+    float max_flux = -1.0e20;
+
+    // Plot multigroup flux data
+    for (int g = 0; g < negroups_; g++) {
+
+      for (int voxel_id : my_voxel_ids) {
+        int64_t fsr = voxel_indices[voxel_id];
+        float flux = 0;
+        if (fsr >= 0) {
+          flux = evaluate_flux_at_point(voxel_positions[voxel_id], fsr, g);
+          if (flux < 0.0)
+            flux = FlatSourceDomain::evaluate_flux_at_point(
+              voxel_positions[voxel_id], fsr, g);
+        }
+        if (flux < 0.0) {
+          num_neg++;
+          if (flux < min_flux) {
+            min_flux = flux;
+          }
+        }
+        if (flux > max_flux)
+          max_flux = flux;
+        num_samples++;
+        vector_out_float[voxel_id] = flux;
+      }
+
+      // Note that the flux statistics are accumulated locally over all
+      // groups and reduced once after the loop; reducing them here would
+      // fold each group's running totals back in on every subsequent group.
+      if (mpi::master) {
+        MPI_Reduce(MPI_IN_PLACE, vector_out_float.data(), vector_size,
+          MPI_FLOAT, MPI_SUM, 0, mpi::intracomm);
+      } else {
+        MPI_Reduce(vector_out_float.data(), nullptr, vector_size, MPI_FLOAT,
+          MPI_SUM, 0, mpi::intracomm);
+      }
+
+      if (mpi::master) {
+        std::fprintf(plot, "SCALARS flux_group_%d float\n", g);
+        std::fprintf(plot, "LOOKUP_TABLE default\n");
+        for (float value : vector_out_float) {
+          float print_value = convert_to_big_endian<float>(value);
+          std::fwrite(&print_value, sizeof(float), 1, plot);
+        }
+      }
+
+      fill(vector_out_float.begin(), vector_out_float.end(), 0.0);
+    }
+
+    // Combine the flux statistics from every rank's subdomain
+    if (mpi::master) {
+      MPI_Reduce(
+        MPI_IN_PLACE, &num_neg, 1, MPI_INT64_T, MPI_SUM, 0, mpi::intracomm);
+      MPI_Reduce(
+        MPI_IN_PLACE, &num_samples, 1, MPI_INT64_T, MPI_SUM, 0, mpi::intracomm);
+      MPI_Reduce(
+        MPI_IN_PLACE, &min_flux, 1, MPI_FLOAT, MPI_MIN, 0, mpi::intracomm);
+      MPI_Reduce(
+        MPI_IN_PLACE, &max_flux, 1, MPI_FLOAT, MPI_MAX, 0, mpi::intracomm);
+    } else {
+      MPI_Reduce(&num_neg, nullptr, 1, MPI_INT64_T, MPI_SUM, 0, mpi::intracomm);
+      MPI_Reduce(
+        &num_samples, nullptr, 1, MPI_INT64_T, MPI_SUM, 0, mpi::intracomm);
+      MPI_Reduce(&min_flux, nullptr, 1, MPI_FLOAT, MPI_MIN, 0, mpi::intracomm);
+      MPI_Reduce(&max_flux, nullptr, 1, MPI_FLOAT, MPI_MAX, 0, mpi::intracomm);
+    }
+
+    // Slightly negative fluxes can be normal when sampling corners of linear
+    // source regions. However, very common and high magnitude negative fluxes
+    // may indicate numerical instability.
+    if (mpi::master && num_neg > 0) {
+      warning(fmt::format("{} plot samples ({:.4f}%) contained negative fluxes "
+                          "(minumum found = {:.2e} maximum_found = {:.2e})",
+        num_neg, (100.0 * num_neg) / num_samples, min_flux, max_flux));
+    }
+
+    // Plot FSRs
+    for (int voxel_id : my_voxel_ids) {
+      int fsr = voxel_indices[voxel_id];
+      float value = future_prn(10, fsr);
+      vector_out_float[voxel_id] = value;
+    }
+
+    if (mpi::master) {
+      MPI_Reduce(MPI_IN_PLACE, vector_out_float.data(), vector_size, MPI_FLOAT,
+        MPI_SUM, 0, mpi::intracomm);
+    } else {
+      MPI_Reduce(vector_out_float.data(), nullptr, vector_size, MPI_FLOAT,
+        MPI_SUM, 0, mpi::intracomm);
+    }
+
+    if (mpi::master) {
+      std::fprintf(plot, "SCALARS FSRs float\n");
+      std::fprintf(plot, "LOOKUP_TABLE default\n");
+      for (float value : vector_out_float) {
+        float print_value = convert_to_big_endian<float>(value);
+        std::fwrite(&print_value, sizeof(float), 1, plot);
+      }
+    }
+
+    fill(vector_out_float.begin(), vector_out_float.end(), 0.0);
+
+    // Plot Materials
+    for (int voxel_id : my_voxel_ids) {
+      int mat = -1;
+      int fsr = voxel_indices[voxel_id];
+      if (fsr >= 0) {
+        mat = source_regions_.material(fsr);
+      }
+      vector_out_int[voxel_id] = mat + 1; // To avoid -1 for void (MPI_SUM)
+    }
+
+    if (mpi::master) {
+      MPI_Reduce(MPI_IN_PLACE, vector_out_int.data(), vector_size, MPI_INT,
+        MPI_SUM, 0, mpi::intracomm);
+    } else {
+      MPI_Reduce(vector_out_int.data(), nullptr, vector_size, MPI_INT, MPI_SUM,
+        0, mpi::intracomm);
+    }
+
+    if (mpi::master) {
+      std::fprintf(plot, "SCALARS Materials int\n");
+      std::fprintf(plot, "LOOKUP_TABLE default\n");
+
+      for (int value : vector_out_int) {
+        int print_value = convert_to_big_endian<int>(value);
+        std::fwrite(&print_value, sizeof(int), 1, plot);
+      }
+    }
+
+    fill(vector_out_int.begin(), vector_out_int.end(), 0);
+
+    // Plot rank subdomains
+    for (int voxel_id : my_voxel_ids) {
+      int rank_id = mpi::rank;
+      float value = future_prn(10, rank_id);
+      vector_out_float[voxel_id] = value;
+    }
+
+    if (mpi::master) {
+      MPI_Reduce(MPI_IN_PLACE, vector_out_float.data(), vector_size, MPI_FLOAT,
+        MPI_SUM, 0, mpi::intracomm);
+    } else {
+      MPI_Reduce(vector_out_float.data(), nullptr, vector_size, MPI_FLOAT,
+        MPI_SUM, 0, mpi::intracomm);
+    }
+
+    if (mpi::master) {
+      std::fprintf(plot, "SCALARS rank_subdomains float\n");
+      std::fprintf(plot, "LOOKUP_TABLE default\n");
+
+      for (float value : vector_out_float) {
+        float print_value = convert_to_big_endian<float>(value);
+        std::fwrite(&print_value, sizeof(float), 1, plot);
+      }
+    }
+
+    fill(vector_out_float.begin(), vector_out_float.end(), 0.0);
+
+    // Plot measured load based on transport sweep timers
+    for (int voxel_id : my_voxel_ids) {
+      float value = mpi::decomp_map.measured_rank_load_fractions_[mpi::rank];
+      vector_out_float[voxel_id] = value;
+    }
+
+    if (mpi::master) {
+      MPI_Reduce(MPI_IN_PLACE, vector_out_float.data(), vector_size, MPI_FLOAT,
+        MPI_SUM, 0, mpi::intracomm);
+    } else {
+      MPI_Reduce(vector_out_float.data(), nullptr, vector_size, MPI_FLOAT,
+        MPI_SUM, 0, mpi::intracomm);
+    }
+
+    if (mpi::master) {
+      std::fprintf(plot, "SCALARS measured_load float\n");
+      std::fprintf(plot, "LOOKUP_TABLE default\n");
+
+      for (float value : vector_out_float) {
+        float print_value = convert_to_big_endian<float>(value);
+        std::fwrite(&print_value, sizeof(float), 1, plot);
+      }
+    }
+
+    fill(vector_out_float.begin(), vector_out_float.end(), 0.0);
+
+    // Plot fission source
+    if (settings::run_mode == RunMode::EIGENVALUE) {
+      for (int voxel_id : my_voxel_ids) {
+        int64_t fsr = voxel_indices[voxel_id];
+        float total_fission = 0.0;
+        if (fsr >= 0) {
+          int mat = source_regions_.material(fsr);
+          int temp = source_regions_.temperature_idx(fsr);
+          if (mat != MATERIAL_VOID) {
+            for (int g = 0; g < negroups_; g++) {
+              float flux =
+                evaluate_flux_at_point(voxel_positions[voxel_id], fsr, g);
+              double sigma_f =
+                sigma_f_[(mat * ntemperature_ + temp) * negroups_ + g] *
+                source_regions_.density_mult(fsr);
+              total_fission += sigma_f * flux;
+            }
+          }
+        }
+        vector_out_float[voxel_id] = total_fission;
+      }
+    } else {
+      for (int voxel_id : my_voxel_ids) {
+        int64_t fsr = voxel_indices[voxel_id];
+        float total_external = 0.0f;
+        if (fsr >= 0) {
+          int mat = source_regions_.material(fsr);
+          int temp = source_regions_.temperature_idx(fsr);
+          for (int g = 0; g < negroups_; g++) {
+            // External sources are already divided by sigma_t, so we need to
+            // multiply it back to get the true external source.
+            double sigma_t = 1.0;
+            if (mat != MATERIAL_VOID) {
+              sigma_t = sigma_t_[(mat * ntemperature_ + temp) * negroups_ + g] *
+                        source_regions_.density_mult(fsr);
+            }
+            total_external += source_regions_.external_source(fsr, g) * sigma_t;
+          }
+        }
+        vector_out_float[voxel_id] = total_external;
+      }
+    }
+
+    if (mpi::master) {
+      MPI_Reduce(MPI_IN_PLACE, vector_out_float.data(), vector_size, MPI_FLOAT,
+        MPI_SUM, 0, mpi::intracomm);
+    } else {
+      MPI_Reduce(vector_out_float.data(), nullptr, vector_size, MPI_FLOAT,
+        MPI_SUM, 0, mpi::intracomm);
+    }
+
+    if (mpi::master) {
+      if (settings::run_mode == RunMode::EIGENVALUE) {
+        std::fprintf(plot, "SCALARS total_fission_source float\n");
+      } else {
+        std::fprintf(plot, "SCALARS external_source float\n");
+      }
+      std::fprintf(plot, "LOOKUP_TABLE default\n");
+      for (float value : vector_out_float) {
+        float print_value = convert_to_big_endian<float>(value);
+        std::fwrite(&print_value, sizeof(float), 1, plot);
+      }
+    }
+
+    fill(vector_out_float.begin(), vector_out_float.end(), 0.0);
+
+    // Plot weight window data
+    if (variance_reduction::weight_windows.size() == 1) {
+      for (int voxel_id : my_voxel_ids) {
+        float weight = weight_windows[voxel_id];
+        if (weight == 0.0)
+          weight = min_weight;
+        vector_out_float[voxel_id] = weight;
+      }
+
+      if (mpi::master) {
+        MPI_Reduce(MPI_IN_PLACE, vector_out_float.data(), vector_size,
+          MPI_FLOAT, MPI_SUM, 0, mpi::intracomm);
+      } else {
+        MPI_Reduce(vector_out_float.data(), nullptr, vector_size, MPI_FLOAT,
+          MPI_SUM, 0, mpi::intracomm);
+      }
+
+      if (mpi::master) {
+        std::fprintf(plot, "SCALARS weight_window_lower float\n");
+        std::fprintf(plot, "LOOKUP_TABLE default\n");
+
+        for (float value : vector_out_float) {
+          float print_value = convert_to_big_endian<float>(value);
+          std::fwrite(&print_value, sizeof(float), 1, plot);
+        }
+      }
+    }
+
+    if (mpi::master) {
+      std::fclose(plot);
+    }
+  }
+}
+#endif // OPENMC_MPI
+
+void FlatSourceDomain::apply_external_source_to_source_region(
+  int src_idx, SourceRegionHandle& srh)
+{
+  auto s =
+    (solve_ == RandomRaySolve::ADJOINT && !model::adjoint_sources.empty())
+      ? model::adjoint_sources[src_idx].get()
+      : model::external_sources[src_idx].get();
+  auto is = dynamic_cast<IndependentSource*>(s);
+  auto discrete = dynamic_cast<Discrete*>(is->energy());
+  double strength_factor = is->strength();
+  const auto& discrete_energies = discrete->x();
+  const auto& discrete_probs = discrete->prob();
+
+  srh.external_source_present() = 1;
+
+  for (int i = 0; i < discrete_energies.size(); i++) {
+    int g = data::mg.get_group_index(discrete_energies[i]);
+    srh.external_source(g) += discrete_probs[i] * strength_factor;
+  }
+}
+
+void FlatSourceDomain::apply_external_source_to_cell_instances(int32_t i_cell,
+  int src_idx, int target_material_id, const vector<int32_t>& instances)
+{
+  Cell& cell = *model::cells[i_cell];
+
+  if (cell.type_ != Fill::MATERIAL)
+    return;
+
+  for (int j : instances) {
+    int cell_material_idx = cell.material(j);
+    int cell_material_id;
+    if (cell_material_idx == MATERIAL_VOID) {
+      cell_material_id = MATERIAL_VOID;
+    } else {
+      cell_material_id = model::materials[cell_material_idx]->id();
+    }
+    if (target_material_id == C_NONE ||
+        cell_material_id == target_material_id) {
+      int64_t source_region = source_region_offsets_[i_cell] + j;
+      external_volumetric_source_map_[source_region].push_back(src_idx);
+    }
+  }
+}
+
+void FlatSourceDomain::apply_external_source_to_cell_and_children(
+  int32_t i_cell, int src_idx, int32_t target_material_id)
+{
+  Cell& cell = *model::cells[i_cell];
+
+  if (cell.type_ == Fill::MATERIAL) {
+    vector<int> instances(cell.n_instances());
+    std::iota(instances.begin(), instances.end(), 0);
+    apply_external_source_to_cell_instances(
+      i_cell, src_idx, target_material_id, instances);
+  } else if (target_material_id == C_NONE) {
+    std::unordered_map<int32_t, vector<int32_t>> cell_instance_list =
+      cell.get_contained_cells(0, nullptr);
+    for (const auto& pair : cell_instance_list) {
+      int32_t i_child_cell = pair.first;
+      apply_external_source_to_cell_instances(
+        i_child_cell, src_idx, target_material_id, pair.second);
+    }
+  }
+}
+
+void FlatSourceDomain::count_external_source_regions()
+{
+  // Naming a class member in a reduction clause is allowed as of OpenMP 5.1,
+  // but not every implementation supports it yet; accumulate into a local
+  int64_t n_external = 0;
+#pragma omp parallel for reduction(+ : n_external)
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+    if (source_regions_.external_source_present(sr)) {
+      n_external++;
+    }
+  }
+  n_external_source_regions_ = n_external;
+}
+
+void FlatSourceDomain::convert_external_sources(bool use_adjoint_sources)
+{
+  // Determine whether forward or (local) adjoint sources are desired
+  const auto& sources =
+    use_adjoint_sources ? model::adjoint_sources : model::external_sources;
+
+  // Loop over external sources
+  for (int es = 0; es < sources.size(); es++) {
+
+    // Extract source information
+    Source* s = sources[es].get();
+    IndependentSource* is = dynamic_cast<IndependentSource*>(s);
+    const std::unordered_set<int32_t>& domain_ids = is->domain_ids();
+
+    // If there is no domain constraint specified, then this must be a point
+    // source. In this case, we need to find the source region that contains the
+    // point source and apply or relate it to the external source.
+    if (is->domain_ids().size() == 0) {
+
+      // Extract the point source coordinate and find the base source region at
+      // that point
+      auto sp = dynamic_cast<SpatialPoint*>(is->space());
+      GeometryState gs;
+      gs.r() = sp->r();
+      gs.r_last() = sp->r();
+      gs.u() = {1.0, 0.0, 0.0};
+      bool found = exhaustive_find_cell(gs);
+      if (!found) {
+        fatal_error(fmt::format("Could not find cell containing external "
+                                "point source at {}",
+          sp->r()));
+      }
+      SourceRegionKey key = lookup_source_region_key(gs);
+
+      // With the source region and mesh bin known, we can use the
+      // accompanying SourceRegionKey as a key into a map that stores the
+      // corresponding external source index for the point source. Notably, we
+      // do not actually apply the external source to any source regions here,
+      // as if mesh subdivision is enabled, they haven't actually been
+      // discovered & initilized yet. When discovered, they will read from the
+      // external_source_map to determine if there are any external source
+      // terms that should be applied.
+      external_point_source_map_[key].push_back(es);
+
+    } else {
+      // If not a point source, then use the volumetric domain constraints to
+      // determine which source regions to apply the external source to.
+      if (is->domain_type() == Source::DomainType::MATERIAL) {
+        for (int32_t material_id : domain_ids) {
+          for (int i_cell = 0; i_cell < model::cells.size(); i_cell++) {
+            apply_external_source_to_cell_and_children(i_cell, es, material_id);
+          }
+        }
+      } else if (is->domain_type() == Source::DomainType::CELL) {
+        for (int32_t cell_id : domain_ids) {
+          int32_t i_cell = model::cell_map[cell_id];
+          apply_external_source_to_cell_and_children(i_cell, es, C_NONE);
+        }
+      } else if (is->domain_type() == Source::DomainType::UNIVERSE) {
+        for (int32_t universe_id : domain_ids) {
+          int32_t i_universe = model::universe_map[universe_id];
+          Universe& universe = *model::universes[i_universe];
+          for (int32_t i_cell : universe.cells_) {
+            apply_external_source_to_cell_and_children(i_cell, es, C_NONE);
+          }
+        }
+      }
+    }
+  } // End loop over external sources
+}
+
+void FlatSourceDomain::flux_swap()
+{
+  source_regions_.flux_swap();
+}
+
+void FlatSourceDomain::flatten_xs()
+{
+  // Temperature and angle indices, if using multiple temperature
+  // data sets and/or anisotropic data sets.
+  // TODO: Currently assumes we are only using single angle data.
+  const int a = 0;
+
+  n_materials_ = data::mg.macro_xs_.size();
+  ntemperature_ = 1;
+  for (int i = 0; i < n_materials_; i++) {
+    ntemperature_ =
+      std::max(ntemperature_, data::mg.macro_xs_[i].n_temperature_points());
+  }
+
+  for (int i = 0; i < n_materials_; i++) {
+    auto& m = data::mg.macro_xs_[i];
+    for (int t = 0; t < ntemperature_; t++) {
+      for (int g_out = 0; g_out < negroups_; g_out++) {
+        if (m.exists_in_model && t < m.n_temperature_points()) {
+          double sigma_t =
+            m.get_xs(MgxsType::TOTAL, g_out, NULL, NULL, NULL, t, a);
+          sigma_t_.push_back(sigma_t);
+
+          if (sigma_t < MINIMUM_MACRO_XS) {
+            Material* mat = model::materials[i].get();
+            warning(fmt::format(
+              "Material \"{}\" (id: {}) has a group {} total cross section "
+              "({:.3e}) below the minimum threshold "
+              "({:.3e}). Material will be treated as pure void.",
+              mat->name(), mat->id(), g_out, sigma_t, MINIMUM_MACRO_XS));
+          }
+
+          double nu_sigma_f =
+            m.get_xs(MgxsType::NU_FISSION, g_out, NULL, NULL, NULL, t, a);
+          nu_sigma_f_.push_back(nu_sigma_f);
+
+          double sigma_f =
+            m.get_xs(MgxsType::FISSION, g_out, NULL, NULL, NULL, t, a);
+          sigma_f_.push_back(sigma_f);
+
+          double chi =
+            m.get_xs(MgxsType::CHI_PROMPT, g_out, &g_out, NULL, NULL, t, a);
+          if (!std::isfinite(chi)) {
+            // MGXS interface may return NaN in some cases, such as when
+            // material is fissionable but has very small sigma_f.
+            chi = 0.0;
+          }
+          chi_.push_back(chi);
+
+          double kappa_fission =
+            m.get_xs(MgxsType::KAPPA_FISSION, g_out, NULL, NULL, NULL, t, a);
+          kappa_fission_.push_back(kappa_fission);
+
+          for (int g_in = 0; g_in < negroups_; g_in++) {
+            double sigma_s =
+              m.get_xs(MgxsType::NU_SCATTER, g_in, &g_out, NULL, NULL, t, a);
+            sigma_s_.push_back(sigma_s);
+            // For transport corrected XS data, diagonal elements may be
+            // negative. In this case, set a flag to enable transport
+            // stabilization for the simulation.
+            if (g_out == g_in && sigma_s < 0.0)
+              is_transport_stabilization_needed_ = true;
+          }
+        } else {
+          sigma_t_.push_back(0);
+          nu_sigma_f_.push_back(0);
+          sigma_f_.push_back(0);
+          chi_.push_back(0);
+          kappa_fission_.push_back(0);
+          for (int g_in = 0; g_in < negroups_; g_in++) {
+            sigma_s_.push_back(0);
+          }
+        }
+      }
+    }
+  }
+}
+
+void FlatSourceDomain::set_fw_adjoint_sources()
+{
+  // Set the adjoint external source to 1/forward_flux. If the forward flux is
+  // negative, zero, or extremely close to zero, set the adjoint source to zero,
+  // as this is likely a very small source region that we don't need to bother
+  // trying to vector particles towards. In the case of flux "being extremely
+  // close to zero", we define this as being a fixed fraction of the maximum
+  // forward flux, below which we assume the flux would be physically
+  // undetectable.
+
+  // First, find the maximum forward flux value
+  double max_flux = 0.0;
+#pragma omp parallel for reduction(max : max_flux)
+  for (int64_t se = 0; se < n_source_elements(); se++) {
+    double flux = source_regions_.scalar_flux_final(se);
+    if (flux > max_flux) {
+      max_flux = flux;
+    }
+  }
+
+#ifdef OPENMC_MPI
+  // The cutoff below is a fraction of the maximum flux anywhere in the
+  // problem, so under domain decomposition the maximum has to be taken over
+  // all subdomains. A per-rank maximum would give every rank but one a lower
+  // threshold, screening out fewer regions and reintroducing exactly the
+  // enormous adjoint sources this cutoff exists to suppress.
+  if (mpi::n_procs > 1) {
+    MPI_Allreduce(
+      MPI_IN_PLACE, &max_flux, 1, MPI_DOUBLE, MPI_MAX, mpi::intracomm);
+  }
+#endif
+
+  // Then, compute the adjoint source for each source region
+#pragma omp parallel for
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+    for (int g = 0; g < negroups_; g++) {
+      double flux = source_regions_.scalar_flux_final(sr, g);
+      if (flux <= ZERO_FLUX_CUTOFF * max_flux) {
+        source_regions_.external_source(sr, g) = 0.0;
+      } else {
+        source_regions_.external_source(sr, g) = 1.0 / flux;
+        if (!std::isfinite(source_regions_.external_source(sr, g))) {
+          // If the flux is NaN or Inf, set the adjoint source to zero
+          source_regions_.external_source(sr, g) = 0.0;
+        }
+      }
+      if (flux > 0.0) {
+        source_regions_.external_source_present(sr) = 1;
+      }
+      source_regions_.scalar_flux_final(sr, g) = 0.0;
+    }
+  }
+
+  // "Small" source regions in OpenMC are defined as those that are hit by
+  // MIN_HITS_PER_BATCH rays or fewer each batch. These regions typically have
+  // very small volumes combined with a low aspect ratio, and are often
+  // generated when applying a source region mesh that clips the edge of a
+  // curved surface. As perhaps only a few rays will visit these regions over
+  // the entire forward simulation, the forward flux estimates are extremely
+  // noisy and unreliable. In some cases, the noise may make the forward fluxes
+  // extremely low, leading to unphysically large adjoint source terms,
+  // resulting in weight windows that aggressively try to drive particles
+  // towards these regions. To fix this, we simply filter out any "small" source
+  // regions from consideration. If a source region is "small", we
+  // set its adjoint source to zero. This adds negligible bias to the adjoint
+  // flux solution, as the true total adjoint source contribution from small
+  // regions is likely to be negligible.
+#pragma omp parallel for
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+    if (source_regions_.is_small(sr)) {
+      for (int g = 0; g < negroups_; g++) {
+        source_regions_.external_source(sr, g) = 0.0;
+      }
+      source_regions_.external_source_present(sr) = 0;
+    }
+  }
+  // Divide the fixed source term by sigma t (to save time when applying each
+  // iteration)
+#pragma omp parallel for
+  for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+    int material = source_regions_.material(sr);
+    int temp = source_regions_.temperature_idx(sr);
+    if (material == MATERIAL_VOID) {
+      continue;
+    }
+    for (int g = 0; g < negroups_; g++) {
+      double sigma_t =
+        sigma_t_[(material * ntemperature_ + temp) * negroups_ + g] *
+        source_regions_.density_mult(sr);
+      source_regions_.external_source(sr, g) /= sigma_t;
+      if (!std::isfinite(source_regions_.external_source(sr, g))) {
+        // If the flux is NaN or Inf, set the adjoint source to zero
+        source_regions_.external_source(sr, g) = 0.0;
+      }
+    }
+  }
+
+  if (fw_cadis_local_) {
+// Only external sources that have a non-mesh type tally task should remain
+// non-zero. Everything else gets zero'd out.
+#pragma omp parallel for
+    for (int64_t sr = 0; sr < n_source_regions(); sr++) {
+
+      // If there is already no external source, don't need to do anything
+      if (source_regions_.external_source_present(sr) == 0) {
+        continue;
+      }
+
+      // If there is an adjoint source term here, then we need to check it.
+
+      // We will track if ANY group has a valid local FW-CADIS source term
+      bool has_any_sources = false;
+
+      // Now, loop over groups
+      for (int g = 0; g < negroups_; g++) {
+
+        // If there are no tally tasks associated with this source element
+        // then it is not a local FW-CADIS source, so we continue to the next
+        // group
+        if (source_regions_.tally_task(sr, g).empty()) {
+          source_regions_.external_source(sr, g) = 0.0;
+          continue;
+        }
+
+        // If there are tally tasks, we can through them and check if
+        // any of them are local FW-CADIS targets.
+
+        // We track if ANY of the tasks are local FW-CADIS target tallies
+        bool local_fw_cadis_target_region = false;
+
+        // Now we loop through
+        for (const auto& task : source_regions_.tally_task(sr, g)) {
+          Tally& tally {*model::tallies[task.tally_idx]};
+          const auto t_id = tally.id();
+
+          // Search for target tallies
+          if (std::find(fw_cadis_local_targets_.begin(),
+                fw_cadis_local_targets_.end(),
+                t_id) != fw_cadis_local_targets_.end()) {
+            local_fw_cadis_target_region = true;
+            break;
+          }
+        }
+
+        // If ANY of the tasks is a local FW-CADIS target,
+        // Then we keep the source term and set that this
+        // source region has a valid FW-CADIS source term.
+        // Otherwise, we zero out the source term.
+        if (local_fw_cadis_target_region) {
+          has_any_sources = true;
+        } else {
+          source_regions_.external_source(sr, g) = 0.0;
+        }
+      } // End loop over groups
+
+      // If there were any valid FW-CADIS source terms for any
+      // of the groups, then the SR as a whole counts as a source
+      if (has_any_sources) {
+        source_regions_.external_source_present(sr) = 1;
+      } else {
+        source_regions_.external_source_present(sr) = 0;
+      }
+    } // End loop over source regions
+  } // End local FW-CADIS logic
+}
+
+void FlatSourceDomain::set_local_adjoint_sources()
+{
+  // Set the external source to user-specified adjoint sources.
+  convert_external_sources(true);
+}
+
+void FlatSourceDomain::transpose_scattering_matrix()
+{
+  // Transpose the inner two dimensions for each material
+#pragma omp parallel for
+  for (int m = 0; m < n_materials_; ++m) {
+    for (int t = 0; t < ntemperature_; t++) {
+      int material_offset = (m * ntemperature_ + t) * negroups_ * negroups_;
+      for (int i = 0; i < negroups_; ++i) {
+        for (int j = i + 1; j < negroups_; ++j) {
+          // Calculate indices of the elements to swap
+          int idx1 = material_offset + i * negroups_ + j;
+          int idx2 = material_offset + j * negroups_ + i;
+
+          // Swap the elements to transpose the matrix
+          std::swap(sigma_s_[idx1], sigma_s_[idx2]);
+        }
+      }
+    }
+  }
+}
+
+void FlatSourceDomain::serialize_final_fluxes(vector<double>& flux)
+{
+  // Ensure array is correct size
+  flux.resize(n_source_regions() * negroups_);
+// Serialize the final fluxes for output
+#pragma omp parallel for
+  for (int64_t se = 0; se < n_source_elements(); se++) {
+    flux[se] = source_regions_.scalar_flux_final(se);
+  }
+}
+
+void FlatSourceDomain::apply_mesh_to_cell_instances(int32_t i_cell,
+  int32_t mesh_idx, int target_material_id, const vector<int32_t>& instances,
+  bool is_target_void)
+{
+  Cell& cell = *model::cells[i_cell];
+  if (cell.type_ != Fill::MATERIAL)
+    return;
+  for (int32_t j : instances) {
+    int cell_material_idx = cell.material(j);
+    int cell_material_id = (cell_material_idx == C_NONE)
+                             ? C_NONE
+                             : model::materials[cell_material_idx]->id();
+
+    if ((target_material_id == C_NONE && !is_target_void) ||
+        cell_material_id == target_material_id) {
+      int64_t sr = source_region_offsets_[i_cell] + j;
+      // Check if the key is already present in the mesh_map_
+      if (mesh_map_.find(sr) != mesh_map_.end()) {
+        fatal_error(fmt::format("Source region {} already has mesh idx {} "
+                                "applied, but trying to apply mesh idx {}",
+          sr, mesh_map_[sr], mesh_idx));
+      }
+      // If the SR has not already been assigned, then we can write to it
+      mesh_map_[sr] = mesh_idx;
+    }
+  }
+}
+
+void FlatSourceDomain::apply_mesh_to_cell_and_children(int32_t i_cell,
+  int32_t mesh_idx, int32_t target_material_id, bool is_target_void)
+{
+  Cell& cell = *model::cells[i_cell];
+
+  if (cell.type_ == Fill::MATERIAL) {
+    vector<int> instances(cell.n_instances());
+    std::iota(instances.begin(), instances.end(), 0);
+    apply_mesh_to_cell_instances(
+      i_cell, mesh_idx, target_material_id, instances, is_target_void);
+  } else if (target_material_id == C_NONE && !is_target_void) {
+    for (int j = 0; j < cell.n_instances(); j++) {
+      std::unordered_map<int32_t, vector<int32_t>> cell_instance_list =
+        cell.get_contained_cells(j, nullptr);
+      for (const auto& pair : cell_instance_list) {
+        int32_t i_child_cell = pair.first;
+        apply_mesh_to_cell_instances(i_child_cell, mesh_idx, target_material_id,
+          pair.second, is_target_void);
+      }
+    }
+  }
+}
+
+void FlatSourceDomain::apply_meshes()
+{
+  // Skip if there are no mappings between mesh IDs and domains
+  if (mesh_domain_map_.empty())
+    return;
+
+  // Loop over meshes
+  for (int mesh_idx = 0; mesh_idx < model::meshes.size(); mesh_idx++) {
+    Mesh* mesh = model::meshes[mesh_idx].get();
+    int mesh_id = mesh->id();
+
+    // Skip if mesh id is not present in the map
+    if (mesh_domain_map_.find(mesh_id) == mesh_domain_map_.end())
+      continue;
+
+    // Loop over domains associated with the mesh
+    for (auto& domain : mesh_domain_map_[mesh_id]) {
+      Source::DomainType domain_type = domain.first;
+      int domain_id = domain.second;
+
+      if (domain_type == Source::DomainType::MATERIAL) {
+        for (int i_cell = 0; i_cell < model::cells.size(); i_cell++) {
+          if (domain_id == C_NONE) {
+            apply_mesh_to_cell_and_children(i_cell, mesh_idx, domain_id, true);
+          } else {
+            apply_mesh_to_cell_and_children(i_cell, mesh_idx, domain_id, false);
+          }
+        }
+      } else if (domain_type == Source::DomainType::CELL) {
+        int32_t i_cell = model::cell_map[domain_id];
+        apply_mesh_to_cell_and_children(i_cell, mesh_idx, C_NONE, false);
+      } else if (domain_type == Source::DomainType::UNIVERSE) {
+        int32_t i_universe = model::universe_map[domain_id];
+        Universe& universe = *model::universes[i_universe];
+        for (int32_t i_cell : universe.cells_) {
+          apply_mesh_to_cell_and_children(i_cell, mesh_idx, C_NONE, false);
+        }
+      }
+    }
+  }
+}
+
+SourceRegionHandle FlatSourceDomain::get_subdivided_source_region_handle(
+  SourceRegionKey sr_key, Position r, Direction u)
+{
+  // Case 1: Check if the source region key is already present in the permanent
+  // map. This is the most common condition, as any source region visited in a
+  // previous power iteration will already be present in the permanent map. If
+  // the source region key is found, we translate the key into a specific 1D
+  // source region index and return a handle its position in the
+  // source_regions_ vector.
+  auto it = source_region_map_.find(sr_key);
+  if (it != source_region_map_.end()) {
+    int64_t sr = it->second;
+    return source_regions_.get_source_region_handle(sr);
+  }
+
+  // Case 2: Check if the source region key is present in the temporary (thread
+  // safe) map. This is a common occurrence in the first power iteration when
+  // the source region has already been visited already by some other ray. We
+  // begin by locking the temporary map before any operations are performed. The
+  // lock is not global over the full data structure -- it will be dependent on
+  // which key is used.
+  discovered_source_regions_.lock(sr_key);
+
+  // If the key is found in the temporary map, then we return a handle to the
+  // source region that is stored in the temporary map.
+  if (discovered_source_regions_.contains(sr_key)) {
+    SourceRegionHandle handle {discovered_source_regions_[sr_key]};
+    discovered_source_regions_.unlock(sr_key);
+    return handle;
+  }
+
+  // Case 3: The source region key is not present anywhere, but it is only due
+  // to floating point artifacts. These artifacts occur when the overlaid mesh
+  // overlaps with actual geometry surfaces. In these cases, roundoff error may
+  // result in the ray tracer detecting an additional (very short) segment
+  // though a mesh bin that is actually past the physical source region
+  // boundary. This is a result of the the multi-level ray tracing treatment in
+  // OpenMC, which depending on the number of universes in the hierarchy etc can
+  // result in the wrong surface being selected as the nearest. This can happen
+  // in a lattice when there are two directions that both are very close in
+  // distance, within the tolerance of FP_REL_PRECISION, and the are thus
+  // treated as being equivalent so alternative logic is used. However, when we
+  // go and ray trace on this with the mesh tracer we may go past the surface
+  // bounding the current source region.
+  //
+  // To filter out this case, before we create the new source region, we double
+  // check that the actual starting point of this segment (r) is still in the
+  // same geometry source region that we started in. If an artifact is detected,
+  // we discard the segment (and attenuation through it) as it is not really a
+  // valid source region and will have only an infinitessimally small cell
+  // combined with the mesh bin. Thankfully, this is a fairly rare condition,
+  // and only triggers for very short ray lengths. It can be fixed by decreasing
+  // the value of FP_REL_PRECISION in constants.h, but this may have unknown
+  // consequences for the general ray tracer, so for now we do the below sanity
+  // checks before generating phantom source regions. A significant extra cost
+  // is incurred in instantiating the GeometryState object and doing a cell
+  // lookup, but again, this is going to be an extremely rare thing to check
+  // after the first power iteration has completed.
+
+  // Sanity check on source region id
+  GeometryState gs;
+  gs.r() = r + TINY_BIT * u;
+  gs.u() = {1.0, 0.0, 0.0};
+  exhaustive_find_cell(gs);
+  int64_t sr_found = lookup_base_source_region_idx(gs);
+  if (sr_found != sr_key.base_source_region_id) {
+    discovered_source_regions_.unlock(sr_key);
+    SourceRegionHandle handle;
+    handle.is_numerical_fp_artifact_ = true;
+    return handle;
+  }
+
+  // Sanity check on mesh bin
+  int mesh_idx = lookup_mesh_idx(sr_key.base_source_region_id);
+  if (mesh_idx == C_NONE) {
+    if (sr_key.mesh_bin != 0) {
+      discovered_source_regions_.unlock(sr_key);
+      SourceRegionHandle handle;
+      handle.is_numerical_fp_artifact_ = true;
+      return handle;
+    }
+  } else {
+    Mesh* mesh = model::meshes[mesh_idx].get();
+    int bin_found = mesh->get_bin(r + TINY_BIT * u);
+    if (bin_found != sr_key.mesh_bin) {
+      discovered_source_regions_.unlock(sr_key);
+      SourceRegionHandle handle;
+      handle.is_numerical_fp_artifact_ = true;
+      return handle;
+    }
+  }
+
+  // Case 4: The source region key is valid, but is not present anywhere. This
+  // condition only occurs the first time the source region is discovered
+  // (typically in the first power iteration). In this case, we need to handle
+  // creation of the new source region and its storage into the parallel map.
+  // Additionally, we need to determine the source region's material, initialize
+  // the starting scalar flux guess, and apply any known external sources.
+
+  // Call the basic constructor for the source region and store in the parallel
+  // map.
+  bool is_linear = RandomRay::source_shape_ != RandomRaySourceShape::FLAT;
+  SourceRegion* sr_ptr =
+    discovered_source_regions_.emplace(sr_key, {negroups_, is_linear});
+  SourceRegionHandle handle {*sr_ptr};
+  handle.key() = sr_key;
+
+  // Determine the material
+  int gs_i_cell = gs.lowest_coord().cell();
+  Cell& cell = *model::cells[gs_i_cell];
+  int material = cell.material(gs.cell_instance());
+  int temp = 0;
+
+  // If material total XS is extremely low, just set it to void to avoid
+  // problems with 1/Sigma_t
+  if (material != MATERIAL_VOID) {
+    temp = data::mg.macro_xs_[material].get_temperature_index(
+      cell.sqrtkT(gs.cell_instance()));
+    for (int g = 0; g < negroups_; g++) {
+      double sigma_t =
+        sigma_t_[(material * ntemperature_ + temp) * negroups_ + g];
+      if (sigma_t < MINIMUM_MACRO_XS) {
+        material = MATERIAL_VOID;
+        temp = 0;
+        break;
+      }
+    }
+  }
+
+  handle.material() = material;
+  handle.temperature_idx() = temp;
+  handle.density_mult() = cell.density_mult(gs.cell_instance());
+
+  // Store the mesh index (if any) assigned to this source region
+  handle.mesh() = mesh_idx;
+
+  if (settings::run_mode == RunMode::FIXED_SOURCE) {
+    // Determine if there are any volumetric sources, and apply them.
+    // Volumetric sources are specifc only to the base SR idx.
+    auto it_vol =
+      external_volumetric_source_map_.find(sr_key.base_source_region_id);
+    if (it_vol != external_volumetric_source_map_.end()) {
+      const vector<int>& vol_sources = it_vol->second;
+      for (int src_idx : vol_sources) {
+        apply_external_source_to_source_region(src_idx, handle);
+      }
+    }
+
+    // Determine if there are any point sources, and apply them.
+    // Point sources are specific to the source region key.
+    auto it_point = external_point_source_map_.find(sr_key);
+    if (it_point != external_point_source_map_.end()) {
+      const vector<int>& point_sources = it_point->second;
+      for (int src_idx : point_sources) {
+        apply_external_source_to_source_region(src_idx, handle);
+      }
+    }
+
+    // Divide external source term by sigma_t
+    if (material != C_NONE) {
+      for (int g = 0; g < negroups_; g++) {
+        double sigma_t =
+          sigma_t_[(material * ntemperature_ + temp) * negroups_ + g] *
+          handle.density_mult();
+        handle.external_source(g) /= sigma_t;
+      }
+    }
+  }
+
+  // Compute the combined source term
+  update_single_neutron_source(handle);
+
+  // Unlock the parallel map. Note: we may be tempted to release
+  // this lock earlier, and then just use the source region's lock to protect
+  // the flux/source initialization stages above. However, the rest of the code
+  // only protects updates to the new flux and volume fields, and assumes that
+  // the source is constant for the duration of transport. Thus, using just the
+  // source region's lock by itself would result in other threads potentially
+  // reading from the source before it is computed, as they won't use the lock
+  // when only reading from the SR's source. It would be expensive to protect
+  // those operations, whereas generating the SR is only done once, so we just
+  // hold the map's bucket lock until the source region is fully initialized.
+  discovered_source_regions_.unlock(sr_key);
+
+  return handle;
+}
+
+void FlatSourceDomain::finalize_discovered_source_regions()
+{
+  // Extract keys for entries with a valid volume.
+  vector<SourceRegionKey> keys;
+  for (const auto& pair : discovered_source_regions_) {
+    if (pair.second.scalars_.volume_ > 0.0) {
+      keys.push_back(pair.first);
+    }
+  }
+
+  if (!keys.empty()) {
+    // Sort the keys, so as to ensure reproducible ordering given that source
+    // regions may have been added to discovered_source_regions_ in an arbitrary
+    // order due to shared memory threading.
+    std::sort(keys.begin(), keys.end());
+
+    // Remember the index of the first new source region
+    int64_t start_sr_id = source_regions_.n_source_regions();
+
+    // Append the source regions in the sorted key order.
+    for (const auto& key : keys) {
+      const SourceRegion& sr = discovered_source_regions_[key];
+      source_region_map_[key] = source_regions_.n_source_regions();
+      source_regions_.push_back(sr);
+    }
+
+    // Map all new source regions to tallies
+    convert_source_regions_to_tallies(start_sr_id);
+  }
+
+  discovered_source_regions_.clear();
+}
+
+// Determines the base source region index (i.e., a material filled cell
+// instance) that corresponds to a particular location in the geometry. Requires
+// that the "gs" object passed in has already been initialized and has called
+// find_cell etc.
+int64_t FlatSourceDomain::lookup_base_source_region_idx(
+  const GeometryState& gs) const
+{
+  int i_cell = gs.lowest_coord().cell();
+  int64_t sr = source_region_offsets_[i_cell] + gs.cell_instance();
+  return sr;
+}
+
+// Determines the index of the mesh (if any) that has been applied
+// to a particular base source region index.
+int FlatSourceDomain::lookup_mesh_idx(int64_t sr) const
+{
+  int mesh_idx = C_NONE;
+  auto mesh_it = mesh_map_.find(sr);
+  if (mesh_it != mesh_map_.end()) {
+    mesh_idx = mesh_it->second;
+  }
+  return mesh_idx;
+}
+
+// Determines the source region key that corresponds to a particular location in
+// the geometry. This takes into account both the base source region index as
+// well as the mesh bin if a mesh is applied to this source region for
+// subdivision.
+SourceRegionKey FlatSourceDomain::lookup_source_region_key(
+  const GeometryState& gs) const
+{
+  int64_t sr = lookup_base_source_region_idx(gs);
+  int64_t mesh_bin = lookup_mesh_bin(sr, gs.r());
+  return SourceRegionKey {sr, mesh_bin};
+}
+
+// Determines the mesh bin that corresponds to a particular base source region
+// index and position.
+int64_t FlatSourceDomain::lookup_mesh_bin(int64_t sr, Position r) const
+{
+  int mesh_idx = lookup_mesh_idx(sr);
+  int mesh_bin = 0;
+  if (mesh_idx != C_NONE) {
+    mesh_bin = model::meshes[mesh_idx]->get_bin(r);
+  }
+  return mesh_bin;
+}
+
+bool FlatSourceDomain::is_geometry_3D()
+{
+  // Get spatial box of ray_source_
+  auto* independent_source =
+    dynamic_cast<IndependentSource*>(RandomRay::ray_source_.get());
+  SpatialBox* sb = independent_source
+                     ? dynamic_cast<SpatialBox*>(independent_source->space())
+                     : nullptr;
+  if (!sb) {
+    fatal_error("Random ray requires the ray source to be an independent "
+                "source with a box spatial distribution.");
+  }
+
+  double x_length = sb->upper_right().x - sb->lower_left().x;
+  double y_length = sb->upper_right().y - sb->lower_left().y;
+  double z_length = sb->upper_right().z - sb->lower_left().z;
+
+  int num_xy_points = 100;
+  int num_z_points = 100;
+  uint64_t seed = openmc_get_seed();
+
+  for (int i = 0; i < num_xy_points; i++) {
+    Position sample;
+    sample.x = sb->lower_left().x + x_length * prn(&seed);
+    sample.y = sb->lower_left().y + y_length * prn(&seed);
+
+    SourceRegionKey sr_key_prev {-1, -1};
+    bool check_key = false;
+
+    for (int j = 0; j < num_z_points; j++) {
+      sample.z = sb->lower_left().z + z_length * prn(&seed);
+
+      Particle p;
+      p.r() = sample;
+      p.r_last() = sample;
+      p.E() = 1.0;
+      p.E_last() = 1.0;
+      p.u() = {0.0, 0.0, 1.0};
+
+      bool found = exhaustive_find_cell(p);
+      if (!found) {
+        continue;
+      }
+
+      SourceRegionKey sr_key = lookup_source_region_key(p);
+
+      // Check if sr_key has changed in z-direction
+      if (check_key &&
+          (sr_key.base_source_region_id != sr_key_prev.base_source_region_id ||
+            sr_key.mesh_bin != sr_key_prev.mesh_bin)) {
+        return true;
+      }
+
+      // Set check_key to true after first sr_key has been loaded
+      sr_key_prev = sr_key;
+      check_key = true;
+    }
+  }
+
+  return false;
+}
+
+} // namespace openmc

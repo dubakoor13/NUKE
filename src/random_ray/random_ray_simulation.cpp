@@ -1,0 +1,1107 @@
+#include "openmc/random_ray/random_ray_simulation.h"
+
+#include "openmc/capi.h"
+#include "openmc/constants.h"
+#include "openmc/eigenvalue.h"
+#include "openmc/geometry.h"
+#include "openmc/message_passing.h"
+#include "openmc/mgxs_interface.h"
+#include "openmc/output.h"
+#include "openmc/plot.h"
+#include "openmc/random_ray/decomposition_map.h"
+#include "openmc/random_ray/flat_source_domain.h"
+#include "openmc/random_ray/random_ray.h"
+#include "openmc/random_ray/ray_bank.h"
+#include "openmc/simulation.h"
+#include "openmc/source.h"
+#include "openmc/tallies/filter.h"
+#include "openmc/tallies/tally.h"
+#include "openmc/tallies/tally_scoring.h"
+#include "openmc/timer.h"
+#include "openmc/weight_windows.h"
+#include <numeric>
+
+namespace openmc {
+
+//==============================================================================
+// Non-member functions
+//==============================================================================
+
+// Enforces restrictions on inputs in random ray mode.  While there are
+// many features that don't make sense in random ray mode, and are therefore
+// unsupported, we limit our testing/enforcement operations only to inputs
+// that may cause erroneous/misleading output or crashes from the solver.
+void validate_random_ray_inputs()
+{
+  // Validate tallies
+  ///////////////////////////////////////////////////////////////////
+  for (auto& tally : model::tallies) {
+
+    // Validate score types
+    for (auto score_bin : tally->scores_) {
+      switch (score_bin) {
+      case SCORE_FLUX:
+      case SCORE_TOTAL:
+      case SCORE_FISSION:
+      case SCORE_NU_FISSION:
+      case SCORE_EVENTS:
+      case SCORE_KAPPA_FISSION:
+        break;
+      default:
+        fatal_error(
+          "Invalid score specified. Only flux, total, fission, nu-fission, "
+          "kappa-fission, and event scores are supported in random ray mode.");
+      }
+    }
+
+    // Validate filter types
+    for (auto f : tally->filters()) {
+      auto& filter = *model::tally_filters[f];
+
+      switch (filter.type()) {
+      case FilterType::CELL:
+      case FilterType::CELL_INSTANCE:
+      case FilterType::DISTRIBCELL:
+      case FilterType::ENERGY:
+      case FilterType::MATERIAL:
+      case FilterType::MESH:
+      case FilterType::UNIVERSE:
+      case FilterType::PARTICLE:
+        break;
+      default:
+        fatal_error("Invalid filter specified. Only cell, cell_instance, "
+                    "distribcell, energy, material, mesh, and universe filters "
+                    "are supported in random ray mode.");
+      }
+    }
+  }
+
+  // Validate MGXS data
+  ///////////////////////////////////////////////////////////////////
+  for (auto& material : data::mg.macro_xs_) {
+    if (!material.is_isotropic) {
+      fatal_error("Anisotropic MGXS detected. Only isotropic XS data sets "
+                  "supported in random ray mode.");
+    }
+    for (int g = 0; g < data::mg.num_energy_groups_; g++) {
+      if (material.exists_in_model) {
+        // Temperature and angle indices, if using multiple temperature
+        // data sets and/or anisotropic data sets.
+        // TODO: Currently assumes we are only using single temp/single angle
+        // data.
+        const int t = 0;
+        const int a = 0;
+        double sigma_t =
+          material.get_xs(MgxsType::TOTAL, g, NULL, NULL, NULL, t, a);
+        if (sigma_t <= 0.0) {
+          fatal_error("No zero or negative total macroscopic cross sections "
+                      "allowed in random ray mode. If the intention is to make "
+                      "a void material, use a cell fill of 'None' instead.");
+        }
+      }
+    }
+  }
+
+  // Validate ray source
+  ///////////////////////////////////////////////////////////////////
+
+  // Check for independent source
+  IndependentSource* is =
+    dynamic_cast<IndependentSource*>(RandomRay::ray_source_.get());
+  if (!is) {
+    fatal_error("Invalid ray source definition. Ray source must provided and "
+                "be of type IndependentSource.");
+  }
+
+  // Check for box source
+  SpatialDistribution* space_dist = is->space();
+  SpatialBox* sb = dynamic_cast<SpatialBox*>(space_dist);
+  if (!sb) {
+    fatal_error(
+      "Invalid ray source definition -- only box sources are allowed.");
+  }
+
+  // Check that box source is not restricted to fissionable areas
+  if (sb->only_fissionable()) {
+    fatal_error(
+      "Invalid ray source definition -- fissionable spatial distribution "
+      "not allowed.");
+  }
+
+  // Check for isotropic source
+  UnitSphereDistribution* angle_dist = is->angle();
+  Isotropic* id = dynamic_cast<Isotropic*>(angle_dist);
+  if (!id) {
+    fatal_error("Invalid ray source definition -- only isotropic sources are "
+                "allowed.");
+  }
+
+  // Validate external sources
+  ///////////////////////////////////////////////////////////////////
+  if (settings::run_mode == RunMode::FIXED_SOURCE) {
+    if (model::external_sources.size() < 1) {
+      fatal_error("Must provide a particle source (in addition to ray source) "
+                  "in fixed source random ray mode.");
+    }
+
+    for (int i = 0; i < model::external_sources.size(); i++) {
+      Source* s = model::external_sources[i].get();
+
+      // Check for independent source
+      IndependentSource* is = dynamic_cast<IndependentSource*>(s);
+
+      if (!is) {
+        fatal_error(
+          "Only IndependentSource external source types are allowed in "
+          "random ray mode");
+      }
+
+      // Check for isotropic source
+      UnitSphereDistribution* angle_dist = is->angle();
+      Isotropic* id = dynamic_cast<Isotropic*>(angle_dist);
+      if (!id) {
+        fatal_error(
+          "Invalid source definition -- only isotropic external sources are "
+          "allowed in random ray mode.");
+      }
+
+      // Validate that a domain ID was specified OR that it is a point source
+      auto sp = dynamic_cast<SpatialPoint*>(is->space());
+      if (is->domain_ids().size() == 0 && !sp) {
+        fatal_error("Fixed sources must be point source or spatially "
+                    "constrained by domain id (cell, material, or universe) in "
+                    "random ray mode.");
+      } else if (is->domain_ids().size() > 0 && sp) {
+        // If both a domain constraint and a point source location are
+        // specified, notify user that domain constraint takes precedence.
+        warning("Fixed source has both a domain constraint and a point "
+                "type spatial distribution. The domain constraint takes "
+                "precedence in random ray mode -- point source coordinate "
+                "will be ignored.");
+      }
+
+      // Check that a discrete energy distribution was used
+      Distribution* d = is->energy();
+      Discrete* dd = dynamic_cast<Discrete*>(d);
+      if (!dd) {
+        fatal_error(
+          "Only discrete (multigroup) energy distributions are allowed for "
+          "external sources in random ray mode.");
+      }
+    }
+  }
+
+  // Validate adjoint sources
+  ///////////////////////////////////////////////////////////////////
+  if (FlatSourceDomain::adjoint_requested_ && !model::adjoint_sources.empty()) {
+    for (int i = 0; i < model::adjoint_sources.size(); i++) {
+      Source* s = model::adjoint_sources[i].get();
+
+      // Check for independent source
+      IndependentSource* is = dynamic_cast<IndependentSource*>(s);
+
+      if (!is) {
+        fatal_error(
+          "Only IndependentSource adjoint source types are allowed in "
+          "random ray mode");
+      }
+
+      // Check for isotropic source
+      UnitSphereDistribution* angle_dist = is->angle();
+      Isotropic* id = dynamic_cast<Isotropic*>(angle_dist);
+      if (!id) {
+        fatal_error(
+          "Invalid source definition -- only isotropic adjoint sources are "
+          "allowed in random ray mode.");
+      }
+
+      // Validate that a domain ID was specified OR that it is a point source
+      auto sp = dynamic_cast<SpatialPoint*>(is->space());
+      if (is->domain_ids().size() == 0 && !sp) {
+        fatal_error("Adjoint sources must be point source or spatially "
+                    "constrained by domain id (cell, material, or universe) in "
+                    "random ray mode.");
+      } else if (is->domain_ids().size() > 0 && sp) {
+        // If both a domain constraint and a point source location are
+        // specified, notify user that domain constraint takes precedence.
+        warning("Adjoint source has both a domain constraint and a point "
+                "type spatial distribution. The domain constraint takes "
+                "precedence in random ray mode -- point source coordinate "
+                "will be ignored.");
+      }
+
+      // Check that a discrete energy distribution was used
+      Distribution* d = is->energy();
+      Discrete* dd = dynamic_cast<Discrete*>(d);
+      if (!dd) {
+        fatal_error(
+          "Only discrete (multigroup) energy distributions are allowed for "
+          "adjoint sources in random ray mode.");
+      }
+    }
+  }
+
+  // Validate plotting files
+  ///////////////////////////////////////////////////////////////////
+  for (int p = 0; p < model::plots.size(); p++) {
+
+    // Get handle to OpenMC plot object
+    const auto& openmc_plottable = model::plots[p];
+    Plot* openmc_plot = dynamic_cast<Plot*>(openmc_plottable.get());
+
+    // Random ray plots only support voxel plots
+    if (!openmc_plot) {
+      warning(fmt::format(
+        "Plot {} will not be used for end of simulation data plotting -- only "
+        "voxel plotting is allowed in random ray mode.",
+        openmc_plottable->id()));
+      continue;
+    } else if (openmc_plot->type_ != Plot::PlotType::voxel) {
+      warning(fmt::format(
+        "Plot {} will not be used for end of simulation data plotting -- only "
+        "voxel plotting is allowed in random ray mode.",
+        openmc_plottable->id()));
+      continue;
+    }
+  }
+
+  // Warn about instability resulting from linear sources in small regions
+  // when generating weight windows with FW-CADIS and an overlaid mesh.
+  ///////////////////////////////////////////////////////////////////
+  if (RandomRay::source_shape_ == RandomRaySourceShape::LINEAR &&
+      variance_reduction::weight_windows.size() > 0) {
+    warning(
+      "Linear sources may result in negative fluxes in small source regions "
+      "generated by mesh subdivision. Negative sources may result in low "
+      "quality FW-CADIS weight windows. We recommend you use flat source "
+      "mode when generating weight windows with an overlaid mesh tally.");
+  }
+}
+
+void openmc_finalize_random_ray()
+{
+  FlatSourceDomain::volume_estimator_ = RandomRayVolumeEstimator::AUTO;
+  FlatSourceDomain::resolved_volume_estimator_ = RandomRayVolumeEstimator::AUTO;
+  FlatSourceDomain::volume_normalized_flux_tallies_ = false;
+  FlatSourceDomain::adjoint_requested_ = false;
+  FlatSourceDomain::source_gradient_limiter_ = false;
+  FlatSourceDomain::solve_ = RandomRaySolve::FORWARD;
+  FlatSourceDomain::fw_cadis_local_ = false;
+  FlatSourceDomain::fw_cadis_local_targets_.clear();
+  FlatSourceDomain::mesh_domain_map_.clear();
+  RandomRay::ray_source_.reset();
+  RandomRay::source_shape_ = RandomRaySourceShape::FLAT;
+  RandomRay::geom_dim_ = RandomRayGeomDim::THREE_DIM;
+  RandomRay::sample_method_ = RandomRaySampleMethod::PRNG;
+}
+
+//==============================================================================
+// RandomRaySimulation implementation
+//==============================================================================
+
+RandomRaySimulation::RandomRaySimulation()
+  : negroups_(data::mg.num_energy_groups_)
+{
+  // There are no source sites in random ray mode, so be sure to disable to
+  // ensure we don't attempt to write source sites to statepoint
+  settings::source_write = false;
+
+  // Random ray mode does not have an inner loop over generations within a
+  // batch, so set the current gen to 1
+  simulation::current_gen = 1;
+
+  switch (RandomRay::source_shape_) {
+  case RandomRaySourceShape::FLAT:
+    domain_ = make_unique<FlatSourceDomain>();
+    break;
+  case RandomRaySourceShape::LINEAR:
+  case RandomRaySourceShape::LINEAR_XY:
+    domain_ = make_unique<LinearSourceDomain>();
+    break;
+  default:
+    fatal_error("Unknown random ray source shape");
+  }
+
+  // Convert OpenMC native MGXS into a more efficient format
+  // internal to the random ray solver
+  domain_->flatten_xs();
+}
+
+void RandomRaySimulation::apply_fixed_sources_and_mesh_domains()
+{
+  domain_->apply_meshes();
+  if (settings::run_mode == RunMode::FIXED_SOURCE) {
+    // Transfer external source user inputs onto random ray source regions
+    domain_->convert_external_sources(false);
+    domain_->count_external_source_regions();
+  }
+}
+
+void RandomRaySimulation::prepare_fw_fixed_sources_adjoint()
+{
+  // Prepare adjoint fixed sources using forward flux
+  domain_->source_regions_.adjoint_reset();
+  if (settings::run_mode == RunMode::FIXED_SOURCE) {
+    // Consumes the accumulated forward flux (and zeroes it as it goes), so
+    // the adjoint solve starts from a clean accumulator.
+    domain_->set_fw_adjoint_sources();
+  } else {
+    // In eigenvalue mode there are no fixed adjoint sources to derive from
+    // the forward flux, but the accumulated forward flux must still be
+    // cleared so that the adjoint solve's active accumulation starts from a
+    // clean array. Otherwise any consumer of the final flux would mix
+    // forward and adjoint modes.
+#pragma omp parallel for
+    for (int64_t se = 0; se < domain_->n_source_elements(); se++) {
+      domain_->source_regions_.scalar_flux_final(se) = 0.0;
+    }
+  }
+}
+
+void RandomRaySimulation::prepare_local_fixed_sources_adjoint()
+{
+  if (settings::run_mode == RunMode::FIXED_SOURCE) {
+    domain_->set_local_adjoint_sources();
+  }
+}
+
+void RandomRaySimulation::prepare_adjoint_simulation(bool from_forward)
+{
+  reset_timers();
+
+  if (mpi::master)
+    header("ADJOINT FLUX SOLVE", 3);
+
+  if (from_forward) {
+    // The forward solve has already run. Re-initialize OpenMC's general data
+    // structures for the adjoint solve and derive the adjoint source from the
+    // forward flux.
+    openmc_simulation_init();
+
+    prepare_fw_fixed_sources_adjoint();
+  } else {
+    // Initialize adjoint fixed sources
+    domain_->apply_meshes();
+    prepare_local_fixed_sources_adjoint();
+    domain_->count_external_source_regions();
+  }
+
+  domain_->k_eff_ = 1.0;
+
+  // Transpose scattering matrix
+  domain_->transpose_scattering_matrix();
+
+  // Swap nu_sigma_f and chi
+  domain_->nu_sigma_f_.swap(domain_->chi_);
+}
+
+void RandomRaySimulation::simulate()
+{
+  // Begin main simulation timer
+  simulation::time_total.start();
+
+#ifdef OPENMC_MPI
+  if (mpi::n_procs > 1) {
+    // Initialize subdomains for MPI ranks
+    mpi::decomp_map.initialize();
+  }
+#endif
+
+  // Reset per-solve accumulators, as simulate() may run more than once on the
+  // same object (e.g. forward then adjoint when generating weight windows)
+  avg_miss_rate_ = 0.0;
+  total_geometric_intersections_ = 0;
+
+  // Random ray power iteration loop
+  while (simulation::current_batch < settings::n_batches) {
+    // Initialize the current batch
+    initialize_batch();
+    initialize_generation();
+
+    // Reset total starting particle weight used for normalizing tallies
+    simulation::total_weight = 1.0;
+
+    // Update source term (scattering + fission)
+    domain_->update_all_neutron_sources();
+
+    // Reset scalar fluxes, iteration volume tallies, and region hit flags
+    // to zero
+    domain_->batch_reset();
+
+    // Check if geometry is 2D or 3D and generate the Voronoi cells that
+    // define each rank's subdomain. Only needed when the problem is actually
+    // decomposed, and only once for this simulation object.
+#ifdef OPENMC_MPI
+    if (mpi::n_procs > 1 && !geometry_setup_complete_) {
+
+      // Check if problem is 3D. This probes the geometry with a few thousand
+      // cell lookups, so it is skipped entirely when not decomposed: geom_dim_
+      // is only read when laying out the Voronoi grid.
+      if (!domain_->is_geometry_3D()) {
+        RandomRay::geom_dim_ = RandomRayGeomDim::TWO_DIM;
+      }
+
+      // Generate Voronoi cells, each of which corresponds to a rank subdomain
+      simulation::time_generate_voronoi_centers.start();
+      mpi::decomp_map.generate_rank_centers();
+      simulation::time_generate_voronoi_centers.stop();
+
+      geometry_setup_complete_ = true;
+    }
+#endif
+
+    // Transport sweep over all random rays for the iteration
+#ifdef OPENMC_MPI
+    if (mpi::n_procs > 1) {
+
+      // Create ray bank to store rays
+      RayBank RB;
+
+      transport_sweep_decomp(RB);
+
+      // Check if any new source regions discovered and if so, exchange
+      // discovered cell data between ranks
+      if (mpi::decomp_map.any_discovered_source_regions(
+            domain_->discovered_source_regions_)) {
+        simulation::time_source_region_exchange.start();
+        mpi::decomp_map.exchange_sr_info(domain_->discovered_source_regions_);
+        MPI_Barrier(mpi::intracomm);
+        simulation::time_source_region_exchange.stop();
+      }
+
+    } else {
+      transport_sweep();
+    }
+#else
+    transport_sweep();
+#endif
+
+    // Add any newly discovered source regions to the main source region
+    // container
+    domain_->finalize_discovered_source_regions();
+
+    // Normalize scalar flux and update volumes
+    domain_->normalize_scalar_flux_and_volumes(
+      settings::n_particles * RandomRay::distance_active_);
+
+#ifdef OPENMC_MPI
+    if (mpi::n_procs > 1 && simulation::current_batch <= ITER_LOAD_BALANCE) {
+      // Balance load between MPI ranks by exchanging source regions
+      simulation::time_load_balance.start();
+      mpi::decomp_map.balance_load(domain_.get());
+      MPI_Barrier(mpi::intracomm);
+      simulation::time_load_balance.stop();
+    }
+#endif
+
+    // Add source to scalar flux (applying any transport stabilization
+    // factors), compute number of FSR hits
+    int64_t n_hits = domain_->add_source_to_scalar_flux();
+
+    if (settings::run_mode == RunMode::EIGENVALUE) {
+      // Compute random ray k-eff
+      domain_->compute_k_eff();
+
+      // Store random ray k-eff into OpenMC's native k-eff variable
+      global_tally_tracklength = domain_->k_eff_;
+    }
+
+    // Execute all tallying tasks, if this is an active batch
+    if (simulation::current_batch > settings::n_inactive) {
+
+      // Add this iteration's scalar flux estimate to final accumulated
+      // estimate
+      domain_->accumulate_iteration_flux();
+
+      // Use above mapping to contribute FSR flux data to appropriate
+      // tallies
+      domain_->random_ray_tally();
+    }
+
+    // For the adaptive estimator, accumulate this batch's flux into the
+    // running sum and update (demote-only) which regions use the naive
+    // volume estimator (no-op for the other estimators).
+    domain_->demotion_step();
+
+    // Set phi_old = phi_new
+    domain_->flux_swap();
+
+    // Check for any obvious insabilities/nans/infs
+    instability_check(n_hits, domain_->k_eff_, avg_miss_rate_);
+
+    // Finalize the current batch
+    finalize_generation();
+    finalize_batch();
+  } // End random ray power iteration loop
+
+  domain_->count_external_source_regions();
+
+  // End main simulation timer
+  simulation::time_total.stop();
+
+  // Normalize and save the final forward flux
+  double source_normalization_factor =
+    domain_->compute_fixed_source_normalization_factor() /
+    (settings::n_batches - settings::n_inactive);
+
+#pragma omp parallel for
+  for (uint64_t se = 0; se < domain_->n_source_elements(); se++) {
+    domain_->source_regions_.scalar_flux_final(se) *=
+      source_normalization_factor;
+  }
+
+  // Finalize OpenMC
+  openmc_simulation_finalize();
+
+  // Output all simulation results
+  output_simulation_results();
+}
+
+void RandomRaySimulation::output_simulation_results()
+{
+
+  // Compute values for diagnostics
+  int64_t total_n_source_regions = domain_->n_source_regions();
+  int64_t total_n_external_source_regions = domain_->n_external_source_regions_;
+  double max_load_imbalance = 0.0;
+
+#ifdef OPENMC_MPI
+  if (mpi::n_procs > 1) {
+
+    // Average number of ray communications between ranks per batch
+    avg_num_communication_rounds_ = static_cast<uint64_t>(
+      std::round(avg_num_communication_rounds_ / settings::n_batches));
+
+    // Exchange intersection data
+    if (mpi::master) {
+      MPI_Reduce(MPI_IN_PLACE, &total_geometric_intersections_, 1, MPI_UINT64_T,
+        MPI_SUM, 0, mpi::intracomm);
+    } else {
+      MPI_Reduce(&total_geometric_intersections_, nullptr, 1, MPI_UINT64_T,
+        MPI_SUM, 0, mpi::intracomm);
+    }
+
+    // Exchange source region data
+    if (mpi::master) {
+      MPI_Reduce(MPI_IN_PLACE, &total_n_source_regions, 1, MPI_INT64_T, MPI_SUM,
+        0, mpi::intracomm);
+      MPI_Reduce(MPI_IN_PLACE, &total_n_external_source_regions, 1, MPI_INT64_T,
+        MPI_SUM, 0, mpi::intracomm);
+    } else {
+      MPI_Reduce(&total_n_source_regions, nullptr, 1, MPI_INT64_T, MPI_SUM, 0,
+        mpi::intracomm);
+      MPI_Reduce(&total_n_external_source_regions, nullptr, 1, MPI_INT64_T,
+        MPI_SUM, 0, mpi::intracomm);
+    }
+
+    // Determine load imbalance based on measured transport times, every rank
+    // needs to know about this for plotting purposes
+    double time_transport_total = simulation::time_transport.elapsed() -
+                                  simulation::time_ray_buffering.elapsed();
+    MPI_Allgather(&time_transport_total, 1, MPI_DOUBLE,
+      mpi::decomp_map.measured_rank_load_fractions_.data(), 1, MPI_DOUBLE,
+      mpi::intracomm);
+    double measured_load_sum =
+      std::accumulate(mpi::decomp_map.measured_rank_load_fractions_.begin(),
+        mpi::decomp_map.measured_rank_load_fractions_.end(), 0.0);
+    for (int rank = 0; rank < mpi::n_procs; rank++) {
+      mpi::decomp_map.measured_rank_load_fractions_[rank] =
+        mpi::decomp_map.measured_rank_load_fractions_[rank] / measured_load_sum;
+    }
+    if (mpi::master) {
+      double max_load_measured =
+        *std::max_element(mpi::decomp_map.measured_rank_load_fractions_.begin(),
+          mpi::decomp_map.measured_rank_load_fractions_.end());
+      max_load_imbalance = (max_load_measured - mpi::decomp_map.target_load_) /
+                           mpi::decomp_map.target_load_;
+    }
+  }
+#endif
+
+  // Print random ray results
+  if (mpi::master) {
+    print_results_random_ray(total_geometric_intersections_,
+      avg_miss_rate_ / settings::n_batches, negroups_, total_n_source_regions,
+      total_n_external_source_regions, avg_num_communication_rounds_,
+      max_load_imbalance);
+  }
+
+  if (model::plots.size() > 0) {
+#ifdef OPENMC_MPI
+    if (mpi::n_procs > 1) {
+      domain_->output_to_vtk_decomp();
+    } else {
+      domain_->output_to_vtk();
+    }
+#else
+    domain_->output_to_vtk();
+#endif
+  }
+}
+
+// Apply a few sanity checks to catch obvious cases of numerical instability.
+// Instability typically only occurs if ray density is extremely low.
+void RandomRaySimulation::instability_check(
+  int64_t n_hits, double k_eff, double& avg_miss_rate) const
+{
+
+  uint64_t n_source_regions = domain_->n_source_regions();
+
+#ifdef OPENMC_MPI
+  if (mpi::n_procs > 1) {
+    // Reduce n_hits and n_source_regions on master rank to compute
+    // global miss rate
+    simulation::time_decomposition_handling.start();
+    if (mpi::master) {
+      MPI_Reduce(
+        MPI_IN_PLACE, &n_hits, 1, MPI_INT64_T, MPI_SUM, 0, mpi::intracomm);
+      MPI_Reduce(MPI_IN_PLACE, &n_source_regions, 1, MPI_INT64_T, MPI_SUM, 0,
+        mpi::intracomm);
+    } else {
+      MPI_Reduce(&n_hits, nullptr, 1, MPI_INT64_T, MPI_SUM, 0, mpi::intracomm);
+      MPI_Reduce(
+        &n_source_regions, nullptr, 1, MPI_INT64_T, MPI_SUM, 0, mpi::intracomm);
+    }
+    simulation::time_decomposition_handling.stop();
+  }
+#endif
+
+  if (mpi::master) {
+    double percent_missed =
+      ((n_source_regions - n_hits) / static_cast<double>(n_source_regions)) *
+      100.0;
+    avg_miss_rate += percent_missed;
+
+    if (percent_missed > 10.0) {
+      warning(fmt::format(
+        "Very high FSR miss rate detected ({:.3f}%). Instability may occur. "
+        "Increase ray density by adding more rays and/or active distance.",
+        percent_missed));
+    } else if (percent_missed > 1.0) {
+      warning(
+        fmt::format("Elevated FSR miss rate detected ({:.3f}%). Increasing "
+                    "ray density by adding more rays and/or active "
+                    "distance may improve simulation efficiency.",
+          percent_missed));
+    }
+
+    if (k_eff > 10.0 || k_eff < 0.01 || !(std::isfinite(k_eff))) {
+      fatal_error(fmt::format("Instability detected: k-eff = {:.5f}", k_eff));
+    }
+  }
+}
+
+// Print random ray simulation results
+void RandomRaySimulation::print_results_random_ray(
+  uint64_t total_geometric_intersections, double avg_miss_rate, int negroups,
+  int64_t n_source_regions, int64_t n_external_source_regions,
+  uint64_t avg_num_communication_rounds, double max_load_imbalance) const
+{
+  using namespace simulation;
+
+  if (settings::verbosity >= 6) {
+    double total_integrations = total_geometric_intersections * negroups;
+
+    // Transport time varies between ranks, so we need to compute the total
+    // transport time as the sum of the max transport time across all ranks,
+    // i.e. the transport time of the master rank plus the time the master rank
+    // spends waiting for slowest other rank to finish.
+    double time_transport_total = time_transport.elapsed() -
+                                  time_ray_buffering.elapsed() +
+                                  time_mpi_imbalance.elapsed();
+
+    double time_per_integration = time_transport_total / total_integrations;
+    double time_domain_decomposition =
+      time_decomposition_handling.elapsed() +
+      time_generate_voronoi_centers.elapsed() + time_load_balance.elapsed() +
+      time_source_region_exchange.elapsed() - time_transport_total;
+    double misc_time = time_total.elapsed() - time_update_src.elapsed() -
+                       time_transport_total - time_tallies.elapsed() -
+                       time_bank_sendrecv.elapsed() - time_domain_decomposition;
+
+    header("Simulation Statistics", 4);
+    fmt::print(
+      " Total Iterations                  = {}\n", settings::n_batches);
+    fmt::print(
+      " Number of Rays per Iteration      = {}\n", settings::n_particles);
+    fmt::print(" Inactive Distance                 = {} cm\n",
+      RandomRay::distance_inactive_);
+    fmt::print(" Active Distance                   = {} cm\n",
+      RandomRay::distance_active_);
+    fmt::print(" Source Regions (SRs)              = {}\n", n_source_regions);
+    fmt::print(
+      " SRs Containing External Sources   = {}\n", n_external_source_regions);
+    fmt::print(" Total Geometric Intersections     = {:.4e}\n",
+      static_cast<double>(total_geometric_intersections));
+    fmt::print("   Avg per Iteration               = {:.4e}\n",
+      static_cast<double>(total_geometric_intersections) / settings::n_batches);
+    fmt::print("   Avg per Iteration per SR        = {:.2f}\n",
+      static_cast<double>(total_geometric_intersections) /
+        static_cast<double>(settings::n_batches) / n_source_regions);
+    fmt::print(" Avg SR Miss Rate per Iteration    = {:.4f}%\n", avg_miss_rate);
+    fmt::print(" Energy Groups                     = {}\n", negroups);
+    fmt::print(
+      " Total Integrations                = {:.4e}\n", total_integrations);
+    fmt::print("   Avg per Iteration               = {:.4e}\n",
+      total_integrations / settings::n_batches);
+
+    if (mpi::n_procs > 1) {
+      fmt::print(" MPI Ranks                         = {}\n", mpi::n_procs);
+      fmt::print(" Avg Ray Subdomain Crossings       = {}\n",
+        avg_num_communication_rounds);
+      fmt::print(" Maximum Load Imbalance            = {:.2f}%\n",
+        max_load_imbalance * 100.0);
+    }
+
+    std::string estimator;
+    switch (FlatSourceDomain::resolved_volume_estimator_) {
+    case RandomRayVolumeEstimator::SIMULATION_AVERAGED:
+      estimator = "Simulation Averaged";
+      break;
+    case RandomRayVolumeEstimator::NAIVE:
+      estimator = "Naive";
+      break;
+    case RandomRayVolumeEstimator::HYBRID:
+      estimator = "Hybrid";
+      break;
+    case RandomRayVolumeEstimator::ADAPTIVE:
+      estimator = "Adaptive";
+      break;
+    case RandomRayVolumeEstimator::STRICT_ADAPTIVE:
+      estimator = "Strict Adaptive";
+      break;
+    default:
+      fatal_error("Invalid volume estimator type");
+    }
+    if (FlatSourceDomain::volume_estimator_ == RandomRayVolumeEstimator::AUTO) {
+      estimator += " (auto)";
+    }
+    fmt::print(" Volume Estimator Type             = {}\n", estimator);
+    if (domain_->final_stats_valid_) {
+      double inv = 100.0 / domain_->n_source_regions();
+      // Single summary at default verbosity: every source region that
+      // received the naive volume treatment in the final batch, for any
+      // reason (the demote-only decisions made from the accumulated flux
+      // plus that batch's per-iteration demotions).
+      fmt::print(" Number of Naive Demotions         = {} SRs ({:.4f}%)\n",
+        domain_->n_final_naive_, domain_->n_final_naive_ * inv);
+      // The per-cause diagnostic breakdown is developer-facing, so it is
+      // printed at verbosity 8, above the default (7) but below the
+      // per-particle output (9).
+      // The causes are mutually exclusive and sum to the total above:
+      // "accumulated" causes are the demote-only decisions made from the
+      // running accumulated flux (from the inactive->active transition
+      // onward), "per batch" causes are re-evaluated each batch and reported
+      // for the final batch.
+      if (settings::verbosity >= 8) {
+        fmt::print("   Strong source (accumulated)     = {} SRs ({:.4f}%)\n",
+          domain_->n_final_latch_, domain_->n_final_latch_ * inv);
+        fmt::print("   Strong source (per batch)       = {} SRs ({:.4f}%)\n",
+          domain_->n_final_strong_, domain_->n_final_strong_ * inv);
+        fmt::print("   Negative flux (accumulated)     = {} SRs ({:.4f}%)\n",
+          domain_->n_final_sign_, domain_->n_final_sign_ * inv);
+        fmt::print("   Hit-starved (per batch)         = {} SRs ({:.4f}%)\n",
+          domain_->n_final_small_, domain_->n_final_small_ * inv);
+        // The strict adaptive estimator's per-batch non-negativity
+        // enforcement, reported for the final batch. These overlap the
+        // partition above rather than extending it: a rescued or floored
+        // region may or may not also carry the naive treatment.
+        if (FlatSourceDomain::resolved_volume_estimator_ ==
+            RandomRayVolumeEstimator::STRICT_ADAPTIVE) {
+          fmt::print("   Chronic negative (per batch)    = {} SRs ({:.4f}%)\n",
+            domain_->n_final_chronic_, domain_->n_final_chronic_ * inv);
+          fmt::print("   Rescued (batch volume)          = {} SRs ({:.4f}%)\n",
+            domain_->n_final_rescued_, domain_->n_final_rescued_ * inv);
+          fmt::print("   Floored (previous flux)         = {} SRs ({:.4f}%)\n",
+            domain_->n_final_floored_, domain_->n_final_floored_ * inv);
+        }
+      }
+    }
+
+    std::string adjoint_true =
+      (FlatSourceDomain::solve_ == RandomRaySolve::ADJOINT) ? "ON" : "OFF";
+    fmt::print(" Adjoint Flux Mode                 = {}\n", adjoint_true);
+
+    std::string shape;
+    switch (RandomRay::source_shape_) {
+    case RandomRaySourceShape::FLAT:
+      shape = "Flat";
+      break;
+    case RandomRaySourceShape::LINEAR:
+      shape = "Linear";
+      break;
+    case RandomRaySourceShape::LINEAR_XY:
+      shape = "Linear XY";
+      break;
+    default:
+      fatal_error("Invalid random ray source shape");
+    }
+    fmt::print(" Source Shape                      = {}\n", shape);
+    if (RandomRay::source_shape_ != RandomRaySourceShape::FLAT) {
+      fmt::print(" Source Gradient Limiter           = {}\n",
+        FlatSourceDomain::source_gradient_limiter_ ? "ON" : "OFF");
+    }
+    std::string sample_method;
+    switch (RandomRay::sample_method_) {
+    case RandomRaySampleMethod::PRNG:
+      sample_method = "PRNG";
+      break;
+    case RandomRaySampleMethod::HALTON:
+      sample_method = "Halton";
+      break;
+    case RandomRaySampleMethod::S2:
+      sample_method = "PRNG S2";
+      break;
+    }
+    fmt::print(" Sample Method                     = {}\n", sample_method);
+
+    if (domain_->is_transport_stabilization_needed_) {
+      fmt::print(" Transport XS Stabilization Used   = YES (rho = {:.3f})\n",
+        FlatSourceDomain::diagonal_stabilization_rho_);
+    } else {
+      fmt::print(" Transport XS Stabilization Used   = NO\n");
+    }
+
+    header("Timing Statistics", 4);
+    show_time("Total time for initialization", time_initialize.elapsed());
+    show_time("Reading cross sections", time_read_xs.elapsed(), 1);
+    show_time("Total simulation time", time_total.elapsed());
+    if (mpi::n_procs > 1) {
+      show_time(
+        "Transport sweep only (incl. rank wait time)", time_transport_total, 1);
+    } else {
+      show_time("Transport sweep only", time_transport_total, 1);
+    }
+    show_time("Source update only", time_update_src.elapsed(), 1);
+    show_time("Tally conversion only", time_tallies.elapsed(), 1);
+    if (mpi::n_procs > 1) {
+      double time_decomp_misc =
+        time_domain_decomposition - time_source_region_exchange.elapsed() -
+        time_generate_voronoi_centers.elapsed() - time_ray_comms.elapsed() -
+        time_load_balance.elapsed();
+      show_time("Decomposition handling", time_domain_decomposition, 1);
+      show_time("Ray communication", time_ray_comms.elapsed(), 2);
+      show_time(
+        "Exchanging contested SRs", time_source_region_exchange.elapsed(), 2);
+      show_time("Load balancing", time_load_balance.elapsed(), 2);
+      show_time("Generating Voronoi centers",
+        time_generate_voronoi_centers.elapsed(), 2);
+      show_time("Other decomposition routines", time_decomp_misc, 2);
+    }
+    show_time("Other iteration routines", misc_time, 1);
+
+    if (settings::run_mode == RunMode::EIGENVALUE) {
+      show_time("Time in inactive batches", time_inactive.elapsed());
+    }
+    show_time("Time in active batches", time_active.elapsed());
+    show_time("Time writing statepoints", time_statepoint.elapsed());
+    show_time("Total time for finalization", time_finalize.elapsed());
+    show_time("Time per integration", time_per_integration);
+  }
+
+  if (settings::verbosity >= 4 && settings::run_mode == RunMode::EIGENVALUE) {
+    header("Results", 4);
+    fmt::print(" k-effective                       = {:.5f} +/- {:.5f}\n",
+      simulation::keff, simulation::keff_std);
+  }
+}
+
+void RandomRaySimulation::transport_sweep()
+{
+
+  // Start timer for transport
+  simulation::time_transport.start();
+
+  // Transport sweep over all random rays for the iteration. NOTE: Naming a
+  // class member in a reduction clause is allowed as of OpenMP 5.1, but not
+  // every implementation supports it yet; accumulate into a local
+  uint64_t n_intersections = 0;
+#pragma omp parallel for schedule(dynamic) reduction(+ : n_intersections)
+  for (int i = 0; i < settings::n_particles; i++) {
+    RandomRay ray(i, domain_.get());
+    n_intersections += ray.transport_history_based_single_ray();
+  }
+  total_geometric_intersections_ += n_intersections;
+
+  simulation::time_transport.stop();
+}
+
+// Transport sweep for the domain decompososition case
+#ifdef OPENMC_MPI
+void RandomRaySimulation::transport_sweep_decomp(RayBank& RB)
+{
+
+  double start_time_transport = simulation::time_transport.elapsed();
+  double start_time_ray_buffering = simulation::time_ray_buffering.elapsed();
+
+  simulation::time_decomposition_handling.start();
+
+// Create rays and add them to ray bank
+#pragma omp parallel for schedule(static)
+  for (int i = 0; i < simulation::work_per_rank; i++) {
+    uint64_t id = simulation::work_index[mpi::rank] + i;
+    RandomRay ray(id, domain_.get());
+
+    // Add ray to ray bank if it starts in my subdomain
+    if (!ray.has_left_subdomain()) {
+#pragma omp critical(raybank)
+      {
+        RB.my_ray_list_.push_back(ray);
+      }
+    }
+    // Put ray straight into buffer if it starts outside my subdomain
+    else {
+#pragma omp critical(raybuffer)
+      {
+        RB.buffer_ray_data_to_send(ray, domain_.get());
+      }
+    }
+  }
+
+  // If no ray is alive at this stage, it means that all of them have been
+  // buffered because they were sampled in foregin subdomain. This requires a
+  // ray bank update here.
+  if (!RB.is_any_ray_alive()) {
+    RB.update(domain_.get());
+  }
+
+  int num_communication_rounds = 0;
+
+  // Move rays across ranks until they are terminated
+  while (RB.is_any_ray_alive()) {
+
+    // Start timer for transport
+    simulation::time_transport.start();
+
+    // NOTE: Naming a class member in a reduction clause is allowed as of
+    // OpenMP 5.1, but not every implementation supports it yet; accumulate
+    // into a local
+    uint64_t n_intersections = 0;
+#pragma omp parallel for schedule(dynamic) reduction(+ : n_intersections)
+    for (int i = 0; i < RB.ray_bank_size(); i++) {
+      RandomRay& ray = RB.my_ray_list_[i];
+      n_intersections += ray.transport_history_based_single_ray();
+
+      // If ray has left my subdomain, buffer ray state
+      if (ray.has_left_subdomain()) {
+#pragma omp critical(raybuffer)
+        {
+          simulation::time_ray_buffering.start();
+          RB.buffer_ray_data_to_send(ray, domain_.get());
+          simulation::time_ray_buffering.stop();
+        }
+      }
+    }
+    total_geometric_intersections_ += n_intersections;
+    simulation::time_transport.stop();
+
+    // Capture wait time resulting from other transport sweeps
+    simulation::time_mpi_imbalance.start();
+    MPI_Barrier(mpi::intracomm);
+    simulation::time_mpi_imbalance.stop();
+
+    // Update ray bank by communicating rays in buffer to new owner ranks and
+    // removing terminated ranks
+    simulation::time_ray_comms.start();
+    RB.update(domain_.get());
+    MPI_Barrier(mpi::intracomm);
+    simulation::time_ray_comms.stop();
+
+    num_communication_rounds++;
+  }
+
+  // Calculate load per rank based on number of hits in each source region that
+  // a rank owns
+  double batch_ray_buffering_time =
+    simulation::time_ray_buffering.elapsed() - start_time_ray_buffering;
+  double batch_transport_time = simulation::time_transport.elapsed() -
+                                start_time_transport - batch_ray_buffering_time;
+
+  // Calculate rank load fractions for load balancing
+  if (simulation::current_batch <= ITER_LOAD_BALANCE) {
+    mpi::decomp_map.calculate_rank_load(domain_.get(), batch_transport_time);
+  }
+
+  avg_num_communication_rounds_ += num_communication_rounds;
+
+  // Reset ray bank list for next batch
+  RB.my_ray_list_.resize(0);
+
+  simulation::time_decomposition_handling.stop();
+}
+#endif // OPENMC_MPI
+
+} // namespace openmc
+
+//==============================================================================
+// C API functions
+//==============================================================================
+
+void openmc_run_random_ray()
+{
+  using namespace openmc;
+
+  // Resolve the volume estimator for this solve, leaving the configured
+  // setting untouched. "Auto" (the default) maps to a concrete estimator
+  // based on the type of simulation being performed. Solves whose results
+  // feed variance reduction (weight window generation, and any adjoint
+  // workflow, including the forward solve an adjoint source is derived
+  // from) receive the strict adaptive estimator, whose per-batch fixup of
+  // negative flux iterates benefits those workflows. All other solves
+  // receive the unbiased adaptive estimator.
+  if (FlatSourceDomain::volume_estimator_ == RandomRayVolumeEstimator::AUTO) {
+    bool positivity_needed =
+      FlatSourceDomain::adjoint_requested_ ||
+      !variance_reduction::weight_windows_generators.empty();
+    FlatSourceDomain::resolved_volume_estimator_ =
+      positivity_needed ? RandomRayVolumeEstimator::STRICT_ADAPTIVE
+                        : RandomRayVolumeEstimator::ADAPTIVE;
+  } else {
+    FlatSourceDomain::resolved_volume_estimator_ =
+      FlatSourceDomain::volume_estimator_;
+  }
+
+  // Determine which solves to run. If adjoint results are requested and no
+  // user-defined adjoint source is present, an initial forward solve is needed
+  // to construct the adjoint source from the forward flux (FW-CADIS). If the
+  // user has defined an adjoint source, the forward solve is skipped and only
+  // the adjoint solve is run.
+  const bool run_adjoint = FlatSourceDomain::adjoint_requested_;
+  const bool have_adjoint_source = !model::adjoint_sources.empty();
+  const bool run_forward = !(run_adjoint && have_adjoint_source);
+
+  // Set the initial solve type
+  if (!run_forward) {
+    FlatSourceDomain::solve_ = RandomRaySolve::ADJOINT;
+  } else if (run_adjoint) {
+    FlatSourceDomain::solve_ = RandomRaySolve::FORWARD_FOR_ADJOINT;
+  } else {
+    FlatSourceDomain::solve_ = RandomRaySolve::FORWARD;
+  }
+
+  // Initialize OpenMC general data structures
+  openmc_simulation_init();
+
+  // Validate that inputs meet requirements for random ray mode
+  if (mpi::master)
+    validate_random_ray_inputs();
+
+  // Initialize Random Ray Simulation Object
+  RandomRaySimulation sim;
+
+  // Run the forward solve
+  if (run_forward) {
+    // When an adjoint solve follows, report this as the initial forward solve
+    if (run_adjoint && mpi::master)
+      header("FORWARD FLUX SOLVE", 3);
+    sim.apply_fixed_sources_and_mesh_domains();
+    sim.simulate();
+  }
+
+  // Run the adjoint solve
+  if (run_adjoint) {
+    FlatSourceDomain::solve_ = RandomRaySolve::ADJOINT;
+    sim.prepare_adjoint_simulation(run_forward);
+    sim.simulate();
+  }
+}

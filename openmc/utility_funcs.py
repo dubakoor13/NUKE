@@ -1,0 +1,104 @@
+from contextlib import contextmanager
+from contextvars import ContextVar
+import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import h5py
+
+import openmc
+from .checkvalue import PathLike
+
+
+_XML_INPUT_PATH = ContextVar('_XML_INPUT_PATH', default=None)
+
+
+@contextmanager
+def set_xml_input_path(path: PathLike):
+    """Set the containing XML directory for resolving input paths."""
+    token = _XML_INPUT_PATH.set(Path(path).resolve().parent)
+    try:
+        yield
+    finally:
+        _XML_INPUT_PATH.reset(token)
+
+
+@contextmanager
+def change_directory(working_dir: PathLike | None = None, *, tmpdir: bool = False):
+    """Context manager for executing in a provided working directory
+
+    Parameters
+    ----------
+    working_dir : path-like
+        Directory to switch to.
+    tmpdir : bool
+        Whether to use a temporary directory instead of a specific working directory
+
+    """
+    orig_dir = Path.cwd()
+
+    # Set up temporary directory if requested
+    if tmpdir:
+        tmp = TemporaryDirectory()
+        working_dir = tmp.name
+    elif working_dir is None:
+        raise ValueError('Must pass working_dir argument or specify tmpdir=True.')
+
+    working_dir = Path(working_dir)
+    working_dir.mkdir(parents=True, exist_ok=True)
+    os.chdir(working_dir)
+    try:
+        yield
+    finally:
+        os.chdir(orig_dir)
+        if tmpdir:
+            tmp.cleanup()
+
+
+def input_path(filename: PathLike) -> Path:
+    """Return a path object for an input file based on global configuration
+
+    Parameters
+    ----------
+    filename : PathLike
+        Path to input file
+
+    Returns
+    -------
+    pathlib.Path
+        Path object
+
+    """
+    # An empty filename represents the absence of a path (e.g., a mesh or
+    # DAGMC universe read back from a summary/statepoint file that was never
+    # written with a source file) and should not be resolved to the current
+    # working directory.
+    filename = os.fspath(filename)
+    if not filename:
+        return Path(filename)
+
+    if openmc.config['resolve_paths']:
+        path = Path(filename)
+        xml_dir = _XML_INPUT_PATH.get()
+        if xml_dir is not None and not path.is_absolute():
+            path = xml_dir / path
+        return path.resolve()
+    else:
+        return Path(filename)
+
+
+@contextmanager
+def h5py_file_or_group(group_or_filename: PathLike | h5py.Group, *args, **kwargs):
+    """Context manager for opening an HDF5 file or using an existing group
+
+    Parameters
+    ----------
+    group_or_filename : path-like or h5py.Group
+        Path to HDF5 file, or group from an existing HDF5 file
+
+    """
+    if isinstance(group_or_filename, h5py.Group):
+        yield group_or_filename
+    else:
+        with h5py.File(group_or_filename, *args, **kwargs) as f:
+            yield f

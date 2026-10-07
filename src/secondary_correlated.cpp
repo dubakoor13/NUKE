@@ -1,0 +1,272 @@
+#include "openmc/secondary_correlated.h"
+
+#include <algorithm> // for copy
+#include <cmath>
+#include <cstddef>  // for size_t
+#include <iterator> // for back_inserter
+
+#include "openmc/tensor.h"
+
+#include "openmc/endf.h"
+#include "openmc/hdf5_interface.h"
+#include "openmc/math_functions.h"
+#include "openmc/random_lcg.h"
+#include "openmc/search.h"
+
+namespace openmc {
+
+//==============================================================================
+//! CorrelatedAngleEnergy implementation
+//==============================================================================
+
+CorrelatedAngleEnergy::CorrelatedAngleEnergy(hid_t group)
+{
+  // Open incoming energy dataset
+  hid_t dset = open_dataset(group, "energy");
+
+  // Get interpolation parameters
+  tensor::Tensor<int> temp;
+  read_attribute(dset, "interpolation", temp);
+
+  tensor::View<int> temp_b = temp.slice(0); // breakpoints
+  tensor::View<int> temp_i = temp.slice(1); // interpolation parameters
+
+  std::copy(temp_b.begin(), temp_b.end(), std::back_inserter(breakpoints_));
+  for (const auto i : temp_i)
+    interpolation_.push_back(int2interp(i));
+  n_region_ = breakpoints_.size();
+
+  // Get incoming energies
+  read_dataset(dset, energy_);
+  std::size_t n_energy = energy_.size();
+  close_dataset(dset);
+
+  // Get outgoing energy distribution data
+  dset = open_dataset(group, "energy_out");
+  vector<int> offsets;
+  vector<int> interp;
+  vector<int> n_discrete;
+  read_attribute(dset, "offsets", offsets);
+  read_attribute(dset, "interpolation", interp);
+  read_attribute(dset, "n_discrete_lines", n_discrete);
+
+  tensor::Tensor<double> eout;
+  read_dataset(dset, eout);
+  close_dataset(dset);
+
+  // Read angle distributions
+  tensor::Tensor<double> mu;
+  read_dataset(group, "mu", mu);
+
+  for (int i = 0; i < n_energy; ++i) {
+    // Determine number of outgoing energies
+    int j = offsets[i];
+    int n;
+    if (i < n_energy - 1) {
+      n = offsets[i + 1] - j;
+    } else {
+      n = eout.shape(1) - j;
+    }
+
+    // Assign interpolation scheme and number of discrete lines
+    CorrTable d;
+    d.interpolation = int2interp(interp[i]);
+    d.n_discrete = n_discrete[i];
+
+    // Copy data
+    d.e_out = eout.slice(0, tensor::range(j, j + n));
+    d.p = eout.slice(1, tensor::range(j, j + n));
+    d.c = eout.slice(2, tensor::range(j, j + n));
+
+    // To get answers that match ACE data, for now we still use the tabulated
+    // CDF values that were passed through to the HDF5 library. At a later
+    // time, we can remove the CDF values from the HDF5 library and
+    // reconstruct them using the PDF
+    if (false) {
+      // Calculate cumulative distribution function -- discrete portion
+      for (int k = 0; k < d.n_discrete; ++k) {
+        if (k == 0) {
+          d.c[k] = d.p[k];
+        } else {
+          d.c[k] = d.c[k - 1] + d.p[k];
+        }
+      }
+
+      // Continuous portion
+      for (int k = d.n_discrete; k < n; ++k) {
+        if (k == d.n_discrete) {
+          d.c[k] = d.c[k - 1] + d.p[k];
+        } else {
+          if (d.interpolation == Interpolation::histogram) {
+            d.c[k] = d.c[k - 1] + d.p[k - 1] * (d.e_out[k] - d.e_out[k - 1]);
+          } else if (d.interpolation == Interpolation::lin_lin) {
+            d.c[k] = d.c[k - 1] + 0.5 * (d.p[k - 1] + d.p[k]) *
+                                    (d.e_out[k] - d.e_out[k - 1]);
+          }
+        }
+      }
+
+      // Normalize density and distribution functions
+      d.p /= d.c[n - 1];
+      d.c /= d.c[n - 1];
+    }
+
+    for (j = 0; j < n; ++j) {
+      // Get interpolation scheme
+      int interp_mu = std::lround(eout(3, offsets[i] + j));
+
+      // Determine offset and size of distribution
+      int offset_mu = std::lround(eout(4, offsets[i] + j));
+      int m;
+      if (offsets[i] + j + 1 < eout.shape(1)) {
+        m = std::lround(eout(4, offsets[i] + j + 1)) - offset_mu;
+      } else {
+        m = mu.shape(1) - offset_mu;
+      }
+
+      // For incoherent inelastic thermal scattering, the angle distributions
+      // may be given as discrete mu values. In this case, interpolation values
+      // of zero appear in the HDF5 file. Here we change it to a 1 so that
+      // int2interp doesn't fail.
+      if (interp_mu == 0)
+        interp_mu = 1;
+
+      auto interp = int2interp(interp_mu);
+      tensor::View<double> xs =
+        mu.slice(0, tensor::range(offset_mu, offset_mu + m));
+      tensor::View<double> ps =
+        mu.slice(1, tensor::range(offset_mu, offset_mu + m));
+      tensor::View<double> cs =
+        mu.slice(2, tensor::range(offset_mu, offset_mu + m));
+
+      vector<double> x {xs.begin(), xs.end()};
+      vector<double> p {ps.begin(), ps.end()};
+      vector<double> c {cs.begin(), cs.end()};
+
+      // To get answers that match ACE data, for now we still use the tabulated
+      // CDF values that were passed through to the HDF5 library. At a later
+      // time, we can remove the CDF values from the HDF5 library and
+      // reconstruct them using the PDF
+      Tabular* mudist = new Tabular {x.data(), p.data(), m, interp, c.data()};
+
+      d.angle.emplace_back(mudist);
+    } // outgoing energies
+
+    distribution_.push_back(std::move(d));
+  } // incoming energies
+}
+Distribution& CorrelatedAngleEnergy::sample_dist(
+  double E_in, double& E_out, uint64_t* seed) const
+{
+  // Find energy bin and calculate interpolation factor
+  int i;
+  double r;
+  get_energy_index(energy_, E_in, i, r);
+
+  // Sample between the ith and [i+1]th bin
+  int l = r > prn(seed) ? i + 1 : i;
+
+  // Interpolation for energy E1 and EK
+  int n_energy_out = distribution_[i].e_out.size();
+  int n_discrete = distribution_[i].n_discrete;
+  double E_i_1 = distribution_[i].e_out[n_discrete];
+  double E_i_K = distribution_[i].e_out[n_energy_out - 1];
+
+  n_energy_out = distribution_[i + 1].e_out.size();
+  n_discrete = distribution_[i + 1].n_discrete;
+  double E_i1_1 = distribution_[i + 1].e_out[n_discrete];
+  double E_i1_K = distribution_[i + 1].e_out[n_energy_out - 1];
+
+  double E_1 = E_i_1 + r * (E_i1_1 - E_i_1);
+  double E_K = E_i_K + r * (E_i1_K - E_i_K);
+
+  // Determine outgoing energy bin
+  n_energy_out = distribution_[l].e_out.size();
+  n_discrete = distribution_[l].n_discrete;
+  double r1 = prn(seed);
+  double c_k = distribution_[l].c[0];
+  int k = 0;
+  int end = n_energy_out - 2;
+
+  // Discrete portion
+  for (int j = 0; j < n_discrete; ++j) {
+    k = j;
+    c_k = distribution_[l].c[k];
+    if (r1 < c_k) {
+      end = j;
+      break;
+    }
+  }
+
+  // Continuous portion
+  double c_k1 {INFINITY};
+  for (int j = n_discrete; j < end; ++j) {
+    k = j;
+    c_k1 = distribution_[l].c[k + 1];
+    if (r1 < c_k1)
+      break;
+    k = j + 1;
+    c_k = c_k1;
+  }
+
+  double E_l_k = distribution_[l].e_out[k];
+  if (k < n_discrete) {
+    // Discrete case
+    E_out = E_l_k;
+  } else {
+    // Continuous case
+    double p_l_k = distribution_[l].p[k];
+    if (distribution_[l].interpolation == Interpolation::histogram) {
+      // Histogram interpolation
+      if (p_l_k > 0.0) {
+        E_out = E_l_k + (r1 - c_k) / p_l_k;
+      } else {
+        E_out = E_l_k;
+      }
+    } else if (distribution_[l].interpolation == Interpolation::lin_lin) {
+      // Linear-linear interpolation
+      double E_l_k1 = distribution_[l].e_out[k + 1];
+      double p_l_k1 = distribution_[l].p[k + 1];
+
+      double frac = (p_l_k1 - p_l_k) / (E_l_k1 - E_l_k);
+      if (frac == 0.0) {
+        E_out = E_l_k + (r1 - c_k) / p_l_k;
+      } else {
+        E_out =
+          E_l_k +
+          (std::sqrt(std::max(0.0, p_l_k * p_l_k + 2.0 * frac * (r1 - c_k))) -
+            p_l_k) /
+            frac;
+      }
+    }
+
+    // Now interpolate between incident energy bins i and i + 1
+    if (l == i) {
+      E_out = E_1 + (E_out - E_i_1) * (E_K - E_1) / (E_i_K - E_i_1);
+    } else {
+      E_out = E_1 + (E_out - E_i1_1) * (E_K - E_1) / (E_i1_K - E_i1_1);
+    }
+  }
+
+  // Find correlated angular distribution for closest outgoing energy bin
+  if (r1 - c_k < c_k1 - r1 ||
+      distribution_[l].interpolation == Interpolation::histogram) {
+    return *distribution_[l].angle[k];
+  } else {
+    return *distribution_[l].angle[k + 1];
+  }
+}
+
+void CorrelatedAngleEnergy::sample(
+  double E_in, double& E_out, double& mu, uint64_t* seed) const
+{
+  mu = sample_dist(E_in, E_out, seed).sample(seed).first;
+}
+
+double CorrelatedAngleEnergy::sample_energy_and_pdf(
+  double E_in, double mu, double& E_out, uint64_t* seed) const
+{
+  return sample_dist(E_in, E_out, seed).evaluate(mu);
+}
+
+} // namespace openmc

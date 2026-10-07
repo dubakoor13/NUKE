@@ -1,0 +1,57 @@
+#ifndef OPENMC_BANK_H
+#define OPENMC_BANK_H
+
+#include <cstdint>
+
+#include "openmc/particle.h"
+#include "openmc/position.h"
+#include "openmc/shared_array.h"
+#include "openmc/vector.h"
+
+namespace openmc {
+
+//==============================================================================
+// Global variables
+//==============================================================================
+
+namespace simulation {
+
+extern vector<SourceSite> source_bank;
+
+extern SharedArray<SourceSite> surf_source_bank;
+
+extern SharedArray<CollisionTrackSite> collision_track_bank;
+
+extern SharedArray<SourceSite> fission_bank;
+
+extern vector<vector<int>> ifp_source_delayed_group_bank;
+
+extern vector<vector<double>> ifp_source_lifetime_bank;
+
+extern vector<vector<int>> ifp_fission_delayed_group_bank;
+
+extern vector<vector<double>> ifp_fission_lifetime_bank;
+
+extern vector<int64_t> progeny_per_particle;
+
+extern SharedArray<SourceSite> shared_secondary_bank_read;
+extern SharedArray<SourceSite> shared_secondary_bank_write;
+
+} // namespace simulation
+
+//==============================================================================
+// Non-member functions
+//==============================================================================
+
+void sort_bank(SharedArray<SourceSite>& bank, bool is_fission_bank);
+
+void free_memory_bank();
+
+void init_fission_bank(int64_t max);
+
+int64_t synchronize_global_secondary_bank(
+  SharedArray<SourceSite>& shared_secondary_bank);
+
+} // namespace openmc
+
+#endif // OPENMC_BANK_H

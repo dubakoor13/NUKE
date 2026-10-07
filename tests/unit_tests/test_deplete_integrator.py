@@ -1,0 +1,375 @@
+"""Tests for saving results
+
+It is worth noting that openmc.deplete.integrate is extremely complex, to the
+point I am unsure if it can be reasonably unit-tested.  For the time being, it
+will be left unimplemented and testing will be done via regression.
+
+"""
+
+import copy
+from random import uniform
+from unittest.mock import MagicMock
+
+import h5py
+import numpy as np
+from uncertainties import ufloat
+import pytest
+
+from openmc.mpi import comm
+from openmc.deplete import (
+    ReactionRates, StepResult, Results, OperatorResult, PredictorIntegrator,
+    CECMIntegrator, CF4Integrator, CELIIntegrator, EPCRK4Integrator,
+    LEQIIntegrator, SICELIIntegrator, SILEQIIntegrator, cram, pool)
+
+from tests import dummy_operator
+
+
+INTEGRATORS = [
+    PredictorIntegrator,
+    CECMIntegrator,
+    CF4Integrator,
+    CELIIntegrator,
+    EPCRK4Integrator,
+    LEQIIntegrator,
+    SICELIIntegrator,
+    SILEQIIntegrator
+]
+
+
+def test_results_save(run_in_tmpdir):
+    """Test data save module"""
+
+    rng = np.random.RandomState(comm.rank)
+
+    # Mock geometry
+    op = MagicMock()
+
+    # Avoid DummyOperator thinking it's doing a restart calculation
+    op.prev_res = None
+
+    vol_dict = {}
+    full_burn_list = []
+
+    for i in range(comm.size):
+        vol_dict[str(2*i)] = 1.2
+        vol_dict[str(2*i + 1)] = 1.2
+        full_burn_list.append(str(2*i))
+        full_burn_list.append(str(2*i + 1))
+
+    burn_list = full_burn_list[2*comm.rank: 2*comm.rank + 2]
+    nuc_list = ["na", "nb"]
+
+    name_list = {mat: "" for mat in full_burn_list}
+    op.get_results_info.return_value = (
+        vol_dict, nuc_list, burn_list, full_burn_list, name_list)
+
+    # Construct end-of-step concentrations
+    x1 = [rng.random(2), rng.random(2)]
+    x2 = [rng.random(2), rng.random(2)]
+
+    # Construct reaction rates
+    r1 = ReactionRates(burn_list, ["na", "nb"], ["ra", "rb"])
+    r1[:] = rng.random((2, 2, 2))
+    rate1 = copy.deepcopy(r1)
+
+    r2 = ReactionRates(burn_list, ["na", "nb"], ["ra", "rb"])
+    r2[:] = rng.random((2, 2, 2))
+    rate2 = copy.deepcopy(r2)
+
+    # Create global terms (eigenvalue and uncertainty)
+    eigvl1 = rng.random(2)
+    eigvl2 = rng.random(2)
+
+    eigvl1 = comm.bcast(eigvl1, root=0)
+    eigvl2 = comm.bcast(eigvl2, root=0)
+
+    t1 = [0.0, 1.0]
+    t2 = [1.0, 2.0]
+
+    op_result1 = OperatorResult(ufloat(*eigvl1), rate1)
+    op_result2 = OperatorResult(ufloat(*eigvl2), rate2)
+
+    # saves within a subdirectory
+    StepResult.save(
+        op,
+        x1,
+        op_result1,
+        t1,
+        0,
+        0,
+        write_rates=True,
+        path='out/put/depletion.h5'
+    )
+    res = Results('out/put/depletion.h5')
+
+    # saves with default filename
+    StepResult.save(op, x1, op_result1, t1, 0, 0, write_rates=True)
+    StepResult.save(op, x2, op_result2, t2, 0, 1, write_rates=True)
+
+    # Load the files
+    res = Results("depletion_results.h5")
+
+    for mat_i, mat in enumerate(burn_list):
+        for nuc_i, nuc in enumerate(nuc_list):
+            assert res[0][mat, nuc] == x1[mat_i][nuc_i]
+            assert res[1][mat, nuc] == x2[mat_i][nuc_i]
+    np.testing.assert_array_equal(res[0].rates, rate1)
+    np.testing.assert_array_equal(res[1].rates, rate2)
+
+    np.testing.assert_array_equal(res[0].k, eigvl1)
+    np.testing.assert_array_equal(res[0].time, t1)
+
+    np.testing.assert_array_equal(res[1].k, eigvl2)
+    np.testing.assert_array_equal(res[1].time, t2)
+
+
+def test_results_save_without_rates(run_in_tmpdir):
+    """StepResult.save skips reaction-rate datasets by default"""
+
+    op = MagicMock()
+    op.prev_res = None
+    vol_dict = {"0": 1.0}
+    nuc_list = ["na"]
+    burn_list = ["0"]
+    name_list = {mat: "" for mat in burn_list}
+    op.get_results_info.return_value = (vol_dict, nuc_list, burn_list, burn_list, name_list)
+
+    x = [np.array([1.0])]
+    rates = ReactionRates(burn_list, nuc_list, ["ra"])
+    rates[:] = np.array([[[2.0]]])
+    op_result = OperatorResult(ufloat(1.0, 0.1), rates)
+
+    StepResult.save(op, x, op_result, [0.0, 1.0], 0.0, 0)
+
+    with h5py.File('depletion_results.h5', 'r') as handle:
+        assert 'reaction rates' not in handle
+        assert 'reactions' not in handle
+
+    res = Results('depletion_results.h5')
+    assert res[0].rates.size == 0
+
+
+def test_bad_integrator_inputs():
+    """Test failure modes for Integrator inputs"""
+
+    op = MagicMock()
+    op.prev_res = None
+    op.chain = None
+    op.heavy_metal = 1.0
+    timesteps = [1]
+
+    # No power nor power density given
+    with pytest.raises(ValueError, match="Either power"):
+        PredictorIntegrator(op, timesteps)
+
+    # Length of power != length time
+    with pytest.raises(ValueError, match="number of powers"):
+        PredictorIntegrator(op, timesteps, power=[1, 2])
+
+    # Length of power density != length time
+    with pytest.raises(ValueError, match="number of powers"):
+        PredictorIntegrator(op, timesteps, power_density=[1, 2])
+
+    # SI integrator with bad steps
+    with pytest.raises(TypeError, match="n_steps"):
+        SICELIIntegrator(op, timesteps, [1], n_steps=2.5)
+
+    with pytest.raises(ValueError, match="n_steps"):
+        SICELIIntegrator(op, timesteps, [1], n_steps=0)
+
+    with pytest.raises(ValueError, match="Solver failure"):
+        PredictorIntegrator(op, timesteps, power=1, solver="failure")
+
+    with pytest.raises(TypeError, match=".*callable.*NoneType"):
+        PredictorIntegrator(op, timesteps, power=1, solver=None)
+
+    with pytest.raises(ValueError, match="four arguments"):
+        PredictorIntegrator(op, timesteps, power=1, solver=mock_bad_solver_nargs)
+
+    with pytest.raises(ValueError, match="default to 1"):
+        PredictorIntegrator(op, timesteps, power=1,
+                            solver=mock_bad_solver_fourth_required)
+
+    with pytest.raises(ValueError, match="substeps"):
+        PredictorIntegrator(op, timesteps, power=1, substeps=0)
+
+    with pytest.raises(ValueError, match="substeps"):
+        PredictorIntegrator(op, timesteps, power=1, substeps=-1)
+
+
+def mock_good_solver(A, n, t, substeps=1):
+    return n.copy()
+
+
+def mock_good_solver_substeps(A, n, t, substeps=1):
+    return n + substeps
+
+
+def mock_unsupported_substeps_solver(A, n, t, substeps=1):
+    if substeps > 1:
+        raise NotImplementedError("substeps > 1 not supported")
+    return n.copy()
+
+
+def mock_bad_solver_nargs(A, n):
+    pass
+
+
+def mock_bad_solver_fourth_required(A, n, t, substeps):
+    pass
+
+
+@pytest.mark.parametrize("scheme", dummy_operator.SCHEMES)
+def test_integrator(run_in_tmpdir, scheme):
+    """Test the integrators against their expected values"""
+
+    bundle = dummy_operator.SCHEMES[scheme]
+    operator = dummy_operator.DummyOperator()
+    bundle.solver(operator, [0.75, 0.75], 1.0).integrate()
+
+    # get expected results
+
+    res = Results(operator.output_dir / "depletion_results.h5")
+
+    t1, y1 = res.get_atoms("1", "1")
+    t2, y2 = res.get_atoms("1", "2")
+
+    assert (t1 == [0.0, 0.75, 1.5]).all()
+    assert y1 == pytest.approx(bundle.atoms_1)
+    assert (t2 == [0.0, 0.75, 1.5]).all()
+    assert y2 == pytest.approx(bundle.atoms_2)
+
+    # test structure of depletion time dataset
+    dep_time = res.get_depletion_time()
+    assert dep_time.shape == (2, )
+    assert all(dep_time > 0)
+
+    integrator = bundle.solver(operator, [0.75], 1, solver=cram.CRAM48)
+    assert integrator.solver is cram.CRAM48
+
+    integrator = bundle.solver(operator, [0.75], 1, solver="cram16")
+    assert integrator.solver is cram.CRAM16
+
+    integrator = bundle.solver(operator, [0.75], 1, solver=cram.Cram48Solver,
+                               substeps=2)
+    assert integrator.solver is cram.Cram48Solver
+    assert integrator.substeps == 2
+
+    integrator.solver = mock_good_solver
+    assert integrator.solver is mock_good_solver
+
+    lfunc = lambda A, n, t, substeps=1: mock_good_solver(A, n, t, substeps)
+    integrator.solver = lfunc
+    assert integrator.solver is lfunc
+
+    integrator.solver = mock_good_solver_substeps
+    assert integrator.solver is mock_good_solver_substeps
+
+
+def test_custom_solver_with_default_substeps(monkeypatch):
+    operator = dummy_operator.DummyOperator()
+    n = operator.initial_condition()
+    rates = operator(n, 1.0).rates
+    integrator = PredictorIntegrator(
+        operator, [0.75], power=1.0, solver=mock_good_solver)
+    monkeypatch.setattr(pool, "USE_MULTIPROCESSING", False)
+
+    _, result = integrator._timed_deplete(n, rates, 0.75)
+
+    np.testing.assert_array_equal(result[0], n[0])
+
+
+def test_substep_aware_custom_solver_receives_substeps(monkeypatch):
+    operator = dummy_operator.DummyOperator()
+    n = operator.initial_condition()
+    rates = operator(n, 1.0).rates
+    integrator = PredictorIntegrator(
+        operator, [0.75], power=1.0, solver=mock_good_solver_substeps,
+        substeps=3)
+    monkeypatch.setattr(pool, "USE_MULTIPROCESSING", False)
+
+    _, result = integrator._timed_deplete(n, rates, 0.75)
+
+    np.testing.assert_array_equal(result[0], n[0] + 3)
+
+
+def test_custom_solver_propagates_substeps_error(monkeypatch):
+    operator = dummy_operator.DummyOperator()
+    n = operator.initial_condition()
+    rates = operator(n, 1.0).rates
+    integrator = PredictorIntegrator(
+        operator, [0.75], power=1.0,
+        solver=mock_unsupported_substeps_solver, substeps=2)
+    monkeypatch.setattr(pool, "USE_MULTIPROCESSING", False)
+
+    with pytest.raises(NotImplementedError, match="not supported"):
+        integrator._timed_deplete(n, rates, 0.75)
+
+
+def test_custom_solver_requires_four_args():
+    op = MagicMock()
+    op.prev_res = None
+    op.chain = None
+    op.heavy_metal = 1.0
+
+    with pytest.raises(ValueError, match="four arguments"):
+        PredictorIntegrator(op, [1], power=1, solver=mock_bad_solver_nargs)
+
+
+@pytest.mark.parametrize("integrator", INTEGRATORS)
+def test_timesteps(integrator):
+    # Crate fake operator
+    op = MagicMock()
+    op.prev_res = None
+    op.chain = None
+
+    # Set heavy metal mass and power randomly
+    op.heavy_metal = uniform(0, 10000)
+    power = uniform(0, 1e6)
+
+    # Reference timesteps in seconds
+    day = 86400.0
+    ref_timesteps = [1*day, 2*day, 5*day, 10*day]
+
+    # Case 1, timesteps in seconds
+    timesteps = ref_timesteps
+    x = integrator(op, timesteps, power, timestep_units='s')
+    assert np.allclose(x.timesteps, ref_timesteps)
+
+    # Case 2, timesteps in minutes
+    minute = 60
+    timesteps = [t / minute for t in ref_timesteps]
+    x = integrator(op, timesteps, power, timestep_units='min')
+    assert np.allclose(x.timesteps, ref_timesteps)
+
+    # Case 3, timesteps in hours
+    hour = 60*60
+    timesteps = [t / hour for t in ref_timesteps]
+    x = integrator(op, timesteps, power, timestep_units='h')
+    assert np.allclose(x.timesteps, ref_timesteps)
+
+    # Case 4, timesteps in days
+    timesteps = [t / day for t in ref_timesteps]
+    x = integrator(op, timesteps, power, timestep_units='d')
+    assert np.allclose(x.timesteps, ref_timesteps)
+
+    # Case 5, timesteps in MWd/kg
+    kilograms = op.heavy_metal / 1000.0
+    days = [t/day for t in ref_timesteps]
+    megawatts = power / 1000000.0
+    burnup = [t * megawatts / kilograms for t in days]
+    x = integrator(op, burnup, power, timestep_units='MWd/kg')
+    assert np.allclose(x.timesteps, ref_timesteps)
+
+    # Case 6, mixed units
+    burnup_per_day = (1e-6*power) / kilograms
+    timesteps = [(burnup_per_day, 'MWd/kg'), (2*day, 's'), (5, 'd'),
+                 (10*burnup_per_day, 'MWd/kg')]
+    x = integrator(op, timesteps, power)
+    assert np.allclose(x.timesteps, ref_timesteps)
+
+    # Bad units should raise an exception
+    with pytest.raises(ValueError, match="unit"):
+        integrator(op, ref_timesteps, power, timestep_units='🐨')
+    with pytest.raises(ValueError, match="unit"):
+        integrator(op, [(800.0, 'gorillas')], power)

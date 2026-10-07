@@ -1,0 +1,2619 @@
+#include "openmc/plot.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+
+#include "openmc/tensor.h"
+#include <fmt/core.h>
+#include <fmt/ostream.h>
+#ifdef USE_LIBPNG
+#include <png.h>
+#endif
+
+#include "openmc/cell.h"
+#include "openmc/constants.h"
+#include "openmc/container_util.h"
+#include "openmc/dagmc.h"
+#include "openmc/error.h"
+#include "openmc/file_utils.h"
+#include "openmc/geometry.h"
+#include "openmc/hdf5_interface.h"
+#include "openmc/material.h"
+#include "openmc/mesh.h"
+#include "openmc/message_passing.h"
+#include "openmc/openmp_interface.h"
+#include "openmc/output.h"
+#include "openmc/particle.h"
+#include "openmc/progress_bar.h"
+#include "openmc/random_lcg.h"
+#include "openmc/settings.h"
+#include "openmc/simulation.h"
+#include "openmc/string_utils.h"
+#include "openmc/tallies/filter.h"
+
+namespace openmc {
+
+//==============================================================================
+// Constants
+//==============================================================================
+
+constexpr int PLOT_LEVEL_LOWEST {-1}; //!< lower bound on plot universe level
+constexpr int32_t NOT_FOUND {-2};
+constexpr int32_t OVERLAP {-3};
+
+IdData::IdData(size_t h_res, size_t v_res, bool /*include_filter*/)
+  : data_({v_res, h_res, 3}, NOT_FOUND)
+{}
+
+void IdData::set_value(size_t y, size_t x, const Particle& p, int level,
+  Filter* /*filter*/, FilterMatch* /*match*/)
+{
+  // set cell data
+  if (p.n_coord() <= level) {
+    data_(y, x, 0) = NOT_FOUND;
+    data_(y, x, 1) = NOT_FOUND;
+  } else {
+    data_(y, x, 0) = model::cells.at(p.coord(level).cell())->id_;
+    data_(y, x, 1) = level == p.n_coord() - 1
+                       ? p.cell_instance()
+                       : cell_instance_at_level(p, level);
+  }
+
+  // set material data
+  Cell* c = model::cells.at(p.lowest_coord().cell()).get();
+  if (p.material() == MATERIAL_VOID) {
+    data_(y, x, 2) = MATERIAL_VOID;
+  } else if (c->type_ == Fill::MATERIAL) {
+    Material* m = model::materials.at(p.material()).get();
+    data_(y, x, 2) = m->id_;
+  }
+}
+
+void IdData::set_overlap(size_t y, size_t x, int /*overlap_idx*/)
+{
+  for (size_t k = 0; k < data_.shape(2); ++k)
+    data_(y, x, k) = OVERLAP;
+}
+
+PropertyData::PropertyData(size_t h_res, size_t v_res, bool /*include_filter*/)
+  : data_({v_res, h_res, 2}, NOT_FOUND)
+{}
+
+void PropertyData::set_value(size_t y, size_t x, const Particle& p, int level,
+  Filter* /*filter*/, FilterMatch* /*match*/)
+{
+  Cell* c = model::cells.at(p.lowest_coord().cell()).get();
+  data_(y, x, 0) = (p.sqrtkT() * p.sqrtkT()) / K_BOLTZMANN;
+  data_(y, x, 1) = c->density(p.cell_instance());
+}
+
+void PropertyData::set_overlap(size_t y, size_t x, int /*overlap_idx*/)
+{
+  data_(y, x) = OVERLAP;
+}
+
+//==============================================================================
+// RasterData implementation
+//==============================================================================
+
+RasterData::RasterData(size_t h_res, size_t v_res, bool include_filter)
+  : id_data_({v_res, h_res, include_filter ? 4u : 3u}, NOT_FOUND),
+    property_data_({v_res, h_res, 2}, static_cast<double>(NOT_FOUND)),
+    include_filter_(include_filter)
+{}
+
+void RasterData::set_value(size_t y, size_t x, const Particle& p, int level,
+  Filter* filter, FilterMatch* match)
+{
+  // set cell data
+  if (p.n_coord() <= level) {
+    id_data_(y, x, 0) = NOT_FOUND;
+    id_data_(y, x, 1) = NOT_FOUND;
+  } else {
+    id_data_(y, x, 0) = model::cells.at(p.coord(level).cell())->id_;
+    id_data_(y, x, 1) = level == p.n_coord() - 1
+                          ? p.cell_instance()
+                          : cell_instance_at_level(p, level);
+  }
+
+  // set material data
+  Cell* c = model::cells.at(p.lowest_coord().cell()).get();
+  if (p.material() == MATERIAL_VOID) {
+    id_data_(y, x, 2) = MATERIAL_VOID;
+  } else if (c->type_ == Fill::MATERIAL) {
+    Material* m = model::materials.at(p.material()).get();
+    id_data_(y, x, 2) = m->id_;
+  }
+
+  // set filter index (only if filter is being used)
+  if (include_filter_ && filter) {
+    filter->get_all_bins(p, TallyEstimator::COLLISION, *match);
+    if (match->bins_.empty()) {
+      id_data_(y, x, 3) = -1;
+    } else {
+      id_data_(y, x, 3) = match->bins_[0];
+    }
+    match->bins_.clear();
+    match->weights_.clear();
+  }
+
+  // set temperature (in K)
+  property_data_(y, x, 0) = (p.sqrtkT() * p.sqrtkT()) / K_BOLTZMANN;
+
+  // set density (g/cm³)
+  if (c->type_ != Fill::UNIVERSE && p.material() != MATERIAL_VOID) {
+    property_data_(y, x, 1) = c->density(p.cell_instance());
+  }
+}
+
+void RasterData::set_overlap(size_t y, size_t x, int overlap_idx)
+{
+  // Set cell, instance, and material to OVERLAP, but preserve filter bin for
+  // tally plotting. Cell encodes the overlap index as a negative number so that
+  // it can be used to look up overlap information in the plotter.
+  id_data_(y, x, 0) = OVERLAP - overlap_idx - 1;
+  id_data_(y, x, 1) = OVERLAP;
+  id_data_(y, x, 2) = OVERLAP;
+
+  property_data_(y, x, 0) = OVERLAP;
+  property_data_(y, x, 1) = OVERLAP;
+}
+
+//==============================================================================
+// Global variables
+//==============================================================================
+
+namespace model {
+
+std::unordered_map<int, int> plot_map;
+vector<std::unique_ptr<PlottableInterface>> plots;
+uint64_t plotter_seed = 1;
+
+} // namespace model
+
+//==============================================================================
+// RUN_PLOT controls the logic for making one or many plots
+//==============================================================================
+
+extern "C" int openmc_plot_geometry()
+{
+
+  for (auto& pl : model::plots) {
+    write_message(5, "Processing plot {}: {}...", pl->id(), pl->path_plot());
+    pl->create_output();
+  }
+
+  return 0;
+}
+
+void PlottableInterface::write_image(const ImageData& data) const
+{
+#ifdef USE_LIBPNG
+  output_png(path_plot(), data);
+#else
+  output_ppm(path_plot(), data);
+#endif
+}
+
+void Plot::create_output() const
+{
+  if (PlotType::slice == type_) {
+    // create 2D image
+    ImageData image = create_image();
+    write_image(image);
+  } else if (PlotType::voxel == type_) {
+    // create voxel file for 3D viewing
+    create_voxel();
+  }
+}
+
+void Plot::print_info() const
+{
+  // Plot type
+  if (PlotType::slice == type_) {
+    fmt::print("Plot Type: Slice\n");
+  } else if (PlotType::voxel == type_) {
+    fmt::print("Plot Type: Voxel\n");
+  }
+
+  // Plot parameters
+  fmt::print("Origin: {} {} {}\n", origin_[0], origin_[1], origin_[2]);
+
+  if (PlotType::slice == type_) {
+    fmt::print("Width: {:4} {:4}\n", width_[0], width_[1]);
+  } else if (PlotType::voxel == type_) {
+    fmt::print("Width: {:4} {:4} {:4}\n", width_[0], width_[1], width_[2]);
+  }
+
+  if (PlotColorBy::cells == color_by_) {
+    fmt::print("Coloring: Cells\n");
+  } else if (PlotColorBy::mats == color_by_) {
+    fmt::print("Coloring: Materials\n");
+  }
+
+  if (PlotType::slice == type_) {
+    switch (basis_) {
+    case PlotBasis::xy:
+      fmt::print("Basis: XY\n");
+      break;
+    case PlotBasis::xz:
+      fmt::print("Basis: XZ\n");
+      break;
+    case PlotBasis::yz:
+      fmt::print("Basis: YZ\n");
+      break;
+    }
+    fmt::print("Pixels: {} {}\n", pixels()[0], pixels()[1]);
+  } else if (PlotType::voxel == type_) {
+    fmt::print("Voxels: {} {} {}\n", pixels()[0], pixels()[1], pixels()[2]);
+  }
+}
+
+void read_plots_xml()
+{
+  // Check if plots.xml exists; this is only necessary when the plot runmode is
+  // initiated. Otherwise, we want to read plots.xml because it may be called
+  // later via the API. In that case, its ok for a plots.xml to not exist
+  std::string filename = settings::path_input + "plots.xml";
+  if (!file_exists(filename) && settings::run_mode == RunMode::PLOTTING) {
+    fatal_error(fmt::format("Plots XML file '{}' does not exist!", filename));
+  }
+
+  write_message("Reading plot XML file...", 5);
+
+  // Parse plots.xml file
+  pugi::xml_document doc;
+  doc.load_file(filename.c_str());
+
+  pugi::xml_node root = doc.document_element();
+
+  read_plots_xml(root);
+}
+
+void read_plots_xml(pugi::xml_node root)
+{
+  for (auto node : root.children("plot")) {
+    std::string plot_desc = "<auto>";
+    if (check_for_node(node, "id")) {
+      plot_desc = get_node_value(node, "id", true);
+    }
+
+    if (check_for_node(node, "type")) {
+      std::string type_str = get_node_value(node, "type", true);
+      if (type_str == "slice") {
+        model::plots.emplace_back(
+          std::make_unique<Plot>(node, Plot::PlotType::slice));
+      } else if (type_str == "voxel") {
+        model::plots.emplace_back(
+          std::make_unique<Plot>(node, Plot::PlotType::voxel));
+      } else if (type_str == "wireframe_raytrace") {
+        model::plots.emplace_back(
+          std::make_unique<WireframeRayTracePlot>(node));
+      } else if (type_str == "solid_raytrace") {
+        model::plots.emplace_back(std::make_unique<SolidRayTracePlot>(node));
+      } else {
+        fatal_error(fmt::format(
+          "Unsupported plot type '{}' in plot {}", type_str, plot_desc));
+      }
+      model::plot_map[model::plots.back()->id()] = model::plots.size() - 1;
+    } else {
+      fatal_error(fmt::format("Must specify plot type in plot {}", plot_desc));
+    }
+  }
+}
+
+void free_memory_plot()
+{
+  model::plots.clear();
+  model::plot_map.clear();
+}
+
+// creates an image based on user input from a plots.xml <plot>
+// specification in the PNG/PPM format
+ImageData Plot::create_image() const
+{
+  size_t width = pixels()[0];
+  size_t height = pixels()[1];
+
+  ImageData data({width, height}, not_found_);
+
+  // generate ids for the plot
+  auto ids = get_map<IdData>();
+
+  // assign colors
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      int idx = color_by_ == PlotColorBy::cells ? 0 : 2;
+      auto id = ids.data_(y, x, idx);
+      // no setting needed if not found
+      if (id == NOT_FOUND) {
+        continue;
+      }
+      if (id == OVERLAP) {
+        data(x, y) = overlap_color_;
+        continue;
+      }
+      if (PlotColorBy::cells == color_by_) {
+        data(x, y) = colors_[model::cell_map[id]];
+      } else if (PlotColorBy::mats == color_by_) {
+        if (id == MATERIAL_VOID) {
+          data(x, y) = WHITE;
+          continue;
+        }
+        data(x, y) = colors_[model::material_map[id]];
+      } // color_by if-else
+    }
+  }
+
+  // draw mesh lines if present
+  if (index_meshlines_mesh_ >= 0) {
+    draw_mesh_lines(data);
+  }
+
+  return data;
+}
+
+void PlottableInterface::set_id(pugi::xml_node plot_node)
+{
+  int id {C_NONE};
+  if (check_for_node(plot_node, "id")) {
+    id = std::stoi(get_node_value(plot_node, "id"));
+  }
+
+  try {
+    set_id(id);
+  } catch (const std::runtime_error& e) {
+    fatal_error(e.what());
+  }
+}
+
+void PlottableInterface::set_id(int id)
+{
+  if (id < 0 && id != C_NONE) {
+    throw std::runtime_error {fmt::format("Invalid plot ID: {}", id)};
+  }
+
+  if (id == C_NONE) {
+    id = 1;
+    for (const auto& p : model::plots) {
+      id = std::max(id, p->id() + 1);
+    }
+  }
+
+  if (id_ == id)
+    return;
+
+  // Check to make sure this ID doesn't already exist
+  if (model::plot_map.find(id) != model::plot_map.end()) {
+    throw std::runtime_error {
+      fmt::format("Two or more plots use the same unique ID: {}", id)};
+  }
+
+  id_ = id;
+}
+
+// Checks if png or ppm is already present
+bool file_extension_present(
+  const std::string& filename, const std::string& extension)
+{
+  std::string file_extension_if_present =
+    filename.substr(filename.find_last_of(".") + 1);
+  if (file_extension_if_present == extension)
+    return true;
+  return false;
+}
+
+void Plot::set_output_path(pugi::xml_node plot_node)
+{
+  // Set output file path
+  std::string filename;
+
+  if (check_for_node(plot_node, "filename")) {
+    filename = get_node_value(plot_node, "filename");
+  } else {
+    filename = fmt::format("plot_{}", id());
+  }
+  const std::string dir_if_present =
+    filename.substr(0, filename.find_last_of("/") + 1);
+  if (dir_if_present.size() > 0 && !dir_exists(dir_if_present)) {
+    fatal_error(fmt::format("Directory '{}' does not exist!", dir_if_present));
+  }
+  // add appropriate file extension to name
+  switch (type_) {
+  case PlotType::slice:
+#ifdef USE_LIBPNG
+    if (!file_extension_present(filename, "png"))
+      filename.append(".png");
+#else
+    if (!file_extension_present(filename, "ppm"))
+      filename.append(".ppm");
+#endif
+    break;
+  case PlotType::voxel:
+    if (!file_extension_present(filename, "h5"))
+      filename.append(".h5");
+    break;
+  }
+
+  path_plot_ = filename;
+
+  // Copy plot pixel size
+  vector<int> pxls = get_node_array<int>(plot_node, "pixels");
+  if (PlotType::slice == type_) {
+    if (pxls.size() == 2) {
+      pixels()[0] = pxls[0];
+      pixels()[1] = pxls[1];
+    } else {
+      fatal_error(
+        fmt::format("<pixels> must be length 2 in slice plot {}", id()));
+    }
+  } else if (PlotType::voxel == type_) {
+    if (pxls.size() == 3) {
+      pixels()[0] = pxls[0];
+      pixels()[1] = pxls[1];
+      pixels()[2] = pxls[2];
+    } else {
+      fatal_error(
+        fmt::format("<pixels> must be length 3 in voxel plot {}", id()));
+    }
+  }
+}
+
+void PlottableInterface::set_bg_color(pugi::xml_node plot_node)
+{
+  // Copy plot background color
+  if (check_for_node(plot_node, "background")) {
+    vector<int> bg_rgb = get_node_array<int>(plot_node, "background");
+    if (bg_rgb.size() == 3) {
+      not_found_ = bg_rgb;
+    } else {
+      fatal_error(fmt::format("Bad background RGB in plot {}", id()));
+    }
+  }
+}
+
+void Plot::set_basis(pugi::xml_node plot_node)
+{
+  // Copy plot basis
+  if (PlotType::slice == type_) {
+    std::string pl_basis = "xy";
+    if (check_for_node(plot_node, "basis")) {
+      pl_basis = get_node_value(plot_node, "basis", true);
+    }
+    if ("xy" == pl_basis) {
+      basis_ = PlotBasis::xy;
+    } else if ("xz" == pl_basis) {
+      basis_ = PlotBasis::xz;
+    } else if ("yz" == pl_basis) {
+      basis_ = PlotBasis::yz;
+    } else {
+      fatal_error(
+        fmt::format("Unsupported plot basis '{}' in plot {}", pl_basis, id()));
+    }
+  }
+}
+
+void Plot::set_origin(pugi::xml_node plot_node)
+{
+  // Copy plotting origin
+  auto pl_origin = get_node_array<double>(plot_node, "origin");
+  if (pl_origin.size() == 3) {
+    origin_ = pl_origin;
+  } else {
+    fatal_error(fmt::format("Origin must be length 3 in plot {}", id()));
+  }
+}
+
+void Plot::set_width(pugi::xml_node plot_node)
+{
+  // Copy plotting width
+  vector<double> pl_width = get_node_array<double>(plot_node, "width");
+  if (PlotType::slice == type_) {
+    if (pl_width.size() == 2) {
+      width_.x = pl_width[0];
+      width_.y = pl_width[1];
+      switch (basis_) {
+      case PlotBasis::xy:
+        u_span_ = {width_.x, 0.0, 0.0};
+        v_span_ = {0.0, width_.y, 0.0};
+        break;
+      case PlotBasis::xz:
+        u_span_ = {width_.x, 0.0, 0.0};
+        v_span_ = {0.0, 0.0, width_.y};
+        break;
+      case PlotBasis::yz:
+        u_span_ = {0.0, width_.x, 0.0};
+        v_span_ = {0.0, 0.0, width_.y};
+        break;
+      default:
+        UNREACHABLE();
+      }
+    } else {
+      fatal_error(
+        fmt::format("<width> must be length 2 in slice plot {}", id()));
+    }
+  } else if (PlotType::voxel == type_) {
+    if (pl_width.size() == 3) {
+      pl_width = get_node_array<double>(plot_node, "width");
+      width_ = pl_width;
+    } else {
+      fatal_error(
+        fmt::format("<width> must be length 3 in voxel plot {}", id()));
+    }
+  }
+}
+
+void PlottableInterface::set_universe(pugi::xml_node plot_node)
+{
+  // Copy plot universe level
+  if (check_for_node(plot_node, "level")) {
+    level_ = std::stoi(get_node_value(plot_node, "level"));
+    if (level_ < 0) {
+      fatal_error(fmt::format("Bad universe level in plot {}", id()));
+    }
+  } else {
+    level_ = PLOT_LEVEL_LOWEST;
+  }
+}
+
+void PlottableInterface::set_color_by(pugi::xml_node plot_node)
+{
+  // Copy plot color type
+  std::string pl_color_by = "cell";
+  if (check_for_node(plot_node, "color_by")) {
+    pl_color_by = get_node_value(plot_node, "color_by", true);
+  }
+  if ("cell" == pl_color_by) {
+    color_by_ = PlotColorBy::cells;
+  } else if ("material" == pl_color_by) {
+    color_by_ = PlotColorBy::mats;
+  } else {
+    fatal_error(fmt::format(
+      "Unsupported plot color type '{}' in plot {}", pl_color_by, id()));
+  }
+}
+
+void PlottableInterface::set_default_colors()
+{
+  // Copy plot color type and initialize all colors randomly
+  if (PlotColorBy::cells == color_by_) {
+    colors_.resize(model::cells.size());
+  } else if (PlotColorBy::mats == color_by_) {
+    colors_.resize(model::materials.size());
+  }
+
+  for (auto& c : colors_) {
+    c = random_color();
+    // make sure we don't interfere with some default colors
+    while (c == RED || c == WHITE) {
+      c = random_color();
+    }
+  }
+}
+
+void PlottableInterface::set_user_colors(pugi::xml_node plot_node)
+{
+  for (auto cn : plot_node.children("color")) {
+    // Make sure 3 values are specified for RGB
+    vector<int> user_rgb = get_node_array<int>(cn, "rgb");
+    if (user_rgb.size() != 3) {
+      fatal_error(fmt::format("Bad RGB in plot {}", id()));
+    }
+    // Ensure that there is an id for this color specification
+    int col_id;
+    if (check_for_node(cn, "id")) {
+      col_id = std::stoi(get_node_value(cn, "id"));
+    } else {
+      fatal_error(fmt::format(
+        "Must specify id for color specification in plot {}", id()));
+    }
+    // Add RGB
+    if (PlotColorBy::cells == color_by_) {
+      if (model::cell_map.find(col_id) != model::cell_map.end()) {
+        col_id = model::cell_map[col_id];
+        colors_[col_id] = user_rgb;
+      } else {
+        warning(fmt::format(
+          "Could not find cell {} specified in plot {}", col_id, id()));
+      }
+    } else if (PlotColorBy::mats == color_by_) {
+      if (model::material_map.find(col_id) != model::material_map.end()) {
+        col_id = model::material_map[col_id];
+        colors_[col_id] = user_rgb;
+      } else {
+        warning(fmt::format(
+          "Could not find material {} specified in plot {}", col_id, id()));
+      }
+    }
+  } // color node loop
+}
+
+void Plot::set_meshlines(pugi::xml_node plot_node)
+{
+  // Deal with meshlines
+  pugi::xpath_node_set mesh_line_nodes = plot_node.select_nodes("meshlines");
+
+  if (!mesh_line_nodes.empty()) {
+    if (PlotType::voxel == type_) {
+      warning(fmt::format("Meshlines ignored in voxel plot {}", id()));
+    }
+
+    if (mesh_line_nodes.size() == 1) {
+      // Get first meshline node
+      pugi::xml_node meshlines_node = mesh_line_nodes[0].node();
+
+      // Check mesh type
+      std::string meshtype;
+      if (check_for_node(meshlines_node, "meshtype")) {
+        meshtype = get_node_value(meshlines_node, "meshtype");
+      } else {
+        fatal_error(fmt::format(
+          "Must specify a meshtype for meshlines specification in plot {}",
+          id()));
+      }
+
+      // Ensure that there is a linewidth for this meshlines specification
+      std::string meshline_width;
+      if (check_for_node(meshlines_node, "linewidth")) {
+        meshline_width = get_node_value(meshlines_node, "linewidth");
+        meshlines_width_ = std::stoi(meshline_width);
+      } else {
+        fatal_error(fmt::format(
+          "Must specify a linewidth for meshlines specification in plot {}",
+          id()));
+      }
+
+      // Check for color
+      if (check_for_node(meshlines_node, "color")) {
+        // Check and make sure 3 values are specified for RGB
+        vector<int> ml_rgb = get_node_array<int>(meshlines_node, "color");
+        if (ml_rgb.size() != 3) {
+          fatal_error(
+            fmt::format("Bad RGB for meshlines color in plot {}", id()));
+        }
+        meshlines_color_ = ml_rgb;
+      }
+
+      // Set mesh based on type
+      if ("ufs" == meshtype) {
+        if (!simulation::ufs_mesh) {
+          fatal_error(
+            fmt::format("No UFS mesh for meshlines on plot {}", id()));
+        } else {
+          for (int i = 0; i < model::meshes.size(); ++i) {
+            if (const auto* m =
+                  dynamic_cast<const RegularMesh*>(model::meshes[i].get())) {
+              if (m == simulation::ufs_mesh) {
+                index_meshlines_mesh_ = i;
+              }
+            }
+          }
+          if (index_meshlines_mesh_ == -1)
+            fatal_error("Could not find the UFS mesh for meshlines plot");
+        }
+      } else if ("entropy" == meshtype) {
+        if (!simulation::entropy_mesh) {
+          fatal_error(
+            fmt::format("No entropy mesh for meshlines on plot {}", id()));
+        } else {
+          for (int i = 0; i < model::meshes.size(); ++i) {
+            if (const auto* m =
+                  dynamic_cast<const RegularMesh*>(model::meshes[i].get())) {
+              if (m == simulation::entropy_mesh) {
+                index_meshlines_mesh_ = i;
+              }
+            }
+          }
+          if (index_meshlines_mesh_ == -1)
+            fatal_error("Could not find the entropy mesh for meshlines plot");
+        }
+      } else if ("tally" == meshtype) {
+        // Ensure that there is a mesh id if the type is tally
+        int tally_mesh_id;
+        if (check_for_node(meshlines_node, "id")) {
+          tally_mesh_id = std::stoi(get_node_value(meshlines_node, "id"));
+        } else {
+          std::stringstream err_msg;
+          fatal_error(fmt::format("Must specify a mesh id for meshlines tally "
+                                  "mesh specification in plot {}",
+            id()));
+        }
+        // find the tally index
+        int idx;
+        int err = openmc_get_mesh_index(tally_mesh_id, &idx);
+        if (err != 0) {
+          fatal_error(fmt::format("Could not find mesh {} specified in "
+                                  "meshlines for plot {}",
+            tally_mesh_id, id()));
+        }
+        index_meshlines_mesh_ = idx;
+      } else {
+        fatal_error(fmt::format("Invalid type for meshlines on plot {}", id()));
+      }
+    } else {
+      fatal_error(fmt::format("Mutliple meshlines specified in plot {}", id()));
+    }
+  }
+}
+
+void PlottableInterface::set_mask(pugi::xml_node plot_node)
+{
+  // Deal with masks
+  pugi::xpath_node_set mask_nodes = plot_node.select_nodes("mask");
+
+  if (!mask_nodes.empty()) {
+    if (mask_nodes.size() == 1) {
+      // Get pointer to mask
+      pugi::xml_node mask_node = mask_nodes[0].node();
+
+      // Determine how many components there are and allocate
+      vector<int> iarray = get_node_array<int>(mask_node, "components");
+      if (iarray.size() == 0) {
+        fatal_error(
+          fmt::format("Missing <components> in mask of plot {}", id()));
+      }
+
+      // First we need to change the user-specified identifiers to indices
+      // in the cell and material arrays
+      for (auto& col_id : iarray) {
+        if (PlotColorBy::cells == color_by_) {
+          if (model::cell_map.find(col_id) != model::cell_map.end()) {
+            col_id = model::cell_map[col_id];
+          } else {
+            fatal_error(fmt::format("Could not find cell {} specified in the "
+                                    "mask in plot {}",
+              col_id, id()));
+          }
+        } else if (PlotColorBy::mats == color_by_) {
+          if (model::material_map.find(col_id) != model::material_map.end()) {
+            col_id = model::material_map[col_id];
+          } else {
+            fatal_error(fmt::format("Could not find material {} specified in "
+                                    "the mask in plot {}",
+              col_id, id()));
+          }
+        }
+      }
+
+      // Alter colors based on mask information
+      for (int j = 0; j < colors_.size(); j++) {
+        if (contains(iarray, j)) {
+          if (check_for_node(mask_node, "background")) {
+            vector<int> bg_rgb = get_node_array<int>(mask_node, "background");
+            colors_[j] = bg_rgb;
+          } else {
+            colors_[j] = WHITE;
+          }
+        }
+      }
+
+    } else {
+      fatal_error(fmt::format("Mutliple masks specified in plot {}", id()));
+    }
+  }
+}
+
+void PlottableInterface::set_overlap_color(pugi::xml_node plot_node)
+{
+  color_overlaps_ = false;
+  if (check_for_node(plot_node, "show_overlaps")) {
+    color_overlaps_ = get_node_value_bool(plot_node, "show_overlaps");
+    // check for custom overlap color
+    if (check_for_node(plot_node, "overlap_color")) {
+      if (!color_overlaps_) {
+        warning(fmt::format(
+          "Overlap color specified in plot {} but overlaps won't be shown.",
+          id()));
+      }
+      vector<int> olap_clr = get_node_array<int>(plot_node, "overlap_color");
+      if (olap_clr.size() == 3) {
+        overlap_color_ = olap_clr;
+      } else {
+        fatal_error(fmt::format("Bad overlap RGB in plot {}", id()));
+      }
+    }
+  }
+
+  // make sure we allocate the vector for counting overlap checks if
+  // they're going to be plotted
+  if (color_overlaps_ && settings::run_mode == RunMode::PLOTTING) {
+    settings::check_overlaps = true;
+    model::overlap_check_count.resize(model::cells.size(), 0);
+  }
+}
+
+PlottableInterface::PlottableInterface(pugi::xml_node plot_node)
+{
+  set_id(plot_node);
+  set_bg_color(plot_node);
+  set_universe(plot_node);
+  set_color_by(plot_node);
+  set_default_colors();
+  set_user_colors(plot_node);
+  set_mask(plot_node);
+  set_overlap_color(plot_node);
+}
+
+Plot::Plot(pugi::xml_node plot_node, PlotType type)
+  : PlottableInterface(plot_node), type_(type), index_meshlines_mesh_ {-1}
+{
+  set_output_path(plot_node);
+  set_basis(plot_node);
+  set_origin(plot_node);
+  set_width(plot_node);
+  set_meshlines(plot_node);
+  slice_level_ = level_; // Copy level employed in SlicePlotBase::get_map
+  show_overlaps_ = color_overlaps_;
+}
+
+//==============================================================================
+// OUTPUT_PPM writes out a previously generated image to a PPM file
+//==============================================================================
+
+void output_ppm(const std::string& filename, const ImageData& data)
+{
+  // Open PPM file for writing
+  std::string fname = filename;
+  fname = strtrim(fname);
+  std::ofstream of;
+
+  of.open(fname);
+
+  // Write header
+  of << "P6\n";
+  of << data.shape(0) << " " << data.shape(1) << "\n";
+  of << "255\n";
+  of.close();
+
+  of.open(fname, std::ios::binary | std::ios::app);
+  // Write color for each pixel
+  for (int y = 0; y < data.shape(1); y++) {
+    for (int x = 0; x < data.shape(0); x++) {
+      RGBColor rgb = data(x, y);
+      of << rgb.red << rgb.green << rgb.blue;
+    }
+  }
+  of << "\n";
+}
+
+//==============================================================================
+// OUTPUT_PNG writes out a previously generated image to a PNG file
+//==============================================================================
+
+#ifdef USE_LIBPNG
+void output_png(const std::string& filename, const ImageData& data)
+{
+  // Open PNG file for writing
+  std::string fname = filename;
+  fname = strtrim(fname);
+  auto fp = std::fopen(fname.c_str(), "wb");
+
+  // Initialize write and info structures
+  auto png_ptr =
+    png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+  auto info_ptr = png_create_info_struct(png_ptr);
+
+  // Setup exception handling
+  if (setjmp(png_jmpbuf(png_ptr)))
+    fatal_error("Error during png creation");
+
+  png_init_io(png_ptr, fp);
+
+  // Write header (8 bit colour depth)
+  int width = data.shape(0);
+  int height = data.shape(1);
+  png_set_IHDR(png_ptr, info_ptr, width, height, 8, PNG_COLOR_TYPE_RGB,
+    PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
+  png_write_info(png_ptr, info_ptr);
+
+  // Allocate memory for one row (3 bytes per pixel - RGB)
+  std::vector<png_byte> row(3 * width);
+
+  // Write color for each pixel
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      RGBColor rgb = data(x, y);
+      row[3 * x] = rgb.red;
+      row[3 * x + 1] = rgb.green;
+      row[3 * x + 2] = rgb.blue;
+    }
+    png_write_row(png_ptr, row.data());
+  }
+
+  // End write
+  png_write_end(png_ptr, nullptr);
+
+  // Clean up data structures
+  std::fclose(fp);
+  png_free_data(png_ptr, info_ptr, PNG_FREE_ALL, -1);
+  png_destroy_write_struct(&png_ptr, &info_ptr);
+}
+#endif
+
+//==============================================================================
+// DRAW_MESH_LINES draws mesh line boundaries on an image
+//==============================================================================
+
+void Plot::draw_mesh_lines(ImageData& data) const
+{
+  RGBColor rgb;
+  rgb = meshlines_color_;
+
+  int ax1, ax2;
+  Position expected_u {};
+  Position expected_v {};
+  switch (basis_) {
+  case PlotBasis::xy:
+    ax1 = 0;
+    ax2 = 1;
+    expected_u = {width_[0], 0.0, 0.0};
+    expected_v = {0.0, width_[1], 0.0};
+    break;
+  case PlotBasis::xz:
+    ax1 = 0;
+    ax2 = 2;
+    expected_u = {width_[0], 0.0, 0.0};
+    expected_v = {0.0, 0.0, width_[1]};
+    break;
+  case PlotBasis::yz:
+    ax1 = 1;
+    ax2 = 2;
+    expected_u = {0.0, width_[0], 0.0};
+    expected_v = {0.0, 0.0, width_[1]};
+    break;
+  default:
+    UNREACHABLE();
+  }
+
+  // Meshlines rely on axis-aligned indexing in global coordinates.
+  constexpr double rel_tol {1e-12};
+  double span_tol = rel_tol * (1.0 + u_span_.norm() + v_span_.norm());
+  if ((u_span_ - expected_u).norm() > span_tol ||
+      (v_span_ - expected_v).norm() > span_tol) {
+    fatal_error("Meshlines are only supported for axis-aligned slice plots.");
+  }
+
+  Position ll_plot {origin_};
+  Position ur_plot {origin_};
+
+  ll_plot[ax1] -= width_[0] / 2.;
+  ll_plot[ax2] -= width_[1] / 2.;
+  ur_plot[ax1] += width_[0] / 2.;
+  ur_plot[ax2] += width_[1] / 2.;
+
+  Position width = ur_plot - ll_plot;
+
+  // Find the (axis-aligned) lines of the mesh that intersect this plot.
+  auto axis_lines =
+    model::meshes[index_meshlines_mesh_]->plot(ll_plot, ur_plot);
+
+  // Find the bounds along the second axis (accounting for low-D meshes).
+  int ax2_min, ax2_max;
+  if (axis_lines.second.size() > 0) {
+    double frac = (axis_lines.second.back() - ll_plot[ax2]) / width[ax2];
+    ax2_min = (1.0 - frac) * pixels()[1];
+    if (ax2_min < 0)
+      ax2_min = 0;
+    frac = (axis_lines.second.front() - ll_plot[ax2]) / width[ax2];
+    ax2_max = (1.0 - frac) * pixels()[1];
+    if (ax2_max > pixels()[1])
+      ax2_max = pixels()[1];
+  } else {
+    ax2_min = 0;
+    ax2_max = pixels()[1];
+  }
+
+  // Iterate across the first axis and draw lines.
+  for (auto ax1_val : axis_lines.first) {
+    double frac = (ax1_val - ll_plot[ax1]) / width[ax1];
+    int ax1_ind = frac * pixels()[0];
+    for (int ax2_ind = ax2_min; ax2_ind < ax2_max; ++ax2_ind) {
+      for (int plus = 0; plus <= meshlines_width_; plus++) {
+        if (ax1_ind + plus >= 0 && ax1_ind + plus < pixels()[0])
+          data(ax1_ind + plus, ax2_ind) = rgb;
+        if (ax1_ind - plus >= 0 && ax1_ind - plus < pixels()[0])
+          data(ax1_ind - plus, ax2_ind) = rgb;
+      }
+    }
+  }
+
+  // Find the bounds along the first axis.
+  int ax1_min, ax1_max;
+  if (axis_lines.first.size() > 0) {
+    double frac = (axis_lines.first.front() - ll_plot[ax1]) / width[ax1];
+    ax1_min = frac * pixels()[0];
+    if (ax1_min < 0)
+      ax1_min = 0;
+    frac = (axis_lines.first.back() - ll_plot[ax1]) / width[ax1];
+    ax1_max = frac * pixels()[0];
+    if (ax1_max > pixels()[0])
+      ax1_max = pixels()[0];
+  } else {
+    ax1_min = 0;
+    ax1_max = pixels()[0];
+  }
+
+  // Iterate across the second axis and draw lines.
+  for (auto ax2_val : axis_lines.second) {
+    double frac = (ax2_val - ll_plot[ax2]) / width[ax2];
+    int ax2_ind = (1.0 - frac) * pixels()[1];
+    for (int ax1_ind = ax1_min; ax1_ind < ax1_max; ++ax1_ind) {
+      for (int plus = 0; plus <= meshlines_width_; plus++) {
+        if (ax2_ind + plus >= 0 && ax2_ind + plus < pixels()[1])
+          data(ax1_ind, ax2_ind + plus) = rgb;
+        if (ax2_ind - plus >= 0 && ax2_ind - plus < pixels()[1])
+          data(ax1_ind, ax2_ind - plus) = rgb;
+      }
+    }
+  }
+}
+
+/* outputs a binary file that can be input into silomesh for 3D geometry
+ * visualization.  It works the same way as create_image by dragging a particle
+ * across the geometry for the specified number of voxels. The first 3 int's in
+ * the binary are the number of x, y, and z voxels.  The next 3 double's are
+ * the widths of the voxels in the x, y, and z directions. The next 3 double's
+ * are the x, y, and z coordinates of the lower left point. Finally the binary
+ * is filled with entries of four int's each. Each 'row' in the binary contains
+ * four int's: 3 for x,y,z position and 1 for cell or material id.  For 1
+ * million voxels this produces a file of approximately 15MB.
+ */
+void Plot::create_voxel() const
+{
+  // compute voxel widths in each direction
+  array<double, 3> vox;
+  vox[0] = width_[0] / static_cast<double>(pixels()[0]);
+  vox[1] = width_[1] / static_cast<double>(pixels()[1]);
+  vox[2] = width_[2] / static_cast<double>(pixels()[2]);
+
+  // initial particle position
+  Position ll = origin_ - width_ / 2.;
+
+  // Open binary plot file for writing
+  std::ofstream of;
+  std::string fname = std::string(path_plot_);
+  fname = strtrim(fname);
+  hid_t file_id = file_open(fname, 'w');
+
+  // write header info
+  write_attribute(file_id, "filetype", "voxel");
+  write_attribute(file_id, "version", VERSION_VOXEL);
+  write_attribute(file_id, "openmc_version", VERSION);
+
+#ifdef GIT_SHA1
+  write_attribute(file_id, "git_sha1", GIT_SHA1);
+#endif
+
+  // Write current date and time
+  write_attribute(file_id, "date_and_time", time_stamp().c_str());
+  array<int, 3> h5_pixels;
+  std::copy(pixels().begin(), pixels().end(), h5_pixels.begin());
+  write_attribute(file_id, "num_voxels", h5_pixels);
+  write_attribute(file_id, "voxel_width", vox);
+  write_attribute(file_id, "lower_left", ll);
+
+  // Create dataset for voxel data -- note that the dimensions are reversed
+  // since we want the order in the file to be z, y, x
+  hsize_t dims[3];
+  dims[0] = pixels()[2];
+  dims[1] = pixels()[1];
+  dims[2] = pixels()[0];
+  hid_t dspace, dset, memspace;
+  voxel_init(file_id, &(dims[0]), &dspace, &dset, &memspace);
+
+  SlicePlotBase pltbase;
+  pltbase.origin_ = origin_;
+  pltbase.u_span_ = {width_.x, 0.0, 0.0};
+  pltbase.v_span_ = {0.0, width_.y, 0.0};
+  pltbase.pixels() = pixels();
+  pltbase.show_overlaps_ = color_overlaps_;
+
+  ProgressBar pb;
+  for (int z = 0; z < pixels()[2]; z++) {
+    // update z coordinate
+    pltbase.origin_.z = ll.z + z * vox[2];
+
+    // generate ids using plotbase
+    IdData ids = pltbase.get_map<IdData>();
+
+    // select only cell/material ID data and flip the y-axis
+    int idx = color_by_ == PlotColorBy::cells ? 0 : 2;
+    // Extract 2D slice at index idx from 3D data
+    size_t rows = ids.data_.shape(0);
+    size_t cols = ids.data_.shape(1);
+    tensor::Tensor<int32_t> data_slice({rows, cols});
+    for (size_t r = 0; r < rows; ++r)
+      for (size_t c = 0; c < cols; ++c)
+        data_slice(r, c) = ids.data_(r, c, idx);
+    tensor::Tensor<int32_t> data_flipped = data_slice.flip(0);
+
+    // Write to HDF5 dataset
+    voxel_write_slice(z, dspace, dset, memspace, data_flipped.data());
+
+    // update progress bar
+    pb.set_value(
+      100. * static_cast<double>(z + 1) / static_cast<double>((pixels()[2])));
+  }
+
+  voxel_finalize(dspace, dset, memspace);
+  file_close(file_id);
+}
+
+void voxel_init(hid_t file_id, const hsize_t* dims, hid_t* dspace, hid_t* dset,
+  hid_t* memspace)
+{
+  // Create dataspace/dataset for voxel data
+  *dspace = H5Screate_simple(3, dims, nullptr);
+  *dset = H5Dcreate(file_id, "data", H5T_NATIVE_INT, *dspace, H5P_DEFAULT,
+    H5P_DEFAULT, H5P_DEFAULT);
+
+  // Create dataspace for a slice of the voxel
+  hsize_t dims_slice[2] {dims[1], dims[2]};
+  *memspace = H5Screate_simple(2, dims_slice, nullptr);
+
+  // Select hyperslab in dataspace
+  hsize_t start[3] {0, 0, 0};
+  hsize_t count[3] {1, dims[1], dims[2]};
+  H5Sselect_hyperslab(*dspace, H5S_SELECT_SET, start, nullptr, count, nullptr);
+}
+
+void voxel_write_slice(
+  int x, hid_t dspace, hid_t dset, hid_t memspace, void* buf)
+{
+  hssize_t offset[3] {x, 0, 0};
+  H5Soffset_simple(dspace, offset);
+  H5Dwrite(dset, H5T_NATIVE_INT, memspace, dspace, H5P_DEFAULT, buf);
+}
+
+void voxel_finalize(hid_t dspace, hid_t dset, hid_t memspace)
+{
+  H5Dclose(dset);
+  H5Sclose(dspace);
+  H5Sclose(memspace);
+}
+
+RGBColor random_color(void)
+{
+  return {int(prn(&model::plotter_seed) * 255),
+    int(prn(&model::plotter_seed) * 255), int(prn(&model::plotter_seed) * 255)};
+}
+
+RayTracePlot::RayTracePlot(pugi::xml_node node) : PlottableInterface(node)
+{
+  set_look_at(node);
+  set_camera_position(node);
+  set_field_of_view(node);
+  set_pixels(node);
+  set_orthographic_width(node);
+  set_output_path(node);
+
+  if (check_for_node(node, "orthographic_width") &&
+      check_for_node(node, "field_of_view"))
+    fatal_error("orthographic_width and field_of_view are mutually exclusive "
+                "parameters.");
+}
+
+void RayTracePlot::update_view()
+{
+  // Get centerline vector for camera-to-model. We create vectors around this
+  // that form a pixel array, and then trace rays along that.
+  auto up = up_ / up_.norm();
+  Direction looking_direction = look_at_ - camera_position_;
+  looking_direction /= looking_direction.norm();
+  if (std::abs(std::abs(looking_direction.dot(up)) - 1.0) < 1e-9)
+    fatal_error("Up vector cannot align with vector between camera position "
+                "and look_at!");
+  Direction cam_yaxis = looking_direction.cross(up);
+  cam_yaxis /= cam_yaxis.norm();
+  Direction cam_zaxis = cam_yaxis.cross(looking_direction);
+  cam_zaxis /= cam_zaxis.norm();
+
+  // Cache the camera-to-model matrix
+  camera_to_model_ = {looking_direction.x, cam_yaxis.x, cam_zaxis.x,
+    looking_direction.y, cam_yaxis.y, cam_zaxis.y, looking_direction.z,
+    cam_yaxis.z, cam_zaxis.z};
+}
+
+WireframeRayTracePlot::WireframeRayTracePlot(pugi::xml_node node)
+  : RayTracePlot(node)
+{
+  set_opacities(node);
+  set_wireframe_thickness(node);
+  set_wireframe_ids(node);
+  set_wireframe_color(node);
+  update_view();
+}
+
+void WireframeRayTracePlot::set_wireframe_color(pugi::xml_node plot_node)
+{
+  // Copy plot wireframe color
+  if (check_for_node(plot_node, "wireframe_color")) {
+    vector<int> w_rgb = get_node_array<int>(plot_node, "wireframe_color");
+    if (w_rgb.size() == 3) {
+      wireframe_color_ = w_rgb;
+    } else {
+      fatal_error(fmt::format("Bad wireframe RGB in plot {}", id()));
+    }
+  }
+}
+
+void RayTracePlot::set_output_path(pugi::xml_node node)
+{
+  // Set output file path
+  std::string filename;
+
+  if (check_for_node(node, "filename")) {
+    filename = get_node_value(node, "filename");
+  } else {
+    filename = fmt::format("plot_{}", id());
+  }
+
+#ifdef USE_LIBPNG
+  if (!file_extension_present(filename, "png"))
+    filename.append(".png");
+#else
+  if (!file_extension_present(filename, "ppm"))
+    filename.append(".ppm");
+#endif
+  path_plot_ = filename;
+}
+
+bool WireframeRayTracePlot::trackstack_equivalent(
+  const std::vector<TrackSegment>& track1,
+  const std::vector<TrackSegment>& track2) const
+{
+  if (wireframe_ids_.empty()) {
+    // Draw wireframe for all surfaces/cells/materials
+    if (track1.size() != track2.size())
+      return false;
+    for (int i = 0; i < track1.size(); ++i) {
+      if (track1[i].id != track2[i].id ||
+          track1[i].surface_index != track2[i].surface_index) {
+        return false;
+      }
+    }
+    return true;
+  } else {
+    // This runs in O(nm) where n is the intersection stack size
+    // and m is the number of IDs we are wireframing. A simpler
+    // algorithm can likely be found.
+    for (const int id : wireframe_ids_) {
+      int t1_i = 0;
+      int t2_i = 0;
+
+      // Advance to first instance of the ID
+      while (t1_i < track1.size() && t2_i < track2.size()) {
+        while (t1_i < track1.size() && track1[t1_i].id != id)
+          t1_i++;
+        while (t2_i < track2.size() && track2[t2_i].id != id)
+          t2_i++;
+
+        // This one is really important!
+        if ((t1_i == track1.size() && t2_i != track2.size()) ||
+            (t1_i != track1.size() && t2_i == track2.size()))
+          return false;
+        if (t1_i == track1.size() && t2_i == track2.size())
+          break;
+        // Check if surface different
+        if (track1[t1_i].surface_index != track2[t2_i].surface_index)
+          return false;
+
+        // Pretty sure this should not be used:
+        // if (t2_i != track2.size() - 1 &&
+        //     t1_i != track1.size() - 1 &&
+        //     track1[t1_i+1].id != track2[t2_i+1].id) return false;
+        if (t2_i != 0 && t1_i != 0 &&
+            track1[t1_i - 1].surface_index != track2[t2_i - 1].surface_index)
+          return false;
+
+        // Check if neighboring cells are different
+        // if (track1[t1_i ? t1_i - 1 : 0].id != track2[t2_i ? t2_i - 1 : 0].id)
+        // return false; if (track1[t1_i < track1.size() - 1 ? t1_i + 1 : t1_i
+        // ].id !=
+        //    track2[t2_i < track2.size() - 1 ? t2_i + 1 : t2_i].id) return
+        //    false;
+        t1_i++, t2_i++;
+      }
+    }
+    return true;
+  }
+}
+
+std::pair<Position, Direction> RayTracePlot::get_pixel_ray(
+  int horiz, int vert) const
+{
+  // Compute field of view in radians
+  constexpr double DEGREE_TO_RADIAN = PI / 180.0;
+  double horiz_fov_radians = horizontal_field_of_view_ * DEGREE_TO_RADIAN;
+  double p0 = static_cast<double>(pixels()[0]);
+  double p1 = static_cast<double>(pixels()[1]);
+
+  // focal_plane_dist can be changed to alter the perspective distortion
+  // effect. This is in units of cm. This seems to look good most of the
+  // time. TODO let this variable be set through XML.
+  constexpr double focal_plane_dist = 10.0;
+  const double dx = 2.0 * focal_plane_dist * std::tan(0.5 * horiz_fov_radians);
+  const double dy = p1 / p0 * dx;
+
+  std::pair<Position, Direction> result;
+
+  // Generate the starting position/direction of the ray
+  if (orthographic_width_ == C_NONE) { // perspective projection
+    Direction camera_local_vec;
+    camera_local_vec.x = focal_plane_dist;
+    camera_local_vec.y = -0.5 * dx + horiz * dx / p0;
+    camera_local_vec.z = 0.5 * dy - vert * dy / p1;
+    camera_local_vec /= camera_local_vec.norm();
+
+    result.first = camera_position_;
+    result.second = camera_local_vec.rotate(camera_to_model_);
+  } else { // orthographic projection
+
+    double x_pix_coord = (static_cast<double>(horiz) - p0 / 2.0) / p0;
+    double y_pix_coord = (static_cast<double>(vert) - p1 / 2.0) / p1;
+
+    result.first = camera_position_ +
+                   camera_y_axis() * x_pix_coord * orthographic_width_ +
+                   camera_z_axis() * y_pix_coord * orthographic_width_;
+    result.second = camera_x_axis();
+  }
+
+  return result;
+}
+
+ImageData WireframeRayTracePlot::create_image() const
+{
+  size_t width = pixels()[0];
+  size_t height = pixels()[1];
+  ImageData data({width, height}, not_found_);
+
+  // This array marks where the initial wireframe was drawn. We convolve it with
+  // a filter that gets adjusted with the wireframe thickness in order to
+  // thicken the lines.
+  tensor::Tensor<int> wireframe_initial(
+    {static_cast<size_t>(width), static_cast<size_t>(height)}, 0);
+
+  /* Holds all of the track segments for the current rendered line of pixels.
+   * old_segments holds a copy of this_line_segments from the previous line.
+   * By holding both we can check if the cell/material intersection stack
+   * differs from the left or upper neighbor. This allows a robustly drawn
+   * wireframe. If only checking the left pixel (which requires substantially
+   * less memory), the wireframe tends to be spotty and be disconnected for
+   * surface edges oriented horizontally in the rendering.
+   *
+   * Note that a vector of vectors is required rather than a 2-tensor,
+   * since the stack size varies within each column.
+   */
+  const int n_threads = num_threads();
+  std::vector<std::vector<std::vector<TrackSegment>>> this_line_segments(
+    n_threads);
+  for (int t = 0; t < n_threads; ++t) {
+    this_line_segments[t].resize(pixels()[0]);
+  }
+
+  // The last thread writes to this, and the first thread reads from it.
+  std::vector<std::vector<TrackSegment>> old_segments(pixels()[0]);
+
+#pragma omp parallel
+  {
+    const int n_threads = num_threads();
+    const int tid = thread_num();
+
+    int vert = tid;
+    for (int iter = 0; iter <= pixels()[1] / n_threads; iter++) {
+
+      // Save bottom line of current work chunk to compare against later. This
+      // used to be inside the below if block, but it causes a spurious line to
+      // be drawn at the bottom of the image. Not sure why, but moving it here
+      // fixes things.
+      if (tid == n_threads - 1)
+        old_segments = this_line_segments[n_threads - 1];
+
+      if (vert < pixels()[1]) {
+
+        for (int horiz = 0; horiz < pixels()[0]; ++horiz) {
+
+          // RayTracePlot implements camera ray generation
+          std::pair<Position, Direction> ru = get_pixel_ray(horiz, vert);
+
+          this_line_segments[tid][horiz].clear();
+          ProjectionRay ray(
+            ru.first, ru.second, *this, this_line_segments[tid][horiz]);
+
+          ray.trace();
+
+          // Now color the pixel based on what we have intersected...
+          // Loops backwards over intersections.
+          Position current_color(
+            not_found_.red, not_found_.green, not_found_.blue);
+          const auto& segments = this_line_segments[tid][horiz];
+
+          // There must be at least two cell intersections to color, front and
+          // back of the cell. Maybe an infinitely thick cell could be present
+          // with no back, but why would you want to color that? It's easier to
+          // just skip that edge case and not even color it.
+          if (segments.size() <= 1)
+            continue;
+
+          for (int i = segments.size() - 2; i >= 0; --i) {
+            int colormap_idx = segments[i].id;
+            RGBColor seg_color = colors_[colormap_idx];
+            Position seg_color_vec(
+              seg_color.red, seg_color.green, seg_color.blue);
+            double mixing =
+              std::exp(-xs_[colormap_idx] *
+                       (segments[i + 1].length - segments[i].length));
+            current_color =
+              current_color * mixing + (1.0 - mixing) * seg_color_vec;
+          }
+
+          // save result converting from double-precision color coordinates to
+          // byte-sized
+          RGBColor result;
+          result.red = static_cast<uint8_t>(current_color.x);
+          result.green = static_cast<uint8_t>(current_color.y);
+          result.blue = static_cast<uint8_t>(current_color.z);
+          data(horiz, vert) = result;
+
+          // Check to draw wireframe in horizontal direction. No inter-thread
+          // comm.
+          if (horiz > 0) {
+            if (!trackstack_equivalent(this_line_segments[tid][horiz],
+                  this_line_segments[tid][horiz - 1])) {
+              wireframe_initial(horiz, vert) = 1;
+            }
+          }
+        }
+      } // end "if" vert in correct range
+
+      // We require a barrier before comparing vertical neighbors' intersection
+      // stacks. i.e. all threads must be done with their line.
+#pragma omp barrier
+
+      // Now that the horizontal line has finished rendering, we can fill in
+      // wireframe entries that require comparison among all the threads. Hence
+      // the omp barrier being used. It has to be OUTSIDE any if blocks!
+      if (vert < pixels()[1]) {
+        // Loop over horizontal pixels, checking intersection stack of upper
+        // neighbor
+
+        const std::vector<std::vector<TrackSegment>>* top_cmp = nullptr;
+        if (tid == 0)
+          top_cmp = &old_segments;
+        else
+          top_cmp = &this_line_segments[tid - 1];
+
+        for (int horiz = 0; horiz < pixels()[0]; ++horiz) {
+          if (!trackstack_equivalent(
+                this_line_segments[tid][horiz], (*top_cmp)[horiz])) {
+            wireframe_initial(horiz, vert) = 1;
+          }
+        }
+      }
+
+      // We need another barrier to ensure threads don't proceed to modify their
+      // intersection stacks on that horizontal line while others are
+      // potentially still working on the above.
+#pragma omp barrier
+      vert += n_threads;
+    }
+  } // end omp parallel
+
+  // Now thicken the wireframe lines and apply them to our image
+  for (int vert = 0; vert < pixels()[1]; ++vert) {
+    for (int horiz = 0; horiz < pixels()[0]; ++horiz) {
+      if (wireframe_initial(horiz, vert)) {
+        if (wireframe_thickness_ == 1)
+          data(horiz, vert) = wireframe_color_;
+        for (int i = -wireframe_thickness_ / 2; i < wireframe_thickness_ / 2;
+             ++i)
+          for (int j = -wireframe_thickness_ / 2; j < wireframe_thickness_ / 2;
+               ++j)
+            if (i * i + j * j < wireframe_thickness_ * wireframe_thickness_) {
+
+              // Check if wireframe pixel is out of bounds
+              int w_i = std::clamp(horiz + i, 0, pixels()[0] - 1);
+              int w_j = std::clamp(vert + j, 0, pixels()[1] - 1);
+              data(w_i, w_j) = wireframe_color_;
+            }
+      }
+    }
+  }
+
+  return data;
+}
+
+void WireframeRayTracePlot::create_output() const
+{
+  ImageData data = create_image();
+  write_image(data);
+}
+
+void RayTracePlot::print_info() const
+{
+  fmt::print("Camera position: {} {} {}\n", camera_position_.x,
+    camera_position_.y, camera_position_.z);
+  fmt::print("Look at: {} {} {}\n", look_at_.x, look_at_.y, look_at_.z);
+  fmt::print(
+    "Horizontal field of view: {} degrees\n", horizontal_field_of_view_);
+  fmt::print("Pixels: {} {}\n", pixels()[0], pixels()[1]);
+}
+
+void WireframeRayTracePlot::print_info() const
+{
+  fmt::print("Plot Type: Wireframe ray-traced\n");
+  RayTracePlot::print_info();
+}
+
+void WireframeRayTracePlot::set_opacities(pugi::xml_node node)
+{
+  xs_.resize(colors_.size(), 1e6); // set to large value for opaque by default
+
+  for (auto cn : node.children("color")) {
+    // Make sure 3 values are specified for RGB
+    double user_xs = std::stod(get_node_value(cn, "xs"));
+    int col_id = std::stoi(get_node_value(cn, "id"));
+
+    // Add RGB
+    if (PlotColorBy::cells == color_by_) {
+      if (model::cell_map.find(col_id) != model::cell_map.end()) {
+        col_id = model::cell_map[col_id];
+        xs_[col_id] = user_xs;
+      } else {
+        warning(fmt::format(
+          "Could not find cell {} specified in plot {}", col_id, id()));
+      }
+    } else if (PlotColorBy::mats == color_by_) {
+      if (model::material_map.find(col_id) != model::material_map.end()) {
+        col_id = model::material_map[col_id];
+        xs_[col_id] = user_xs;
+      } else {
+        warning(fmt::format(
+          "Could not find material {} specified in plot {}", col_id, id()));
+      }
+    }
+  }
+}
+
+void RayTracePlot::set_orthographic_width(pugi::xml_node node)
+{
+  if (check_for_node(node, "orthographic_width")) {
+    double orthographic_width =
+      std::stod(get_node_value(node, "orthographic_width", true));
+    if (orthographic_width < 0.0)
+      fatal_error("Requires positive orthographic_width");
+    orthographic_width_ = orthographic_width;
+  }
+}
+
+void WireframeRayTracePlot::set_wireframe_thickness(pugi::xml_node node)
+{
+  if (check_for_node(node, "wireframe_thickness")) {
+    int wireframe_thickness =
+      std::stoi(get_node_value(node, "wireframe_thickness", true));
+    if (wireframe_thickness < 0)
+      fatal_error("Requires non-negative wireframe thickness");
+    wireframe_thickness_ = wireframe_thickness;
+  }
+}
+
+void WireframeRayTracePlot::set_wireframe_ids(pugi::xml_node node)
+{
+  if (check_for_node(node, "wireframe_ids")) {
+    wireframe_ids_ = get_node_array<int>(node, "wireframe_ids");
+    // It is read in as actual ID values, but we have to convert to indices in
+    // mat/cell array
+    for (auto& x : wireframe_ids_)
+      x = color_by_ == PlotColorBy::mats ? model::material_map[x]
+                                         : model::cell_map[x];
+  }
+  // We make sure the list is sorted in order to later use
+  // std::binary_search.
+  std::sort(wireframe_ids_.begin(), wireframe_ids_.end());
+}
+
+void RayTracePlot::set_pixels(pugi::xml_node node)
+{
+  vector<int> pxls = get_node_array<int>(node, "pixels");
+  if (pxls.size() != 2)
+    fatal_error(
+      fmt::format("<pixels> must be length 2 in projection plot {}", id()));
+  pixels()[0] = pxls[0];
+  pixels()[1] = pxls[1];
+}
+
+void RayTracePlot::set_camera_position(pugi::xml_node node)
+{
+  vector<double> camera_pos = get_node_array<double>(node, "camera_position");
+  if (camera_pos.size() != 3) {
+    fatal_error(fmt::format(
+      "camera_position element must have three floating point values"));
+  }
+  camera_position_.x = camera_pos[0];
+  camera_position_.y = camera_pos[1];
+  camera_position_.z = camera_pos[2];
+}
+
+void RayTracePlot::set_look_at(pugi::xml_node node)
+{
+  vector<double> look_at = get_node_array<double>(node, "look_at");
+  if (look_at.size() != 3) {
+    fatal_error("look_at element must have three floating point values");
+  }
+  look_at_.x = look_at[0];
+  look_at_.y = look_at[1];
+  look_at_.z = look_at[2];
+}
+
+void RayTracePlot::set_field_of_view(pugi::xml_node node)
+{
+  // Defaults to 70 degree horizontal field of view (see .h file)
+  if (check_for_node(node, "horizontal_field_of_view")) {
+    double fov =
+      std::stod(get_node_value(node, "horizontal_field_of_view", true));
+    if (fov < 180.0 && fov > 0.0) {
+      horizontal_field_of_view_ = fov;
+    } else {
+      fatal_error(fmt::format("Horizontal field of view for plot {} "
+                              "out-of-range. Must be in (0, 180) degrees.",
+        id()));
+    }
+  }
+}
+
+SolidRayTracePlot::SolidRayTracePlot(pugi::xml_node node) : RayTracePlot(node)
+{
+  set_opaque_ids(node);
+  set_diffuse_fraction(node);
+  set_light_position(node);
+  update_view();
+}
+
+void SolidRayTracePlot::print_info() const
+{
+  fmt::print("Plot Type: Solid ray-traced\n");
+  RayTracePlot::print_info();
+}
+
+ImageData SolidRayTracePlot::create_image() const
+{
+  size_t width = pixels()[0];
+  size_t height = pixels()[1];
+  ImageData data({width, height}, not_found_);
+
+#pragma omp parallel for schedule(dynamic) collapse(2)
+  for (int horiz = 0; horiz < pixels()[0]; ++horiz) {
+    for (int vert = 0; vert < pixels()[1]; ++vert) {
+      // RayTracePlot implements camera ray generation
+      std::pair<Position, Direction> ru = get_pixel_ray(horiz, vert);
+      PhongRay ray(ru.first, ru.second, *this);
+      ray.trace();
+      data(horiz, vert) = ray.result_color();
+    }
+  }
+
+  return data;
+}
+
+void SolidRayTracePlot::create_output() const
+{
+  ImageData data = create_image();
+  write_image(data);
+}
+
+void SolidRayTracePlot::set_opaque_ids(pugi::xml_node node)
+{
+  if (check_for_node(node, "opaque_ids")) {
+    auto opaque_ids_tmp = get_node_array<int>(node, "opaque_ids");
+
+    // It is read in as actual ID values, but we have to convert to indices in
+    // mat/cell array
+    for (auto& x : opaque_ids_tmp)
+      x = color_by_ == PlotColorBy::mats ? model::material_map[x]
+                                         : model::cell_map[x];
+
+    opaque_ids_.insert(opaque_ids_tmp.begin(), opaque_ids_tmp.end());
+  }
+}
+
+void SolidRayTracePlot::set_light_position(pugi::xml_node node)
+{
+  if (check_for_node(node, "light_position")) {
+    auto light_pos_tmp = get_node_array<double>(node, "light_position");
+
+    if (light_pos_tmp.size() != 3)
+      fatal_error("Light position must be given as 3D coordinates");
+
+    light_location_.x = light_pos_tmp[0];
+    light_location_.y = light_pos_tmp[1];
+    light_location_.z = light_pos_tmp[2];
+  } else {
+    light_location_ = camera_position();
+  }
+}
+
+void SolidRayTracePlot::set_diffuse_fraction(pugi::xml_node node)
+{
+  if (check_for_node(node, "diffuse_fraction")) {
+    diffuse_fraction_ = std::stod(get_node_value(node, "diffuse_fraction"));
+    if (diffuse_fraction_ < 0.0 || diffuse_fraction_ > 1.0) {
+      fatal_error("Must have 0 <= diffuse fraction <= 1");
+    }
+  }
+}
+
+void ProjectionRay::on_intersection()
+{
+  // This records a tuple with the following info
+  //
+  // 1) ID (material or cell depending on color_by_)
+  // 2) Distance traveled by the ray through that ID
+  // 3) Index of the intersected surface (starting from 1)
+
+  line_segments_.emplace_back(
+    plot_.color_by_ == PlottableInterface::PlotColorBy::mats
+      ? material()
+      : lowest_coord().cell(),
+    traversal_distance_, boundary().surface_index());
+}
+
+void PhongRay::on_intersection()
+{
+  // Check if we hit an opaque material or cell
+  int hit_id = plot_.color_by_ == PlottableInterface::PlotColorBy::mats
+                 ? material()
+                 : lowest_coord().cell();
+
+  // If we are reflected and have advanced beyond the camera,
+  // the ray is done. This is checked here because we should
+  // kill the ray even if the material is not opaque.
+  if (reflected_ && (r() - plot_.camera_position()).dot(u()) >= 0.0) {
+    stop();
+    return;
+  }
+
+  // Anything that's not opaque has zero impact on the plot.
+  if (plot_.opaque_ids_.find(hit_id) == plot_.opaque_ids_.end())
+    return;
+
+  if (!reflected_) {
+    // reflect the particle and set the color to be colored by
+    // the normal or the diffuse lighting contribution
+    reflected_ = true;
+    result_color_ = plot_.colors_[hit_id];
+    // The ray has been advanced slightly past the boundary. Use an
+    // approximation to the actual hit point for stable normal/lighting.
+    Position r_hit = r() - TINY_BIT * u();
+    Direction to_light = plot_.light_location_ - r_hit;
+    to_light /= to_light.norm();
+
+    // TODO
+    // Not sure what can cause a surface token to be invalid here, although it
+    // sometimes happens for a few pixels. It's very very rare, so proceed by
+    // coloring the pixel with the overlap color. It seems to happen only for a
+    // few pixels on the outer boundary of a hex lattice.
+    //
+    // We cannot detect it in the outer loop, and it only matters here, so
+    // that's why the error handling is a little different than for a lost
+    // ray.
+    if (surface() == 0) {
+      result_color_ = plot_.overlap_color_;
+      stop();
+      return;
+    }
+
+    // Get surface pointer
+    const auto& surf = model::surfaces.at(surface_index());
+
+    // The crossed surface may be on a higher coordinate level than the
+    // innermost local coordinates, so we check the surface's coordinate level
+    // to find the appropriate coordinate level to use for the normal
+    // calculation
+    int surf_level = boundary().coord_level() - 1;
+    // ensure surface level is within bounds of current coordinate stack
+    surf_level = std::clamp(surf_level, 0, n_coord() - 1);
+
+    Position r_hit_level =
+      coord(surf_level).r() - TINY_BIT * coord(surf_level).u();
+    Direction normal = surf->normal(r_hit_level);
+    normal /= normal.norm();
+
+    // Need to apply rotations to find the normal vector in
+    // the base level universe's coordinate system.
+    for (int lev = surf_level - 1; lev >= 0; --lev) {
+      if (coord(lev + 1).rotated()) {
+        const Cell& c {*model::cells[coord(lev).cell()]};
+        normal = normal.inverse_rotate(c.rotation_);
+      }
+    }
+
+    // use the normal opposed to the ray direction
+    if (normal.dot(u()) > 0.0) {
+      normal *= -1.0;
+    }
+
+    // Facing away from the light means no lighting
+    double dotprod = normal.dot(to_light);
+    dotprod = std::max(0.0, dotprod);
+
+    double modulation =
+      plot_.diffuse_fraction_ + (1.0 - plot_.diffuse_fraction_) * dotprod;
+    result_color_ *= modulation;
+
+    // Now point the particle to the camera. We now begin
+    // checking to see if it's occluded by another surface
+    u() = to_light;
+
+    orig_hit_id_ = hit_id;
+
+    // OpenMC native CSG and DAGMC surfaces have some slight differences
+    // in how they interpret particles that are sitting on a surface.
+    // I don't know exactly why, but this makes everything work beautifully.
+    if (surf->geom_type() == GeometryType::DAG) {
+      surface() = 0;
+    } else {
+      surface() = -surface(); // go to other side
+    }
+
+    // Must fully restart coordinate search. Why? Not sure.
+    clear();
+
+    // Note this could likely be faster if we cached the previous
+    // cell we were in before the reflection. This is the easiest
+    // way to fully initialize all the sub-universe coordinates and
+    // directions though.
+    bool found = exhaustive_find_cell(*this);
+    if (!found) {
+      fatal_error("Lost particle after reflection.");
+    }
+
+    // Must recalculate distance to boundary due to the
+    // direction change
+    compute_distance();
+
+  } else {
+    // If it's not facing the light, we color with the diffuse contribution, so
+    // next we check if we're going to occlude the last reflected surface. if
+    // so, color by the diffuse contribution instead
+
+    if (orig_hit_id_ == -1)
+      fatal_error("somehow a ray got reflected but not original ID set?");
+
+    result_color_ = plot_.colors_[orig_hit_id_];
+    result_color_ *= plot_.diffuse_fraction_;
+    stop();
+  }
+}
+
+extern "C" int openmc_id_map(const void* plot, int32_t* data_out)
+{
+  static bool warned {false};
+  if (!warned) {
+    warning("openmc_id_map is deprecated and will be removed in a future "
+            "release. Use openmc_slice_data.");
+    warned = true;
+  }
+
+  auto plt = reinterpret_cast<const SlicePlotBase*>(plot);
+  if (!plt) {
+    set_errmsg("Invalid slice pointer passed to openmc_id_map");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  if (plt->show_overlaps_ && model::overlap_check_count.size() == 0) {
+    model::overlap_check_count.resize(model::cells.size());
+  }
+
+  auto ids = plt->get_map<IdData>();
+
+  // write id data to array
+  std::copy(ids.data_.begin(), ids.data_.end(), data_out);
+
+  return 0;
+}
+
+extern "C" int openmc_property_map(const void* plot, double* data_out)
+{
+  static bool warned {false};
+  if (!warned) {
+    warning("openmc_property_map is deprecated and will be removed in a future "
+            "release. Use openmc_slice_data.");
+    warned = true;
+  }
+
+  auto plt = reinterpret_cast<const SlicePlotBase*>(plot);
+  if (!plt) {
+    set_errmsg("Invalid slice pointer passed to openmc_property_map");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  if (plt->show_overlaps_ && model::overlap_check_count.size() == 0) {
+    model::overlap_check_count.resize(model::cells.size());
+  }
+
+  auto props = plt->get_map<PropertyData>();
+
+  // write id data to array
+  std::copy(props.data_.begin(), props.data_.end(), data_out);
+
+  return 0;
+}
+
+extern "C" int openmc_slice_data(const double origin[3], const double u_span[3],
+  const double v_span[3], const size_t pixels[2], bool color_overlaps,
+  int level, int32_t filter_index, int32_t* geom_data, double* property_data)
+{
+  // Validate span vectors
+  Direction u_span_pos {u_span[0], u_span[1], u_span[2]};
+  Direction v_span_pos {v_span[0], v_span[1], v_span[2]};
+  double u_norm = u_span_pos.norm();
+  double v_norm = v_span_pos.norm();
+  if (u_norm == 0.0 || v_norm == 0.0) {
+    set_errmsg("Slice span vectors must be non-zero.");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  constexpr double ORTHO_REL_TOL = 1e-10;
+  double dot = u_span_pos.dot(v_span_pos);
+  if (std::abs(dot) > ORTHO_REL_TOL * u_norm * v_norm) {
+    set_errmsg("Slice span vectors must be orthogonal.");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  // Validate filter index if provided
+  if (filter_index >= 0) {
+    if (int err = verify_filter(filter_index))
+      return err;
+  }
+
+  // Initialize overlap check vector if needed
+  if (color_overlaps && model::overlap_check_count.size() == 0) {
+    model::overlap_check_count.resize(model::cells.size());
+  }
+
+  try {
+    // Create a temporary SlicePlotBase object to reuse get_map logic
+    SlicePlotBase plot_params;
+    plot_params.origin_ = Position {origin[0], origin[1], origin[2]};
+    plot_params.u_span_ = u_span_pos;
+    plot_params.v_span_ = v_span_pos;
+    plot_params.pixels_[0] = pixels[0];
+    plot_params.pixels_[1] = pixels[1];
+    plot_params.show_overlaps_ = color_overlaps;
+    plot_params.slice_level_ = level;
+
+    // Clear overlap data structures on new slice call
+    model::overlap_keys.clear();
+    model::overlap_key_index.clear();
+
+    // Use get_map<RasterData> to generate data
+    auto data = plot_params.get_map<RasterData>(filter_index);
+    std::copy(data.id_data_.begin(), data.id_data_.end(), geom_data);
+
+    // Copy property data if requested
+    if (property_data != nullptr) {
+      std::copy(
+        data.property_data_.begin(), data.property_data_.end(), property_data);
+    }
+  } catch (const std::exception& e) {
+    set_errmsg(e.what());
+    return OPENMC_E_UNASSIGNED;
+  }
+
+  return 0;
+}
+
+// Gets the number of overlaps that we need data for
+extern "C" int openmc_slice_data_overlap_count(size_t* count)
+{
+  if (!count) {
+    set_errmsg("Null pointer passed for overlap count.");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+  *count = model::overlap_keys.size();
+
+  return 0;
+}
+
+// Plotter pre-allocates array size based on what is returned with
+// overlap_count; populates an array of size 3*count
+extern "C" int openmc_slice_data_overlap_info(
+  size_t count, int32_t* overlap_info)
+{
+  for (size_t i = 0; i < count; ++i) {
+    overlap_info[i * 3] = model::overlap_keys[i].universe_id;
+    overlap_info[i * 3 + 1] = model::overlap_keys[i].cell1_id;
+    overlap_info[i * 3 + 2] = model::overlap_keys[i].cell2_id;
+  }
+
+  return 0;
+}
+
+extern "C" int openmc_get_plot_index(int32_t id, int32_t* index)
+{
+  auto it = model::plot_map.find(id);
+  if (it == model::plot_map.end()) {
+    set_errmsg("No plot exists with ID=" + std::to_string(id) + ".");
+    return OPENMC_E_INVALID_ID;
+  }
+
+  *index = it->second;
+  return 0;
+}
+
+extern "C" int openmc_plot_get_id(int32_t index, int32_t* id)
+{
+  if (index < 0 || index >= model::plots.size()) {
+    set_errmsg("Index in plots array is out of bounds.");
+    return OPENMC_E_OUT_OF_BOUNDS;
+  }
+
+  *id = model::plots[index]->id();
+  return 0;
+}
+
+extern "C" int openmc_plot_set_id(int32_t index, int32_t id)
+{
+  if (index < 0 || index >= model::plots.size()) {
+    set_errmsg("Index in plots array is out of bounds.");
+    return OPENMC_E_OUT_OF_BOUNDS;
+  }
+
+  if (id < 0 && id != C_NONE) {
+    set_errmsg("Invalid plot ID.");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  auto* plot = model::plots[index].get();
+  int32_t old_id = plot->id();
+  if (id == old_id)
+    return 0;
+
+  model::plot_map.erase(old_id);
+  try {
+    plot->set_id(id);
+  } catch (const std::runtime_error& e) {
+    model::plot_map[old_id] = index;
+    set_errmsg(e.what());
+    return OPENMC_E_INVALID_ID;
+  }
+  model::plot_map[plot->id()] = index;
+  return 0;
+}
+
+extern "C" size_t openmc_plots_size()
+{
+  return model::plots.size();
+}
+
+int map_phong_domain_id(
+  const SolidRayTracePlot* plot, int32_t id, int32_t* index_out)
+{
+  if (!plot || !index_out) {
+    set_errmsg("Invalid plot pointer passed to map_phong_domain_id");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  if (plot->color_by_ == PlottableInterface::PlotColorBy::mats) {
+    auto it = model::material_map.find(id);
+    if (it == model::material_map.end()) {
+      set_errmsg("Invalid material ID for SolidRayTracePlot");
+      return OPENMC_E_INVALID_ID;
+    }
+    *index_out = it->second;
+    return 0;
+  }
+
+  if (plot->color_by_ == PlottableInterface::PlotColorBy::cells) {
+    auto it = model::cell_map.find(id);
+    if (it == model::cell_map.end()) {
+      set_errmsg("Invalid cell ID for SolidRayTracePlot");
+      return OPENMC_E_INVALID_ID;
+    }
+    *index_out = it->second;
+    return 0;
+  }
+
+  set_errmsg("Unsupported color_by for SolidRayTracePlot");
+  return OPENMC_E_INVALID_TYPE;
+}
+
+int get_solidraytrace_plot_by_index(int32_t index, SolidRayTracePlot** plot)
+{
+  if (!plot) {
+    set_errmsg("Null output pointer passed to get_solidraytrace_plot_by_index");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  if (index < 0 || index >= model::plots.size()) {
+    set_errmsg("Index in plots array is out of bounds.");
+    return OPENMC_E_OUT_OF_BOUNDS;
+  }
+
+  auto* plottable = model::plots[index].get();
+  auto* solid_plot = dynamic_cast<SolidRayTracePlot*>(plottable);
+  if (!solid_plot) {
+    set_errmsg("Plot at index=" + std::to_string(index) +
+               " is not a solid raytrace plot.");
+    return OPENMC_E_INVALID_TYPE;
+  }
+
+  *plot = solid_plot;
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_create(int32_t* index)
+{
+  if (!index) {
+    set_errmsg(
+      "Null output pointer passed to openmc_solidraytrace_plot_create");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  try {
+    auto new_plot = std::make_unique<SolidRayTracePlot>();
+    new_plot->set_id();
+    int32_t new_plot_id = new_plot->id();
+#ifdef USE_LIBPNG
+    new_plot->path_plot() = fmt::format("plot_{}.png", new_plot_id);
+#else
+    new_plot->path_plot() = fmt::format("plot_{}.ppm", new_plot_id);
+#endif
+    int32_t new_plot_index = model::plots.size();
+    model::plots.emplace_back(std::move(new_plot));
+    model::plot_map[new_plot_id] = new_plot_index;
+    *index = new_plot_index;
+  } catch (const std::exception& e) {
+    set_errmsg(e.what());
+    return OPENMC_E_ALLOCATE;
+  }
+
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_get_pixels(
+  int32_t index, int32_t* width, int32_t* height)
+{
+  if (!width || !height) {
+    set_errmsg(
+      "Invalid arguments passed to openmc_solidraytrace_plot_get_pixels");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  *width = plt->pixels()[0];
+  *height = plt->pixels()[1];
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_pixels(
+  int32_t index, int32_t width, int32_t height)
+{
+  if (width <= 0 || height <= 0) {
+    set_errmsg(
+      "Invalid arguments passed to openmc_solidraytrace_plot_set_pixels");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  plt->pixels()[0] = width;
+  plt->pixels()[1] = height;
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_get_color_by(
+  int32_t index, int32_t* color_by)
+{
+  if (!color_by) {
+    set_errmsg(
+      "Invalid arguments passed to openmc_solidraytrace_plot_get_color_by");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  if (plt->color_by_ == PlottableInterface::PlotColorBy::mats) {
+    *color_by = 0;
+  } else if (plt->color_by_ == PlottableInterface::PlotColorBy::cells) {
+    *color_by = 1;
+  } else {
+    set_errmsg("Unsupported color_by for SolidRayTracePlot");
+    return OPENMC_E_INVALID_TYPE;
+  }
+
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_color_by(
+  int32_t index, int32_t color_by)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  if (color_by == 0) {
+    plt->color_by_ = PlottableInterface::PlotColorBy::mats;
+  } else if (color_by == 1) {
+    plt->color_by_ = PlottableInterface::PlotColorBy::cells;
+  } else {
+    set_errmsg("Invalid color_by value for SolidRayTracePlot");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_default_colors(int32_t index)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  plt->set_default_colors();
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_all_opaque(int32_t index)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  plt->opaque_ids().clear();
+  if (plt->color_by_ == PlottableInterface::PlotColorBy::mats) {
+    for (int32_t i = 0; i < model::materials.size(); ++i) {
+      plt->opaque_ids().insert(i);
+    }
+    return 0;
+  }
+
+  if (plt->color_by_ == PlottableInterface::PlotColorBy::cells) {
+    for (int32_t i = 0; i < model::cells.size(); ++i) {
+      plt->opaque_ids().insert(i);
+    }
+    return 0;
+  }
+
+  set_errmsg("Unsupported color_by for SolidRayTracePlot");
+  return OPENMC_E_INVALID_TYPE;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_opaque(
+  int32_t index, int32_t id, bool visible)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  int32_t domain_index = -1;
+  err = map_phong_domain_id(plt, id, &domain_index);
+  if (err)
+    return err;
+
+  if (visible) {
+    plt->opaque_ids().insert(domain_index);
+  } else {
+    plt->opaque_ids().erase(domain_index);
+  }
+
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_color(
+  int32_t index, int32_t id, uint8_t r, uint8_t g, uint8_t b)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  int32_t domain_index = -1;
+  err = map_phong_domain_id(plt, id, &domain_index);
+  if (err)
+    return err;
+
+  if (domain_index < 0 ||
+      static_cast<size_t>(domain_index) >= plt->colors_.size()) {
+    set_errmsg("Color index out of range for SolidRayTracePlot");
+    return OPENMC_E_OUT_OF_BOUNDS;
+  }
+
+  plt->colors_[domain_index] = RGBColor(r, g, b);
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_get_camera_position(
+  int32_t index, double* x, double* y, double* z)
+{
+  if (!x || !y || !z) {
+    set_errmsg("Invalid arguments passed to "
+               "openmc_solidraytrace_plot_get_camera_position");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  const auto& camera_position = plt->camera_position();
+  *x = camera_position.x;
+  *y = camera_position.y;
+  *z = camera_position.z;
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_camera_position(
+  int32_t index, double x, double y, double z)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  plt->camera_position() = {x, y, z};
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_get_look_at(
+  int32_t index, double* x, double* y, double* z)
+{
+  if (!x || !y || !z) {
+    set_errmsg(
+      "Invalid arguments passed to openmc_solidraytrace_plot_get_look_at");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  const auto& look_at = plt->look_at();
+  *x = look_at.x;
+  *y = look_at.y;
+  *z = look_at.z;
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_look_at(
+  int32_t index, double x, double y, double z)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  plt->look_at() = {x, y, z};
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_get_up(
+  int32_t index, double* x, double* y, double* z)
+{
+  if (!x || !y || !z) {
+    set_errmsg("Invalid arguments passed to openmc_solidraytrace_plot_get_up");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  const auto& up = plt->up();
+  *x = up.x;
+  *y = up.y;
+  *z = up.z;
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_up(
+  int32_t index, double x, double y, double z)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  plt->up() = {x, y, z};
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_get_light_position(
+  int32_t index, double* x, double* y, double* z)
+{
+  if (!x || !y || !z) {
+    set_errmsg("Invalid arguments passed to "
+               "openmc_solidraytrace_plot_get_light_position");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  const auto& light_position = plt->light_location();
+  *x = light_position.x;
+  *y = light_position.y;
+  *z = light_position.z;
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_light_position(
+  int32_t index, double x, double y, double z)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  plt->light_location() = {x, y, z};
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_get_fov(int32_t index, double* fov)
+{
+  if (!fov) {
+    set_errmsg("Invalid arguments passed to openmc_solidraytrace_plot_get_fov");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  *fov = plt->horizontal_field_of_view();
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_fov(int32_t index, double fov)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  plt->horizontal_field_of_view() = fov;
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_update_view(int32_t index)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  plt->update_view();
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_create_image(
+  int32_t index, uint8_t* data_out, int32_t width, int32_t height)
+{
+  if (!data_out || width <= 0 || height <= 0) {
+    set_errmsg(
+      "Invalid arguments passed to openmc_solidraytrace_plot_create_image");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  if (plt->pixels()[0] != width || plt->pixels()[1] != height) {
+    set_errmsg(
+      "Requested image size does not match SolidRayTracePlot pixel settings");
+    return OPENMC_E_INVALID_SIZE;
+  }
+
+  ImageData data = plt->create_image();
+  if (static_cast<int32_t>(data.shape()[0]) != width ||
+      static_cast<int32_t>(data.shape()[1]) != height) {
+    set_errmsg("Unexpected image size from SolidRayTracePlot create_image");
+    return OPENMC_E_INVALID_SIZE;
+  }
+
+  for (int32_t y = 0; y < height; ++y) {
+    for (int32_t x = 0; x < width; ++x) {
+      const auto& color = data(x, y);
+      size_t idx = (static_cast<size_t>(y) * width + x) * 3;
+      data_out[idx + 0] = color.red;
+      data_out[idx + 1] = color.green;
+      data_out[idx + 2] = color.blue;
+    }
+  }
+
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_get_color(
+  int32_t index, int32_t id, uint8_t* r, uint8_t* g, uint8_t* b)
+{
+  if (!r || !g || !b) {
+    set_errmsg(
+      "Invalid arguments passed to openmc_solidraytrace_plot_get_color");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  int32_t domain_index = -1;
+  err = map_phong_domain_id(plt, id, &domain_index);
+  if (err)
+    return err;
+
+  if (domain_index < 0 ||
+      static_cast<size_t>(domain_index) >= plt->colors_.size()) {
+    set_errmsg("Color index out of range for SolidRayTracePlot");
+    return OPENMC_E_OUT_OF_BOUNDS;
+  }
+
+  const auto& color = plt->colors_[domain_index];
+  *r = color.red;
+  *g = color.green;
+  *b = color.blue;
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_get_diffuse_fraction(
+  int32_t index, double* diffuse_fraction)
+{
+  if (!diffuse_fraction) {
+    set_errmsg("Invalid arguments passed to "
+               "openmc_solidraytrace_plot_get_diffuse_fraction");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  *diffuse_fraction = plt->diffuse_fraction();
+  return 0;
+}
+
+extern "C" int openmc_solidraytrace_plot_set_diffuse_fraction(
+  int32_t index, double diffuse_fraction)
+{
+  SolidRayTracePlot* plt = nullptr;
+  int err = get_solidraytrace_plot_by_index(index, &plt);
+  if (err)
+    return err;
+
+  if (diffuse_fraction < 0.0 || diffuse_fraction > 1.0) {
+    set_errmsg("Diffuse fraction must be between 0 and 1");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  plt->diffuse_fraction() = diffuse_fraction;
+  return 0;
+}
+
+} // namespace openmc

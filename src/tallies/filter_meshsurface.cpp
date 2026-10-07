@@ -1,0 +1,77 @@
+#include "openmc/tallies/filter_meshsurface.h"
+
+#include "openmc/capi.h"
+#include "openmc/constants.h"
+#include "openmc/error.h"
+#include "openmc/mesh.h"
+
+namespace openmc {
+
+void MeshSurfaceFilter::get_all_bins(
+  const Particle& p, TallyEstimator estimator, FilterMatch& match) const
+{
+  Position r0 = p.r_last_current();
+  Position r1 = p.r();
+  if (translated_) {
+    r0 -= translation();
+    r1 -= translation();
+  }
+
+  Direction u = p.u();
+  model::meshes[mesh_]->surface_bins_crossed(r0, r1, u, match.bins_);
+  for (int i = 0; i < match.bins_.size(); i++)
+    match.weights_.push_back(1.0);
+}
+
+std::string MeshSurfaceFilter::text_label(int bin) const
+{
+  auto& mesh = *model::meshes[mesh_];
+  int n_dim = mesh.n_dimension_;
+
+  // Get flattened mesh index and surface index.
+  int i_mesh = bin / (4 * n_dim);
+  int surf_index = bin % (4 * n_dim);
+
+  // Get mesh index part of label, then append the surface part.
+  // The surface is labeled by the underlying mesh.
+  std::string out = MeshFilter::text_label(i_mesh);
+  out += mesh.surface_bin_label(surf_index);
+
+  return out;
+}
+
+void MeshSurfaceFilter::set_mesh(int32_t mesh)
+{
+  mesh_ = mesh;
+  n_bins_ = model::meshes[mesh_]->n_surface_bins();
+}
+
+//==============================================================================
+// C-API functions
+//==============================================================================
+
+extern "C" int openmc_meshsurface_filter_get_mesh(
+  int32_t index, int32_t* index_mesh)
+{
+  return openmc_mesh_filter_get_mesh(index, index_mesh);
+}
+
+extern "C" int openmc_meshsurface_filter_set_mesh(
+  int32_t index, int32_t index_mesh)
+{
+  return openmc_mesh_filter_set_mesh(index, index_mesh);
+}
+
+extern "C" int openmc_meshsurface_filter_get_translation(
+  int32_t index, double translation[3])
+{
+  return openmc_mesh_filter_get_translation(index, translation);
+}
+
+extern "C" int openmc_meshsurface_filter_set_translation(
+  int32_t index, double translation[3])
+{
+  return openmc_mesh_filter_set_translation(index, translation);
+}
+
+} // namespace openmc

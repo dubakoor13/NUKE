@@ -1,0 +1,634 @@
+#ifndef OPENMC_PLOT_H
+#define OPENMC_PLOT_H
+
+#include <cmath>
+#include <sstream>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#include "openmc/tensor.h"
+#include "pugixml.hpp"
+
+#include "hdf5.h"
+#include "openmc/cell.h"
+#include "openmc/constants.h"
+#include "openmc/error.h"
+#include "openmc/geometry.h"
+#include "openmc/particle.h"
+#include "openmc/position.h"
+#include "openmc/random_lcg.h"
+#include "openmc/ray.h"
+#include "openmc/tallies/filter.h"
+#include "openmc/tallies/filter_match.h"
+#include "openmc/xml_interface.h"
+
+namespace openmc {
+
+//===============================================================================
+// Global variables
+//===============================================================================
+
+class PlottableInterface;
+
+namespace model {
+
+extern std::unordered_map<int, int> plot_map; //!< map of plot ids to index
+extern vector<std::unique_ptr<PlottableInterface>>
+  plots; //!< Plot instance container
+
+extern uint64_t plotter_seed; // Stream index used by the plotter
+
+} // namespace model
+
+//===============================================================================
+// RGBColor holds color information for plotted objects
+//===============================================================================
+
+struct RGBColor {
+  // Constructors
+  RGBColor() : red(0), green(0), blue(0) {};
+  RGBColor(const int v[3]) : red(v[0]), green(v[1]), blue(v[2]) {};
+  RGBColor(int r, int g, int b) : red(r), green(g), blue(b) {};
+
+  RGBColor(const vector<int>& v)
+  {
+    if (v.size() != 3) {
+      throw std::out_of_range("Incorrect vector size for RGBColor.");
+    }
+    red = v[0];
+    green = v[1];
+    blue = v[2];
+  }
+
+  bool operator==(const RGBColor& other)
+  {
+    return red == other.red && green == other.green && blue == other.blue;
+  }
+
+  RGBColor& operator*=(const double x)
+  {
+    red *= x;
+    green *= x;
+    blue *= x;
+    return *this;
+  }
+
+  // Members
+  uint8_t red, green, blue;
+};
+
+// some default colors
+const RGBColor WHITE {255, 255, 255};
+const RGBColor RED {255, 0, 0};
+const RGBColor BLACK {0, 0, 0};
+
+/**
+ * \class PlottableInterface
+ * \brief Interface for plottable objects.
+ *
+ * PlottableInterface classes must have unique IDs. If no ID (or -1) is
+ * provided, the next available ID is assigned automatically. They guarantee
+ * the ability to create output in some form. This interface is designed to be
+ * implemented by classes that produce plot-relevant data which can be
+ * visualized.
+ */
+
+typedef tensor::Tensor<RGBColor> ImageData;
+class PlottableInterface {
+public:
+  PlottableInterface() = default;
+
+  void set_default_colors();
+
+private:
+  void set_id(pugi::xml_node plot_node);
+  int id_ {C_NONE}; // unique plot ID
+
+  void set_bg_color(pugi::xml_node plot_node);
+  void set_universe(pugi::xml_node plot_node);
+  void set_color_by(pugi::xml_node plot_node);
+  void set_user_colors(pugi::xml_node plot_node);
+  void set_overlap_color(pugi::xml_node plot_node);
+  void set_mask(pugi::xml_node plot_node);
+
+protected:
+  // Plot output filename, derived classes have logic to set it
+  std::string path_plot_;
+
+public:
+  enum class PlotColorBy { cells = 0, mats = 1 };
+
+  // Generates image data based on plot parameters and returns it
+  virtual ImageData create_image() const = 0;
+
+  // Creates the output image named path_plot_
+  virtual void create_output() const = 0;
+
+  // Write populated image data to file
+  void write_image(const ImageData& data) const;
+
+  // Print useful info to the terminal
+  virtual void print_info() const = 0;
+
+  const std::string& path_plot() const { return path_plot_; }
+  std::string& path_plot() { return path_plot_; }
+  int id() const { return id_; }
+  void set_id(int id = C_NONE);
+  int level() const { return level_; }
+  PlotColorBy color_by() const { return color_by_; }
+
+  // Public color-related data
+  PlottableInterface(pugi::xml_node plot_node);
+  virtual ~PlottableInterface() = default;
+  int level_ {-1};                           // Universe level to plot
+  bool color_overlaps_ {false};              // Show overlapping cells?
+  PlotColorBy color_by_ {PlotColorBy::mats}; // Plot coloring (cell/material)
+  RGBColor not_found_ {WHITE};               // Plot background color
+  RGBColor overlap_color_ {RED};             // Plot overlap color
+  vector<RGBColor> colors_;                  // Plot colors
+};
+
+struct IdData {
+  // Constructor
+  IdData(size_t h_res, size_t v_res, bool include_filter = false);
+
+  // Methods
+  void set_value(size_t y, size_t x, const Particle& p, int level,
+    Filter* filter = nullptr, FilterMatch* match = nullptr);
+  void set_overlap(size_t y, size_t x, int overlap_idx);
+
+  // Members
+  tensor::Tensor<int32_t> data_; //!< 2D array of cell & material ids
+};
+
+struct PropertyData {
+  // Constructor
+  PropertyData(size_t h_res, size_t v_res, bool include_filter = false);
+
+  // Methods
+  void set_value(size_t y, size_t x, const Particle& p, int level,
+    Filter* filter = nullptr, FilterMatch* match = nullptr);
+  void set_overlap(size_t y, size_t x, int overlap_idx);
+
+  // Members
+  tensor::Tensor<double> data_; //!< 2D array of temperature & density data
+};
+
+struct RasterData {
+  // Constructor
+  RasterData(size_t h_res, size_t v_res, bool include_filter = false);
+
+  // Methods
+  void set_value(size_t y, size_t x, const Particle& p, int level,
+    Filter* filter = nullptr, FilterMatch* match = nullptr);
+  void set_overlap(size_t y, size_t x, int overlap_idx);
+
+  // Members
+  tensor::Tensor<int32_t>
+    id_data_; //!< [v_res, h_res, 3 or 4]: cell, instance, mat, [filter_bin]
+  tensor::Tensor<double>
+    property_data_;     //!< [v_res, h_res, 2]: temperature, density
+  bool include_filter_; //!< Whether filter bin index is included
+};
+
+//===============================================================================
+// Plot class
+//===============================================================================
+
+class SlicePlotBase {
+public:
+  template<class T>
+  T get_map(int32_t filter_index = -1) const;
+
+  enum class PlotBasis { xy = 1, xz = 2, yz = 3 };
+
+  // Accessors
+
+  const std::array<size_t, 3>& pixels() const { return pixels_; }
+  std::array<size_t, 3>& pixels() { return pixels_; }
+
+  // Members
+public:
+  Position origin_;         //!< Plot origin in geometry
+  Direction u_span_;        //!< Full-width span vector in geometry
+  Direction v_span_;        //!< Full-height span vector in geometry
+  array<size_t, 3> pixels_; //!< Plot size in pixels
+  bool show_overlaps_;      //!< Show overlapping cells?
+  int slice_level_ {-1};    //!< Plot universe level
+private:
+};
+
+template<class T>
+T SlicePlotBase::get_map(int32_t filter_index) const
+{
+
+  size_t width = pixels_[0];
+  size_t height = pixels_[1];
+
+  // Determine if filter is being used
+  bool include_filter = (filter_index >= 0);
+  Filter* filter = nullptr;
+  if (include_filter) {
+    filter = model::tally_filters[filter_index].get();
+  }
+
+  // size data array
+  T data(width, height, include_filter);
+
+  // compute pixel steps and top-left pixel center
+  Direction u_step = u_span_ / static_cast<double>(width);
+  Direction v_step = v_span_ / static_cast<double>(height);
+
+  Position start =
+    origin_ - 0.5 * u_span_ + 0.5 * v_span_ + 0.5 * u_step - 0.5 * v_step;
+
+  // Validate that span vectors define a valid plane
+  Position cross = u_span_.cross(v_span_);
+  if (cross.norm() == 0.0) {
+    fatal_error("Slice span vectors are invalid (zero area).");
+  }
+
+  // Use an arbitrary direction that is not aligned with any coordinate axis.
+  // The direction has no physical meaning for plotting but is used by
+  // Surface::sense() to break ties when a pixel is coincident with a surface.
+  Direction dir = {1.0 / std::sqrt(2.0), 1.0 / std::sqrt(2.0), 0.0};
+
+#pragma omp parallel
+  {
+    Particle p;
+    p.r() = start;
+    p.u() = dir;
+    p.coord(0).universe() = model::root_universe;
+    int level = slice_level_;
+    int j {};
+    FilterMatch match;
+
+#pragma omp for
+    for (int y = 0; y < height; y++) {
+      Position row = start - v_step * static_cast<double>(y);
+      for (int x = 0; x < width; x++) {
+        p.r() = row + u_step * static_cast<double>(x);
+        p.n_coord() = 1;
+        // local variables
+        bool found_cell = exhaustive_find_cell(p);
+        j = p.n_coord() - 1;
+        if (level >= 0) {
+          j = level;
+        }
+        if (found_cell) {
+          data.set_value(y, x, p, j, filter, &match);
+        }
+        if (show_overlaps_) {
+          int overlap_idx = check_cell_overlap(p, false);
+          if (overlap_idx >= 0) {
+            data.set_overlap(y, x, overlap_idx);
+          }
+        }
+      } // inner for
+    }
+  }
+
+  return data;
+}
+
+// Represents either a voxel or pixel plot
+class Plot : public PlottableInterface, public SlicePlotBase {
+
+public:
+  enum class PlotType { slice = 1, voxel = 2 };
+
+  Plot(pugi::xml_node plot, PlotType type);
+
+private:
+  void set_output_path(pugi::xml_node plot_node);
+  void set_basis(pugi::xml_node plot_node);
+  void set_origin(pugi::xml_node plot_node);
+  void set_width(pugi::xml_node plot_node);
+  void set_meshlines(pugi::xml_node plot_node);
+
+public:
+  // Add mesh lines to ImageData
+  void draw_mesh_lines(ImageData& data) const;
+  ImageData create_image() const override;
+  void create_voxel() const;
+
+  void create_output() const override;
+  void print_info() const override;
+
+  PlotType type_;                 //!< Plot type (Slice/Voxel)
+  Position width_;                //!< Axis-aligned width from plot.xml
+  PlotBasis basis_;               //!< Basis from plot.xml for slice plots
+  int meshlines_width_;           //!< Width of lines added to the plot
+  int index_meshlines_mesh_ {-1}; //!< Index of the mesh to draw on the plot
+  RGBColor meshlines_color_;      //!< Color of meshlines on the plot
+};
+
+/**
+ * \class RaytracePlot
+ * \brief Base class for plots that generate images through ray tracing.
+ *
+ * This class serves as a base for plots that create their visuals by tracing
+ * rays from a camera through the problem geometry. It inherits from
+ * PlottableInterface, ensuring that it provides an implementation for
+ * generating output specific to ray-traced visualization. WireframeRayTracePlot
+ * and SolidRayTracePlot provide concrete implementations of this class.
+ */
+class RayTracePlot : public PlottableInterface {
+public:
+  RayTracePlot() = default;
+  RayTracePlot(pugi::xml_node plot);
+
+  // Standard getters. No setting since it's done from XML.
+  const Position& camera_position() const { return camera_position_; }
+  Position& camera_position() { return camera_position_; }
+  const Position& look_at() const { return look_at_; }
+  Position& look_at() { return look_at_; }
+
+  const double& horizontal_field_of_view() const
+  {
+    return horizontal_field_of_view_;
+  }
+  double& horizontal_field_of_view() { return horizontal_field_of_view_; }
+
+  void print_info() const override;
+
+  const std::array<int, 2>& pixels() const { return pixels_; }
+  std::array<int, 2>& pixels() { return pixels_; }
+
+  const Direction& up() const { return up_; }
+  Direction& up() { return up_; }
+
+  //! brief Updates the cached camera-to-model matrix after changes to
+  //! camera parameters.
+  void update_view();
+
+protected:
+  Direction camera_x_axis() const
+  {
+    return {camera_to_model_[0], camera_to_model_[3], camera_to_model_[6]};
+  }
+
+  Direction camera_y_axis() const
+  {
+    return {camera_to_model_[1], camera_to_model_[4], camera_to_model_[7]};
+  }
+
+  Direction camera_z_axis() const
+  {
+    return {camera_to_model_[2], camera_to_model_[5], camera_to_model_[8]};
+  }
+
+  void set_output_path(pugi::xml_node plot_node);
+
+  /*
+   * Gets the starting position and direction for the pixel corresponding
+   * to this horizontal and vertical position.
+   */
+  std::pair<Position, Direction> get_pixel_ray(int horiz, int vert) const;
+
+private:
+  void set_look_at(pugi::xml_node node);
+  void set_camera_position(pugi::xml_node node);
+  void set_field_of_view(pugi::xml_node node);
+  void set_pixels(pugi::xml_node node);
+  void set_orthographic_width(pugi::xml_node node);
+
+  double horizontal_field_of_view_ {70.0}; // horiz. f.o.v. in degrees
+  Position camera_position_;               // where camera is
+  Position look_at_;                     // point camera is centered looking at
+  std::array<int, 2> pixels_ {100, 100}; // pixel dimension of resulting image
+  Direction up_ {0.0, 0.0, 1.0};         // which way is up
+
+  /* The horizontal thickness, if using an orthographic projection.
+   * If set to zero, we assume using a perspective projection.
+   */
+  double orthographic_width_ {C_NONE};
+
+  /*
+   * Cached camera-to-model matrix with column vectors of axes. The x-axis is
+   * the vector between the camera_position_ and look_at_; the y-axis is the
+   * cross product of the x-axis with the up_ vector, and the z-axis is the
+   * cross product of the x and y axes.
+   */
+  std::array<double, 9> camera_to_model_;
+};
+
+class ProjectionRay;
+
+/**
+ * \class WireframeRayTracePlot
+ * \brief Creates plots that are like colorful x-ray imaging
+ *
+ * WireframeRayTracePlot is a specialized form of RayTracePlot designed for
+ * creating projection plots. This involves tracing rays from a camera through
+ * the problem geometry and rendering the results based on depth of penetration
+ * through materials or cells and their colors.
+ */
+class WireframeRayTracePlot : public RayTracePlot {
+
+  friend class ProjectionRay;
+
+public:
+  WireframeRayTracePlot(pugi::xml_node plot);
+
+  ImageData create_image() const override;
+  void create_output() const override;
+  void print_info() const override;
+
+private:
+  void set_opacities(pugi::xml_node node);
+  void set_wireframe_thickness(pugi::xml_node node);
+  void set_wireframe_ids(pugi::xml_node node);
+  void set_wireframe_color(pugi::xml_node node);
+
+  /* Checks if a vector of two TrackSegments is equivalent. We define this
+   * to mean not having matching intersection lengths, but rather having
+   * a matching sequence of surface/cell/material intersections.
+   */
+  struct TrackSegment;
+  bool trackstack_equivalent(const vector<TrackSegment>& track1,
+    const vector<TrackSegment>& track2) const;
+
+  /* Used for drawing wireframe and colors. We record the list of
+   * surface/cell/material intersections and the corresponding lengths as a ray
+   * traverses the geometry, then color by iterating in reverse.
+   */
+  struct TrackSegment {
+    int id;        // material or cell ID (which is being colored)
+    double length; // length of this track intersection
+
+    /* Recording this allows us to draw edges on the wireframe. For instance
+     * if two surfaces bound a single cell, it allows drawing that sharp edge
+     * where the surfaces intersect.
+     */
+    int surface_index {-1}; // last surface index intersected in this segment
+    TrackSegment(int id_a, double length_a, int surface_a)
+      : id(id_a), length(length_a), surface_index(surface_a)
+    {}
+  };
+
+  // which color IDs should be wireframed. If empty, all cells are wireframed.
+  vector<int> wireframe_ids_;
+
+  // Thickness of the wireframe lines. Can set to zero for no wireframe.
+  int wireframe_thickness_ {1};
+
+  RGBColor wireframe_color_ {BLACK}; // wireframe color
+  vector<double> xs_; // macro cross section values for cell volume rendering
+};
+
+/**
+ * \class SolidRayTracePlot
+ * \brief Plots 3D objects as the eye might see them.
+ *
+ * Plots a geometry with single-scattered Phong lighting plus a diffuse lighting
+ * contribution. The result is a physically reasonable, aesthetic 3D view of a
+ * geometry.
+ */
+class SolidRayTracePlot : public RayTracePlot {
+  friend class PhongRay;
+
+public:
+  SolidRayTracePlot() = default;
+
+  SolidRayTracePlot(pugi::xml_node plot);
+
+  ImageData create_image() const override;
+  void create_output() const override;
+  void print_info() const override;
+
+  const std::unordered_set<int>& opaque_ids() const { return opaque_ids_; }
+  std::unordered_set<int>& opaque_ids() { return opaque_ids_; }
+
+  const Position& light_location() const { return light_location_; }
+  Position& light_location() { return light_location_; }
+
+  const double& diffuse_fraction() const { return diffuse_fraction_; }
+  double& diffuse_fraction() { return diffuse_fraction_; }
+
+private:
+  void set_opaque_ids(pugi::xml_node node);
+  void set_light_position(pugi::xml_node node);
+  void set_diffuse_fraction(pugi::xml_node node);
+
+  std::unordered_set<int> opaque_ids_;
+
+  double diffuse_fraction_ {0.1};
+
+  // By default, the light is at the camera unless otherwise specified.
+  Position light_location_;
+};
+
+class ProjectionRay : public Ray {
+public:
+  ProjectionRay(Position r, Direction u, const WireframeRayTracePlot& plot,
+    vector<WireframeRayTracePlot::TrackSegment>& line_segments)
+    : Ray(r, u), plot_(plot), line_segments_(line_segments)
+  {}
+
+  void on_intersection() override;
+
+private:
+  /* Store a reference to the plot object which is running this ray, in order
+   * to access some of the plot settings which influence the behavior where
+   * intersections are.
+   */
+  const WireframeRayTracePlot& plot_;
+
+  /* The ray runs through the geometry, and records the lengths of ray segments
+   * and cells they lie in along the way.
+   */
+  vector<WireframeRayTracePlot::TrackSegment>& line_segments_;
+};
+
+class PhongRay : public Ray {
+public:
+  PhongRay(Position r, Direction u, const SolidRayTracePlot& plot)
+    : Ray(r, u), plot_(plot)
+  {
+    result_color_ = plot_.not_found_;
+  }
+
+  void on_intersection() override;
+
+  const RGBColor& result_color() { return result_color_; }
+
+private:
+  const SolidRayTracePlot& plot_;
+
+  /* After the ray is reflected, it is moving towards the
+   * camera. It does that in order to see if the exposed surface
+   * is shadowed by something else.
+   */
+  bool reflected_ {false};
+
+  // Have to record the first hit ID, so that if the region
+  // does get shadowed, we recall what its color should be
+  // when tracing from the surface to the light.
+  int orig_hit_id_ {-1};
+
+  RGBColor result_color_;
+};
+
+//===============================================================================
+// Non-member functions
+//===============================================================================
+
+/* Write a PPM image
+ * filename - name of output file
+ * data - image data to write
+ */
+void output_ppm(const std::string& filename, const ImageData& data);
+
+#ifdef USE_LIBPNG
+/* Write a PNG image
+ * filename - name of output file
+ * data - image data to write
+ */
+void output_png(const std::string& filename, const ImageData& data);
+#endif
+
+//! Initialize a voxel file
+//! \param[in] id of an open hdf5 file
+//! \param[in] dimensions of the voxel file (dx, dy, dz)
+//! \param[out] dataspace pointer to voxel data
+//! \param[out] dataset pointer to voxesl data
+//! \param[out] pointer to memory space of voxel data
+void voxel_init(hid_t file_id, const hsize_t* dims, hid_t* dspace, hid_t* dset,
+  hid_t* memspace);
+
+//! Write a section of the voxel data to hdf5
+//! \param[in] voxel slice
+//! \param[out] dataspace pointer to voxel data
+//! \param[out] dataset pointer to voxesl data
+//! \param[out] pointer to data to write
+void voxel_write_slice(
+  int x, hid_t dspace, hid_t dset, hid_t memspace, void* buf);
+
+//! Close voxel file entities
+//! \param[in] data space to close
+//! \param[in] dataset to close
+//! \param[in] memory space to close
+void voxel_finalize(hid_t dspace, hid_t dset, hid_t memspace);
+
+//===============================================================================
+// External functions
+//===============================================================================
+
+//! Read plot specifications from a plots.xml file
+void read_plots_xml();
+
+//! Read plot specifications from an XML Node
+//! \param[in] XML node containing plot info
+void read_plots_xml(pugi::xml_node root);
+
+//! Clear memory
+void free_memory_plot();
+
+//! Create a randomly generated RGB color
+//! \return RGBColor with random value
+RGBColor random_color();
+
+} // namespace openmc
+#endif // OPENMC_PLOT_H
