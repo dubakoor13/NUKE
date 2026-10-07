@@ -142,6 +142,15 @@ def main() -> int:
         ]
     )
 
+    _run(
+        [
+            python,
+            "-m",
+            "ntr.nerva.validate_analysis_outputs",
+            str(root),
+        ]
+    )
+
     if not args.no_plots:
         _run(
             [
@@ -181,6 +190,7 @@ def main() -> int:
     print(f"  OpenMC diagnostics: {diagnostics_dir}")
     print(f"  fuel thermal: {fuel_dir}")
     print(f"  tie thermal: {tie_dir}")
+    print(f"  QA report: {root / 'analysis_validation.json'}")
     if not args.no_plots:
         print(f"  OpenMC plots: {openmc_plots_dir}")
         print(f"  thermal plots: {plots_dir}")
