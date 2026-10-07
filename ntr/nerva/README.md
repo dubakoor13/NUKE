@@ -209,6 +209,56 @@ fabricated separable shapes.
 Outputs include the complete element/channel table, reconstructed axial power
 arrays, and a full axial profile for the hottest reconstructed channel.
 
+
+### Per-tie OpenMC thermal reconstruction
+
+Current statepoints also carry direct repeated-cell axial tallies for every
+tie-tube solid component plus the central supply and annular return hydrogen
+passages.
+
+Run:
+
+```bash
+python -m ntr.nerva.solve_tie_instances \
+  build/nerva_power/nerva_mesh_fields.npz \
+  build/nerva_instances/instance_power_fractions.npz \
+  --tie-mass-flow-kg-s 0.5 \
+  --inlet-temperature-k 500 \
+  --inlet-pressure-mpa 8 \
+  --hydrogen-model coolprop \
+  --output build/nerva_tie_instances
+```
+
+For each tie tube the solver uses:
+
+- the summed OpenMC axial heating of the explicit tie-tube solid components;
+- the OpenMC axial direct nuclear heating of the central supply H2 passage;
+- the OpenMC axial direct nuclear heating of the annular return H2 passage.
+
+The instance fields are renormalized to the corresponding global OpenMC mesh
+totals so that the per-tie reconstruction preserves total solid and direct-H2
+power exactly. Each tie is then solved independently through the existing
+counterflow model.
+
+The remaining tie-flow assumption is explicit: total tie-tube hydrogen mass
+flow is divided equally among the repeated tie instances. The older
+representative tie-tube solver is retained for backward compatibility and
+cross-checking.
+
+Outputs include:
+
+```text
+tie_instance_summary.csv
+tie_instance_summary.json
+tie_instance_reconstruction.npz
+hottest_tie_supply_profile.csv
+hottest_tie_return_profile.csv
+```
+
+`plot_tie_instances.py` generates the per-tie power, outlet-temperature,
+wall-temperature, and hottest-tie axial plots.
+
+
 ### Stochastic OpenMC volumes
 
 OpenMC stochastic-volume calculations can be prepared or executed with:
