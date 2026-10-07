@@ -81,6 +81,9 @@ jobs:
       - name: Validate NERVA fuel-sector geometry
         run: python -m ntr.nerva.validate_fuel_sectors
 
+      - name: Validate NERVA deterministic fuel-sector areas
+        run: python -m ntr.nerva.validate_fuel_sector_geometry
+
       - name: Validate NERVA fuel-sector thermal coupling
         run: python -m ntr.nerva.validate_sector_thermal
 
