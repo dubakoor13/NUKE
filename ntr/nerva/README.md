@@ -24,12 +24,13 @@ low-enrichment surrogate.
   - explicit cold-condition gaps.
 - Seven-position cluster: one tie tube surrounded by six fuel elements.
 - Parameterized small all-fuel core retained for regression comparison.
+- SNRE-style mixed fuel/tie full-core lattice using a three-color triangular-lattice pattern.
 - Finite axial geometry and beryllium radial reflector.
 - Eigenvalue settings and fissionable source.
 - 3-D mesh tallies for flux, fission rate, and local heating.
 - XY material plot definitions.
 - Pure-Python geometry validation.
-- GitHub CI export checks for both core and cluster modes.
+- GitHub CI export checks for cluster, all-fuel core, and mixed-core modes.
 
 ## Important model limitation
 
@@ -59,6 +60,19 @@ python -m ntr.nerva.build_model \
 This produces OpenMC `geometry.xml`, `materials.xml`, `settings.xml`,
 `tallies.xml`, and `plots.xml`.
 
+## Export the mixed fuel/tie core
+
+```bash
+python -m ntr.nerva.build_model \
+  --assembly mixed-core \
+  --rings 8 \
+  --output build/nerva_mixed_core
+```
+
+The mixed-core pattern assigns one of three triangular-lattice colors to tie
+tubes. This gives every interior tie tube six fuel neighbors and every interior
+fuel element three tie-tube neighbors.
+
 ## Export the small all-fuel regression core
 
 ```bash
@@ -82,6 +96,12 @@ library are configured.
                    |
                    v
           seven-position cluster
+                   |
+                   v
+        repeated 2:1 FE/TT lattice
+                   |
+                   v
+       representative mixed core
 ```
 
 ## Roadmap
@@ -89,7 +109,7 @@ library are configured.
 1. 19-channel fuel element. **DONE**
 2. Coaxial tie/support element. **DONE**
 3. Six-fuel + one-tie cluster. **DONE**
-4. Repeat the fuel/tie pattern into a representative full core.
+4. Repeat the fuel/tie pattern into a representative full core. **DONE**
 5. Add cylindrical/partial filler elements, Be reflector, and control drums.
 6. Add axial/radial power extraction and normalization.
 7. Couple heating to a 1-D hydrogen coolant/tie-tube thermal model.
