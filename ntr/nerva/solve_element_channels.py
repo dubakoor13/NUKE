@@ -267,10 +267,86 @@ def main() -> int:
             * fuel_total_w
             * fuel_axial_shape[None, :]
         )
-    channel_wall_axial = (
-        element_solid_axial[:, None, :]
-        / float(n_channels)
+
+    direct_fuel_sector_openmc_used = (
+        "fuel_channel_sector_heating_w" in instances.files
+        and "fuel_channel_sector_axial_heating_w" in instances.files
+        and np.asarray(
+            instances["fuel_channel_sector_heating_w"]
+        ).shape == (n_elements, n_channels)
+        and np.asarray(
+            instances["fuel_channel_sector_axial_heating_w"]
+        ).shape == (
+            n_elements,
+            n_channels,
+            thermal_axial_bins,
+        )
+        and float(
+            np.sum(instances["fuel_channel_sector_heating_w"])
+        ) > 0.0
+        and float(
+            np.sum(
+                instances[
+                    "fuel_channel_sector_axial_heating_w"
+                ]
+            )
+        ) > 0.0
     )
+
+    sector_axial_zero_fallback_count = 0
+    if direct_fuel_sector_openmc_used:
+        raw_sector_integrated = np.asarray(
+            instances["fuel_channel_sector_heating_w"],
+            dtype=float,
+        )
+        sector_fraction = _normalized_shape(
+            raw_sector_integrated.reshape(-1)
+        ).reshape(n_elements, n_channels)
+        raw_sector_axial = np.asarray(
+            instances["fuel_channel_sector_axial_heating_w"],
+            dtype=float,
+        )
+
+        channel_wall_axial = np.zeros_like(
+            raw_sector_axial
+        )
+        for element in range(n_elements):
+            element_shape = _normalized_shape(
+                element_solid_axial[element, :]
+            )
+            for channel in range(n_channels):
+                sector_shape = _normalized_shape(
+                    raw_sector_axial[element, channel, :]
+                )
+                if (
+                    float(np.sum(sector_shape)) <= 0.0
+                    and sector_fraction[element, channel] > 0.0
+                ):
+                    sector_shape = element_shape
+                    sector_axial_zero_fallback_count += 1
+                channel_wall_axial[element, channel, :] = (
+                    sector_fraction[element, channel]
+                    * fuel_total_w
+                    * sector_shape
+                )
+        element_solid_axial = np.sum(
+            channel_wall_axial,
+            axis=1,
+        )
+        fuel_fraction = np.sum(
+            sector_fraction,
+            axis=1,
+        )
+    else:
+        sector_fraction = np.full(
+            (n_elements, n_channels),
+            1.0 / float(n_elements * n_channels),
+            dtype=float,
+        )
+        channel_wall_axial = (
+            element_solid_axial[:, None, :]
+            / float(n_channels)
+        )
 
     direct_channel_axial_available = (
         "channel_direct_nuclear_heating_axial_w" in instances.files
@@ -475,6 +551,7 @@ def main() -> int:
         args.output / "element_channel_power_reconstruction.npz",
         fuel_element_power_fraction=fuel_fraction,
         channel_direct_power_fraction=direct_fraction,
+        fuel_channel_sector_power_fraction=sector_fraction,
         global_fuel_axial_shape=fuel_axial_shape,
         global_direct_h2_axial_shape=direct_axial_shape,
         element_solid_axial_power_w=element_solid_axial,
@@ -533,6 +610,12 @@ def main() -> int:
         "direct_element_axial_openmc_used": (
             direct_instance_axial_available
         ),
+        "direct_fuel_sector_openmc_used": (
+            direct_fuel_sector_openmc_used
+        ),
+        "fuel_sector_axial_zero_fallback_count": (
+            sector_axial_zero_fallback_count
+        ),
         "thermal_axial_bins": int(thermal_axial_bins),
         "direct_channel_axial_openmc_used": (
             direct_channel_axial_available
@@ -549,8 +632,15 @@ def main() -> int:
                 "fallback."
             ),
             (
-                "Solid wall power is divided equally among the 19 channels "
-                "inside each element."
+                "Current statepoints assign solid wall power from direct "
+                "OpenMC nearest-channel fuel-sector integrated and axial "
+                "heating tallies. Equal 1/19 sharing is retained only for "
+                "legacy statepoints without those tallies."
+            ),
+            (
+                "The Voronoi fuel-sector assignment is a scoring/thermal "
+                "partition: all sector cells use the same fuel material and "
+                "internal boundaries are transmission-only."
             ),
             (
                 "Channel-specific OpenMC direct-H2 axial shapes are used "
