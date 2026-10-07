@@ -100,6 +100,12 @@ jobs:
           test -s build/nerva_synthetic/plots/fuel_temperatures.png
           test -s build/nerva_synthetic/plots/tie_temperatures.png
 
+      - name: Upload synthetic NERVA demo products
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerva-synthetic-demo
+          path: build/nerva_synthetic
+
       - name: Export seven-position cluster
         run: |
           python -m ntr.nerva.build_model \
