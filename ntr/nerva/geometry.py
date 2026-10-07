@@ -5,7 +5,7 @@ from __future__ import annotations
 import openmc
 
 from .config import NervaConfig
-from .layout import coolant_channel_positions
+from .layout import axial_hex_coordinates, coolant_channel_positions, is_tie_tube_site, mixed_core_counts
 
 
 def build_fuel_element_universe(
@@ -239,6 +239,58 @@ def build_cluster_geometry(
     )
 
 
+
+def build_mixed_core_geometry(
+    config: NervaConfig,
+    materials: dict[str, openmc.Material],
+) -> openmc.Geometry:
+    """Build an SNRE-style mixed fuel/tie-tube lattice.
+
+    A three-color triangular-lattice pattern assigns one color to tie tubes and
+    the other two to fuel. Interior tie tubes therefore have six fuel
+    neighbors, while interior fuel elements have three tie-tube neighbors.
+    """
+    fuel_universe = build_fuel_element_universe(config, materials)
+    tie_universe = build_tie_tube_universe(config, materials)
+
+    filler_universe = openmc.Universe(
+        name="mixed-core outer filler universe",
+        cells=[
+            openmc.Cell(
+                name="mixed-core outer filler",
+                fill=materials["reflector"],
+            )
+        ],
+    )
+
+    lattice = openmc.HexLattice(name="SNRE-style mixed fuel tie-tube lattice")
+    lattice.center = (0.0, 0.0)
+    lattice.pitch = (config.fuel_flat_to_flat_cm,)
+    lattice.orientation = "y"
+
+    rings = []
+    for ring_index in range(config.core_rings - 1, 0, -1):
+        rings.append([fuel_universe] * (6 * ring_index))
+    rings.append([fuel_universe])
+    lattice.universes = rings
+
+    for index in axial_hex_coordinates(config.core_rings - 1):
+        ring_index, within_index = lattice.get_universe_index(index)
+        if is_tie_tube_site(index):
+            rings[ring_index][within_index] = tie_universe
+
+    lattice.universes = rings
+    lattice.outer = filler_universe
+
+    return _finite_lattice_geometry(
+        config=config,
+        lattice=lattice,
+        core_radius_cm=config.core_radius_cm,
+        outer_radius_cm=config.reflector_outer_radius_cm,
+        materials=materials,
+        name="finite SNRE-style mixed core",
+    )
+
 def build_core_geometry(
     config: NervaConfig,
     materials: dict[str, openmc.Material],
@@ -288,6 +340,19 @@ def cluster_summary(config: NervaConfig) -> dict[str, float | int]:
         "reflector_outer_radius_cm": config.cluster_reflector_outer_radius_cm,
     }
 
+
+
+def mixed_core_summary(config: NervaConfig) -> dict[str, float | int]:
+    fuel_elements, tie_tubes = mixed_core_counts(config.core_rings)
+    return {
+        "fuel_elements": fuel_elements,
+        "tie_tubes": tie_tubes,
+        "fuel_coolant_channels": 19 * fuel_elements,
+        "tie_tube_hydrogen_passages": 2 * tie_tubes,
+        "active_length_cm": config.active_length_cm,
+        "core_radius_cm": config.core_radius_cm,
+        "reflector_outer_radius_cm": config.reflector_outer_radius_cm,
+    }
 
 def geometry_summary(config: NervaConfig) -> dict[str, float | int]:
     n_elements = 1 + 3 * config.core_rings * (config.core_rings - 1)
