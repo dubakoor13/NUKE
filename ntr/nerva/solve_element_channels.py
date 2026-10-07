@@ -338,10 +338,9 @@ def main() -> int:
             axis=1,
         )
     else:
-        sector_fraction = np.full(
-            (n_elements, n_channels),
-            1.0 / float(n_elements * n_channels),
-            dtype=float,
+        sector_fraction = (
+            fuel_fraction[:, None]
+            / float(n_channels)
         )
         channel_wall_axial = (
             element_solid_axial[:, None, :]
