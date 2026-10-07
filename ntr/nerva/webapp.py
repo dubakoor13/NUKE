@@ -1,4 +1,4 @@
-"""Streamlit dashboard for NERVA-derived analysis results."""
+"""Streamlit dashboard for NERVA-derived and historical reference results."""
 
 from __future__ import annotations
 
@@ -11,9 +11,11 @@ import pandas as pd
 import streamlit as st
 
 from .engine_performance import (
+    G0_M_S2,
     combine_outlet_streams,
     ideal_nozzle_performance,
 )
+from .historical_presets import PRESETS, HistoricalNervaPreset
 
 
 def _read_json_upload(uploaded) -> dict[str, Any] | None:
@@ -72,118 +74,139 @@ def _metric(label: str, value: str, help_text: str | None = None) -> None:
     st.metric(label, value, help=help_text)
 
 
-def main() -> None:
-    st.set_page_config(
-        page_title="NUKE / NERVA Demo",
-        page_icon="🚀",
-        layout="wide",
-    )
+def _format_range(values: tuple[float, float] | None, unit: str) -> str:
+    if values is None:
+        return "—"
+    return f"{values[0]:,.0f}–{values[1]:,.0f} {unit}"
 
-    st.title("NUKE — NERVA-derived run dashboard")
-    st.caption(
-        "OpenMC → deposited power → H₂ thermal paths → ideal-nozzle performance estimate"
-    )
 
-    with st.sidebar:
-        st.header("Result source")
-        mode = st.radio(
-            "Mode",
-            (
-                "Synthetic demo",
-                "Auto-load analysis directory",
-                "Upload run outputs",
-            ),
-            help=(
-                "Synthetic demo uses the repository's deterministic CI example. "
-                "Upload mode reads your analysis JSON outputs."
-            ),
+def _render_historical(preset: HistoricalNervaPreset) -> None:
+    st.success(f"{preset.category}: {preset.name}")
+    st.write(preset.description)
+
+    row1 = st.columns(5)
+    with row1[0]:
+        _metric(
+            "Thermal power",
+            "—" if preset.thermal_power_mw is None else f"{preset.thermal_power_mw:,.0f} MW",
         )
-
-        if mode == "Auto-load analysis directory":
-            analysis_root = Path(
-                st.text_input(
-                    "Analysis directory",
-                    value="build/nerva_analysis",
-                )
-            )
-            metadata_path = analysis_root / "power" / "metadata.json"
-            fuel_path = analysis_root / "fuel" / "thermal_summary.json"
-            tie_path = analysis_root / "tie" / "tie_thermal_summary.json"
-
-            if metadata_path.is_file() and fuel_path.is_file() and tie_path.is_file():
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                fuel = json.loads(fuel_path.read_text(encoding="utf-8"))
-                tie = json.loads(tie_path.read_text(encoding="utf-8"))
-                using_fallback = False
-                st.success(f"Loaded analysis from {analysis_root}")
-            else:
-                st.info(
-                    "Analysis JSON files were not found yet; showing the "
-                    "synthetic demo until a local run exists."
-                )
-                metadata, fuel, tie = _synthetic_demo()
-                using_fallback = True
-
-        elif mode == "Upload run outputs":
-            metadata_upload = st.file_uploader(
-                "metadata.json",
-                type=["json"],
-                key="metadata",
-            )
-            fuel_upload = st.file_uploader(
-                "thermal_summary.json",
-                type=["json"],
-                key="fuel",
-            )
-            tie_upload = st.file_uploader(
-                "tie_thermal_summary.json",
-                type=["json"],
-                key="tie",
-            )
-
-            metadata = _read_json_upload(metadata_upload)
-            fuel = _read_json_upload(fuel_upload)
-            tie = _read_json_upload(tie_upload)
-
-            ready = metadata is not None and fuel is not None and tie is not None
-            if not ready:
-                st.info("Upload all three JSON files to compute run metrics.")
-                metadata, fuel, tie = _synthetic_demo()
-                using_fallback = True
-            else:
-                using_fallback = False
+    with row1[1]:
+        _metric(
+            "Thrust",
+            "—" if preset.thrust_n is None else f"{preset.thrust_n / 1000.0:,.1f} kN",
+        )
+    with row1[2]:
+        if preset.isp_s is not None:
+            isp_text = f"{preset.isp_s:,.0f} s"
+        elif preset.isp_range_s is not None:
+            isp_text = _format_range(preset.isp_range_s, "s")
         else:
-            metadata, fuel, tie = _synthetic_demo()
-            using_fallback = True
-
-        st.header("Nozzle assumptions")
-        gamma = st.slider(
-            "γ",
-            min_value=1.10,
-            max_value=1.50,
-            value=1.35,
-            step=0.01,
-        )
-        nozzle_efficiency = st.slider(
-            "Nozzle efficiency",
-            min_value=0.70,
-            max_value=1.00,
-            value=0.95,
-            step=0.01,
-        )
-        exit_pressure_kpa = st.number_input(
-            "Exit pressure [kPa]",
-            min_value=0.1,
-            value=1.0,
-            step=0.1,
-        )
-        ambient_pressure_kpa = st.number_input(
-            "Ambient pressure [kPa]",
-            min_value=0.0,
-            value=0.0,
-            step=1.0,
+            isp_text = "—"
+        _metric("Specific impulse", isp_text)
+    with row1[3]:
+        if preset.chamber_temperature_k is not None:
+            t_text = f"{preset.chamber_temperature_k:,.0f} K"
+        elif preset.chamber_temperature_range_k is not None:
+            t_text = _format_range(preset.chamber_temperature_range_k, "K")
+        else:
+            t_text = "—"
+        _metric("Chamber temperature", t_text)
+    with row1[4]:
+        _metric(
+            "Chamber pressure",
+            "—" if preset.chamber_pressure_pa is None else f"{preset.chamber_pressure_pa / 1.0e6:,.3f} MPa",
         )
 
+    row2 = st.columns(5)
+    with row2[0]:
+        _metric(
+            "H₂ mass flow",
+            "—" if preset.hydrogen_mass_flow_kg_s is None else f"{preset.hydrogen_mass_flow_kg_s:,.2f} kg/s",
+        )
+    with row2[1]:
+        _metric(
+            "Nozzle Ae/At",
+            "—" if preset.nozzle_expansion_ratio is None else f"{preset.nozzle_expansion_ratio:,.0f}",
+        )
+    with row2[2]:
+        _metric(
+            "Fuel elements",
+            "—" if preset.fuel_element_count is None else f"{preset.fuel_element_count:,}",
+        )
+    with row2[3]:
+        _metric(
+            "Core diameter",
+            "—" if preset.core_diameter_cm is None else f"{preset.core_diameter_cm / 100.0:,.3f} m",
+        )
+    with row2[4]:
+        _metric(
+            "Active length",
+            "—" if preset.active_length_cm is None else f"{preset.active_length_cm / 100.0:,.3f} m",
+        )
+
+    if preset.isp_s is not None:
+        effective_velocity = preset.isp_s * G0_M_S2
+        st.caption(
+            f"Reference effective exhaust velocity from published Isp: "
+            f"{effective_velocity / 1000.0:.3f} km/s"
+        )
+
+    st.subheader("Published geometry / reactor values")
+    rows: list[tuple[str, str]] = []
+    if preset.fuel_element_flat_to_flat_cm is not None:
+        rows.append(("Fuel element across flats", f"{preset.fuel_element_flat_to_flat_cm:.4f} cm"))
+    if preset.coolant_channels_per_element is not None:
+        rows.append(("Coolant channels / fuel element", str(preset.coolant_channels_per_element)))
+    if preset.coolant_channel_diameter_cm is not None:
+        rows.append(("Coolant channel diameter", f"{preset.coolant_channel_diameter_cm:.4f} cm"))
+    if preset.core_diameter_cm is not None:
+        rows.append(("Core diameter", f"{preset.core_diameter_cm:.2f} cm"))
+    if preset.active_length_cm is not None:
+        rows.append(("Active/core length", f"{preset.active_length_cm:.2f} cm"))
+    if preset.tie_heating_fraction_range is not None:
+        rows.append(
+            (
+                "Tie-tube heat deposition",
+                f"{100*preset.tie_heating_fraction_range[0]:.0f}–"
+                f"{100*preset.tie_heating_fraction_range[1]:.0f}%",
+            )
+        )
+    if preset.reflector_heating_fraction_range is not None:
+        rows.append(
+            (
+                "Reflector heat deposition",
+                f"{100*preset.reflector_heating_fraction_range[0]:.0f}–"
+                f"{100*preset.reflector_heating_fraction_range[1]:.0f}%",
+            )
+        )
+    if rows:
+        st.dataframe(
+            pd.DataFrame(rows, columns=["Parameter", "Published value"]),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+    st.subheader("Source")
+    st.markdown(f"**{preset.source_title}**")
+    st.markdown(f"[NASA NTRS source]({preset.source_url})")
+    st.caption(preset.source_note)
+
+    st.warning(
+        "Historical reference mode displays published NASA system-level values. "
+        "It does not supply fissile loading or an exact criticality recipe."
+    )
+
+
+def _render_calculated(
+    metadata: dict[str, Any],
+    fuel: dict[str, Any],
+    tie: dict[str, Any],
+    using_fallback: bool,
+    gamma: float,
+    nozzle_efficiency: float,
+    exit_pressure_kpa: float,
+    ambient_pressure_kpa: float,
+) -> None:
     if using_fallback:
         st.warning(
             "DEMO MODE: these are synthetic CI values, not a completed OpenMC "
@@ -192,8 +215,8 @@ def main() -> None:
     else:
         st.info(
             "Loaded-run mode: thermal values come from your analysis outputs. "
-            "Thrust/Isp are still ideal-nozzle estimates, not a historical "
-            "NERVA validation."
+            "Thrust/Isp are ideal-nozzle estimates and should be compared with "
+            "the historical-reference tab."
         )
 
     fuel_flow = _pick(fuel, "fuel_mass_flow_kg_s", 2.0)
@@ -239,7 +262,7 @@ def main() -> None:
         _pick(tie, "total_tie_power_W", 0.0),
     )
 
-    st.subheader("Engine performance")
+    st.subheader("Calculated engine performance")
     row1 = st.columns(5)
     with row1[0]:
         _metric("Thermal power", f"{thermal_power_w / 1.0e6:,.3f} MW")
@@ -267,6 +290,36 @@ def main() -> None:
     with row2[4]:
         exit_diameter = math.sqrt(4.0 * performance.exit_area_m2 / math.pi)
         _metric("Equivalent exit diameter", f"{exit_diameter:,.3f} m")
+
+    st.subheader("Historical comparison")
+    comparison_rows = []
+    for preset in PRESETS.values():
+        if preset.thrust_n is None and preset.isp_s is None and preset.isp_range_s is None:
+            continue
+        if preset.isp_s is not None:
+            isp_ref = f"{preset.isp_s:.0f}"
+        elif preset.isp_range_s is not None:
+            isp_ref = f"{preset.isp_range_s[0]:.0f}–{preset.isp_range_s[1]:.0f}"
+        else:
+            isp_ref = "—"
+        comparison_rows.append(
+            {
+                "Case": preset.name,
+                "Thrust kN": "—" if preset.thrust_n is None else f"{preset.thrust_n/1000.0:.1f}",
+                "Isp s": isp_ref,
+                "Thermal MW": "—" if preset.thermal_power_mw is None else f"{preset.thermal_power_mw:.0f}",
+            }
+        )
+    comparison_rows.insert(
+        0,
+        {
+            "Case": "Current calculated/demo result",
+            "Thrust kN": f"{performance.thrust_n/1000.0:.1f}",
+            "Isp s": f"{performance.isp_s:.1f}",
+            "Thermal MW": f"{thermal_power_w/1.0e6:.3f}",
+        },
+    )
+    st.dataframe(pd.DataFrame(comparison_rows), hide_index=True, use_container_width=True)
 
     st.subheader("Thermal split")
     split_df = pd.DataFrame(
@@ -321,41 +374,126 @@ def main() -> None:
     )
     st.bar_chart(temperature_df.set_index("Metric"))
 
-    with st.expander("Nozzle details"):
-        nozzle_df = pd.DataFrame(
-            {
-                "Quantity": [
-                    "Momentum thrust",
-                    "Pressure thrust",
-                    "Throat area",
-                    "Exit area",
-                    "Exit velocity",
-                    "Effective exhaust velocity",
-                    "Exit pressure",
-                    "Ambient pressure",
-                    "Gamma",
-                    "Nozzle efficiency",
-                ],
-                "Value": [
-                    f"{performance.momentum_thrust_n:,.3f} N",
-                    f"{performance.pressure_thrust_n:,.3f} N",
-                    f"{performance.throat_area_m2:.6f} m²",
-                    f"{performance.exit_area_m2:.6f} m²",
-                    f"{performance.exit_velocity_m_s:,.3f} m/s",
-                    f"{performance.effective_exhaust_velocity_m_s:,.3f} m/s",
-                    f"{exit_pressure_kpa:,.3f} kPa",
-                    f"{ambient_pressure_kpa:,.3f} kPa",
-                    f"{gamma:.3f}",
-                    f"{nozzle_efficiency:.3f}",
-                ],
-            }
+
+def main() -> None:
+    st.set_page_config(
+        page_title="NUKE / NERVA Dashboard",
+        page_icon="🚀",
+        layout="wide",
+    )
+
+    st.title("NUKE — NERVA reference and run dashboard")
+    st.caption(
+        "Historical NASA references alongside OpenMC → thermal → nozzle calculations"
+    )
+
+    with st.sidebar:
+        st.header("Result source")
+        mode = st.radio(
+            "Mode",
+            (
+                "Historical NERVA reference",
+                "Synthetic demo",
+                "Auto-load analysis directory",
+                "Upload run outputs",
+            ),
         )
-        st.dataframe(nozzle_df, use_container_width=True, hide_index=True)
+
+        historical_preset = None
+        if mode == "Historical NERVA reference":
+            preset_keys = list(PRESETS)
+            selected = st.selectbox(
+                "Historical configuration",
+                preset_keys,
+                format_func=lambda key: PRESETS[key].name,
+            )
+            historical_preset = PRESETS[selected]
+            metadata = fuel = tie = {}
+            using_fallback = False
+        elif mode == "Auto-load analysis directory":
+            analysis_root = Path(
+                st.text_input(
+                    "Analysis directory",
+                    value="build/nerva_analysis",
+                )
+            )
+            metadata_path = analysis_root / "power" / "metadata.json"
+            fuel_path = analysis_root / "fuel" / "thermal_summary.json"
+            tie_path = analysis_root / "tie" / "tie_thermal_summary.json"
+            if metadata_path.is_file() and fuel_path.is_file() and tie_path.is_file():
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                fuel = json.loads(fuel_path.read_text(encoding="utf-8"))
+                tie = json.loads(tie_path.read_text(encoding="utf-8"))
+                using_fallback = False
+                st.success(f"Loaded analysis from {analysis_root}")
+            else:
+                metadata, fuel, tie = _synthetic_demo()
+                using_fallback = True
+        elif mode == "Upload run outputs":
+            metadata = _read_json_upload(
+                st.file_uploader("metadata.json", type=["json"], key="metadata")
+            )
+            fuel = _read_json_upload(
+                st.file_uploader("thermal_summary.json", type=["json"], key="fuel")
+            )
+            tie = _read_json_upload(
+                st.file_uploader("tie_thermal_summary.json", type=["json"], key="tie")
+            )
+            if metadata is None or fuel is None or tie is None:
+                metadata, fuel, tie = _synthetic_demo()
+                using_fallback = True
+            else:
+                using_fallback = False
+        else:
+            metadata, fuel, tie = _synthetic_demo()
+            using_fallback = True
+
+        gamma = 1.35
+        nozzle_efficiency = 0.95
+        exit_pressure_kpa = 1.0
+        ambient_pressure_kpa = 0.0
+
+        if mode != "Historical NERVA reference":
+            st.header("Nozzle assumptions")
+            gamma = st.slider("γ", 1.10, 1.50, 1.35, 0.01)
+            nozzle_efficiency = st.slider(
+                "Nozzle efficiency",
+                0.70,
+                1.00,
+                0.95,
+                0.01,
+            )
+            exit_pressure_kpa = st.number_input(
+                "Exit pressure [kPa]",
+                min_value=0.1,
+                value=1.0,
+                step=0.1,
+            )
+            ambient_pressure_kpa = st.number_input(
+                "Ambient pressure [kPa]",
+                min_value=0.0,
+                value=0.0,
+                step=1.0,
+            )
+
+    if historical_preset is not None:
+        _render_historical(historical_preset)
+    else:
+        _render_calculated(
+            metadata=metadata,
+            fuel=fuel,
+            tie=tie,
+            using_fallback=using_fallback,
+            gamma=gamma,
+            nozzle_efficiency=nozzle_efficiency,
+            exit_pressure_kpa=exit_pressure_kpa,
+            ambient_pressure_kpa=ambient_pressure_kpa,
+        )
 
     st.caption(
-        "Thrust/Isp use a choked calorically-perfect-gas nozzle estimate. "
-        "For production analysis replace this layer with equilibrium/frozen "
-        "CEA/Cantera nozzle chemistry and validated reactor/thermal inputs."
+        "Historical mode reproduces published NASA system-level reference values. "
+        "Calculated mode derives thrust/Isp from the loaded thermal state using "
+        "the repository's ideal-nozzle engineering model."
     )
 
 
