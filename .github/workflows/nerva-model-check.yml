@@ -44,6 +44,9 @@ jobs:
       - name: Check thermal coupling CLI
         run: python -m ntr.nerva.solve_thermal --help
 
+      - name: Validate NERVA fuel-solid conduction estimate
+        run: python -m ntr.nerva.validate_fuel_conduction
+
       - name: Validate NERVA tie-tube counterflow
         run: python -m ntr.nerva.validate_tie_tube
 
