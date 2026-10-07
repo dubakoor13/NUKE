@@ -151,6 +151,8 @@ def main() -> int:
             args.assembly,
             "--rings",
             str(args.rings),
+            "--drum-angle",
+            str(args.drum_angle),
             "--samples",
             str(args.volume_samples),
             "--output",
