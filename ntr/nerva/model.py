@@ -5,7 +5,7 @@ from __future__ import annotations
 import openmc
 
 from .config import NervaConfig
-from .geometry import build_cluster_geometry, build_core_geometry
+from .geometry import build_cluster_geometry, build_core_geometry, build_mixed_core_geometry
 from .materials import build_materials
 from .tallies import build_tallies
 
@@ -14,7 +14,7 @@ def build_model(
     config: NervaConfig | None = None,
     assembly: str = "core",
 ) -> openmc.Model:
-    """Construct either the all-fuel core demo or the 6-FE/1-TT cluster."""
+    """Construct the all-fuel core, 6-FE/1-TT cluster, or mixed core."""
     if config is None:
         config = NervaConfig()
     config.validate()
@@ -30,8 +30,12 @@ def build_model(
         geometry = build_cluster_geometry(config, material_map)
         source_region_radius = config.cluster_radius_cm
         radial_extent = config.cluster_reflector_outer_radius_cm
+    elif assembly == "mixed-core":
+        geometry = build_mixed_core_geometry(config, material_map)
+        source_region_radius = config.core_radius_cm
+        radial_extent = config.reflector_outer_radius_cm
     else:
-        raise ValueError("assembly must be 'core' or 'cluster'")
+        raise ValueError("assembly must be 'core', 'cluster', or 'mixed-core'")
 
     settings = openmc.Settings()
     settings.run_mode = "eigenvalue"
