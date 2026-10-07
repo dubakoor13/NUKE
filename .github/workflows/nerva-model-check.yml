@@ -38,6 +38,13 @@ jobs:
             --assembly cluster \
             --output build/nerva_cluster
 
+      - name: Export representative mixed fuel-tie core
+        run: |
+          python -m ntr.nerva.build_model \
+            --assembly mixed-core \
+            --rings 5 \
+            --output build/nerva_mixed_core
+
       - name: Export small all-fuel regression core
         run: |
           python -m ntr.nerva.build_model \
@@ -46,7 +53,7 @@ jobs:
 
       - name: Verify exported OpenMC inputs
         run: |
-          for d in build/nerva_cluster build/nerva_core; do
+          for d in build/nerva_cluster build/nerva_mixed_core build/nerva_core; do
             for f in geometry.xml materials.xml settings.xml tallies.xml plots.xml; do
               test -s "$d/$f"
               echo "$d/$f"
