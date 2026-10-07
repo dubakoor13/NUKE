@@ -66,6 +66,10 @@ def main() -> int:
     )
     fuel = _load(analysis / "fuel" / "thermal_summary.json")
     tie = _load(analysis / "tie" / "tie_thermal_summary.json")
+    tie_instances = _load(
+        analysis / "tie_instances" / "tie_instance_summary.json",
+        required=False,
+    )
 
     keff = diagnostics.get("keff", {})
     mesh_err = diagnostics["mesh_heating_relative_error"]
@@ -172,6 +176,23 @@ def main() -> int:
         "",
     ]
 
+    if tie_instances is not None:
+        lines.extend(
+            [
+                "## Per-tie OpenMC thermal solve",
+                "",
+                f"- Tie instances: {_f(tie_instances['tie_instances'])}",
+                f"- Tie solid power max/mean: {_f(tie_instances['tie_integrated_power_max_to_mean'], 6)}",
+                f"- Maximum tie outlet temperature: {_f(tie_instances['maximum_outlet_temperature_K'])} K",
+                f"- Maximum tie wall temperature: {_f(tie_instances['maximum_wall_temperature_K'])} K",
+                f"- Hottest tie instance: {_f(tie_instances['hottest_tie_instance'])}",
+                f"- Reconstructed tie solid power: {_f(tie_instances['reconstructed_tie_solid_power_W'] / 1.0e6)} MW",
+                f"- Reconstructed direct supply-H2 power: {_f(tie_instances['reconstructed_direct_supply_hydrogen_power_W'] / 1.0e6)} MW",
+                f"- Reconstructed direct return-H2 power: {_f(tie_instances['reconstructed_direct_return_hydrogen_power_W'] / 1.0e6)} MW",
+                "",
+            ]
+        )
+
     if uncertainty is not None:
         lines.extend(
             [
@@ -238,6 +259,8 @@ def main() -> int:
             "- Global axial separability is retained only as a legacy-statepoint fallback.",
             "- Solid wall power is divided equally among the 19 coolant channels within one fuel element.",
             "- Direct H2 nuclear heating is tallied separately and added to fluid enthalpy, not wall heat flux.",
+            "- Tie-tube solid and supply/return H2 axial shapes are instance-resolved OpenMC tallies for current statepoints.",
+            "- Total tie flow is currently divided equally among tie-tube instances.",
             "- The hottest-channel 1-sigma result is a screening sensitivity envelope, not covariance-aware propagation.",
             "- A real statepoint depends on the external nuclear-data library documented above.",
             "",
@@ -270,6 +293,7 @@ def main() -> int:
                 "uncertainty": uncertainty,
                 "fuel_thermal": fuel,
                 "tie_thermal": tie,
+                "tie_instances": tie_instances,
             },
             indent=2,
         )
