@@ -15,6 +15,9 @@ from datetime import datetime, timezone
 import openmc
 
 from .config import NervaConfig
+from .audit_nuclear_data_temperatures import (
+    audit_temperature_coverage,
+)
 from .geometry import (
     cluster_summary,
     geometry_summary,
@@ -153,6 +156,18 @@ def main() -> int:
     cross_sections = Path(report.cross_sections_xml)
     os.environ["OPENMC_CROSS_SECTIONS"] = str(cross_sections)
 
+    temperature_audit = audit_temperature_coverage(
+        cross_sections=cross_sections,
+        config=config,
+    )
+    temperature_audit_path = (
+        args.output / "nuclear_data_temperature_audit.json"
+    )
+    temperature_audit_path.write_text(
+        json.dumps(temperature_audit, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
     model = build_model(config, assembly=args.assembly)
     model.export_to_xml(directory=args.output)
 
@@ -188,6 +203,12 @@ def main() -> int:
             "photon_transport_requested": (
                 report.photon_transport_requested
             ),
+            "temperature_audit": str(temperature_audit_path),
+            "explicit_temperature_coverage_ok": (
+                temperature_audit[
+                    "model_explicit_temperature_coverage_ok"
+                ]
+            ),
         },
         "xml_sha256": _xml_checksums(args.output),
         "run_policy": (
@@ -208,6 +229,10 @@ def main() -> int:
     print(f"  nuclear data: {report.cross_sections_xml}")
     print(f"  nuclear-data SHA-256: {report.sha256}")
     print(f"  photon transport: {config.photon_transport}")
+    print(
+        f"  explicit XS temperature coverage: "
+        f"{temperature_audit['model_explicit_temperature_coverage_ok']}"
+    )
     print(f"  XML: {args.output}")
     print(f"  provenance: {provenance_path}")
 
