@@ -65,6 +65,14 @@ def parse_args() -> argparse.Namespace:
         default="constant",
     )
     parser.add_argument(
+        "--solid-conduction-model",
+        choices=(
+            "ligament-slab",
+            "equivalent-annulus-sector",
+        ),
+        default="ligament-slab",
+    )
+    parser.add_argument(
         "--balance-parallel-flow",
         action="store_true",
         help=(
@@ -212,6 +220,8 @@ def main() -> int:
         str(args.inlet_pressure_mpa),
         "--hydrogen-model",
         args.hydrogen_model,
+        "--solid-conduction-model",
+        args.solid_conduction_model,
         "--output-root",
         str(analysis_dir),
     ]
@@ -267,6 +277,7 @@ def main() -> int:
         "engineering_report_json": str(
             args.output_root / "NERVA_RUN_REPORT.json"
         ),
+        "solid_conduction_model": args.solid_conduction_model,
         "parallel_flow_balance_requested": (
             args.balance_parallel_flow
         ),
