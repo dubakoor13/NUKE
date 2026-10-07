@@ -192,6 +192,31 @@ def main() -> int:
         if _finite_number(error_stats[key], f"uncertainty.{key}") < 0.0:
             raise ValueError(f"uncertainty.{key} must be non-negative")
 
+
+    energy_deposition = diagnostics.get("energy_deposition", {})
+    if energy_deposition:
+        for key in (
+            "mesh_heating_local_W",
+            "mesh_heating_W",
+            "heating_minus_heating_local_W",
+            "heating_minus_local_fraction",
+            "material_heating_local_sum_W",
+            "material_heating_sum_W",
+        ):
+            _finite_number(
+                energy_deposition[key],
+                f"energy_deposition.{key}",
+            )
+
+        if energy_deposition["mesh_heating_local_W"] <= 0.0:
+            raise ValueError(
+                "energy_deposition.mesh_heating_local_W must be positive"
+            )
+        if energy_deposition["mesh_heating_W"] <= 0.0:
+            raise ValueError(
+                "energy_deposition.mesh_heating_W must be positive"
+            )
+
     material_fraction_sum = _fraction_sum(
         diagnostics["material_power_fractions"],
         "material_power_fractions",
@@ -344,6 +369,7 @@ def main() -> int:
             "mesh_peaking_finite": True,
             "monte_carlo_uncertainty_finite": True,
             "material_power_fraction_closure": True,
+            "energy_deposition_diagnostics_finite": True,
             "spectral_fraction_closure": True,
             "keff_report_finite_if_present": True,
             "fuel_temperature_pressure_trends": True,
