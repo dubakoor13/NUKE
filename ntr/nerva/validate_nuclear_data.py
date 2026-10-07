@@ -23,18 +23,12 @@ def main() -> int:
         xml = root / "cross_sections.xml"
         xml.write_text(
             """<?xml version="1.0"?>
-"
-            "<cross_sections>
-"
-            "  <library materials=\"H1\" path=\"H1.h5\" type=\"neutron\" />
-"
-            "  <library materials=\"U235\" path=\"U235.h5\" type=\"neutron\" />
-"
-            "  <library materials=\"H\" path=\"photon/H.h5\" type=\"photon\" />
-"
-            "</cross_sections>
-"
-            """,
+<cross_sections>
+  <library materials="H1" path="H1.h5" type="neutron" />
+  <library materials="U235" path="U235.h5" type="neutron" />
+  <library materials="H" path="photon/H.h5" type="photon" />
+</cross_sections>
+""",
             encoding="utf-8",
         )
         entries = _library_entries(xml)
