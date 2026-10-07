@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import openmc
 
 from .config import NervaConfig
@@ -16,16 +17,57 @@ _TIE_SOLID_CELL_NAMES = {
     "tie-tube outer ZrC coating",
 }
 
+_MATERIAL_ORDER = (
+    "fuel",
+    "hydrogen",
+    "zrc",
+    "reflector",
+    "graphite",
+    "zrh",
+    "inconel",
+    "b4c",
+    "aluminum",
+)
+
+
+def _energy_edges(config: NervaConfig) -> np.ndarray:
+    """Log-spaced neutron-energy bins from thermal to 20 MeV."""
+    return np.logspace(
+        -5.0,
+        np.log10(2.0e7),
+        config.diagnostic_energy_groups + 1,
+    )
+
+
+def _vacuum_surfaces(
+    geometry: openmc.Geometry,
+) -> list[openmc.Surface]:
+    return [
+        surface
+        for surface in geometry.get_all_surfaces().values()
+        if surface.boundary_type == "vacuum"
+    ]
+
 
 def build_tallies(
     config: NervaConfig,
     radial_extent_cm: float | None = None,
     fuel_material: openmc.Material | None = None,
     geometry: openmc.Geometry | None = None,
+    materials: dict[str, openmc.Material] | None = None,
 ) -> openmc.Tallies:
-    """Create whole-reactor, fuel-only, and tie-solid 3-D tallies."""
+    """Create engineering and diagnostics tallies.
+
+    The original mesh/fuel/tie tally names are preserved for backward
+    compatibility. Additional tallies expose reaction rates, material-wise
+    energy deposition, spectra, axial profiles, and vacuum-boundary currents.
+    """
     half_length = 0.5 * config.active_length_cm
-    r = config.reflector_outer_radius_cm if radial_extent_cm is None else radial_extent_cm
+    r = (
+        config.reflector_outer_radius_cm
+        if radial_extent_cm is None
+        else radial_extent_cm
+    )
 
     mesh = openmc.RegularMesh(name="nerva_core_mesh")
     mesh.dimension = (48, 48, 24)
@@ -36,9 +78,19 @@ def build_tallies(
 
     neutronics = openmc.Tally(name="nerva_3d_neutronics")
     neutronics.filters = [mesh_filter]
-    neutronics.scores = ["flux", "fission", "heating-local"]
+    neutronics.scores = [
+        "flux",
+        "absorption",
+        "fission",
+        "nu-fission",
+        "heating",
+        "heating-local",
+    ]
 
-    tallies = [neutronics]
+    tallies: list[openmc.Tally] = [neutronics]
+
+    if fuel_material is None and materials is not None:
+        fuel_material = materials.get("fuel")
 
     if fuel_material is not None:
         fuel_heating = openmc.Tally(name="nerva_3d_fuel_heating")
@@ -46,7 +98,11 @@ def build_tallies(
             mesh_filter,
             openmc.MaterialFilter([fuel_material]),
         ]
-        fuel_heating.scores = ["heating-local"]
+        fuel_heating.scores = [
+            "heating-local",
+            "fission",
+            "nu-fission",
+        ]
         tallies.append(fuel_heating)
 
     if geometry is not None:
@@ -61,7 +117,94 @@ def build_tallies(
                 mesh_filter,
                 openmc.CellFilter(tie_cells),
             ]
-            tie_heating.scores = ["heating-local"]
+            tie_heating.scores = [
+                "heating-local",
+                "absorption",
+            ]
             tallies.append(tie_heating)
+
+    # Material-resolved transport and energy deposition.
+    if materials is not None:
+        material_list = [
+            materials[key]
+            for key in _MATERIAL_ORDER
+            if key in materials
+        ]
+        if material_list:
+            material_transport = openmc.Tally(
+                name="nerva_material_transport"
+            )
+            material_transport.filters = [
+                openmc.MaterialFilter(material_list)
+            ]
+            material_transport.scores = [
+                "flux",
+                "absorption",
+                "fission",
+                "nu-fission",
+                "heating",
+                "heating-local",
+            ]
+            tallies.append(material_transport)
+
+        energy_filter = openmc.EnergyFilter(_energy_edges(config))
+
+        fuel = materials.get("fuel")
+        if fuel is not None:
+            fuel_spectrum = openmc.Tally(name="nerva_fuel_spectrum")
+            fuel_spectrum.filters = [
+                openmc.MaterialFilter([fuel]),
+                energy_filter,
+            ]
+            fuel_spectrum.scores = [
+                "flux",
+                "absorption",
+                "fission",
+                "nu-fission",
+            ]
+            tallies.append(fuel_spectrum)
+
+        hydrogen = materials.get("hydrogen")
+        if hydrogen is not None:
+            hydrogen_spectrum = openmc.Tally(
+                name="nerva_hydrogen_spectrum"
+            )
+            hydrogen_spectrum.filters = [
+                openmc.MaterialFilter([hydrogen]),
+                energy_filter,
+            ]
+            hydrogen_spectrum.scores = [
+                "flux",
+                "absorption",
+                "heating-local",
+            ]
+            tallies.append(hydrogen_spectrum)
+
+    # Axial profile with much finer z resolution than the 3-D mesh.
+    axial_mesh = openmc.RegularMesh(name="nerva_axial_mesh")
+    axial_mesh.dimension = (1, 1, config.axial_mesh_bins)
+    axial_mesh.lower_left = (-r, -r, -half_length)
+    axial_mesh.upper_right = (r, r, half_length)
+
+    axial = openmc.Tally(name="nerva_axial_transport")
+    axial.filters = [openmc.MeshFilter(axial_mesh)]
+    axial.scores = [
+        "flux",
+        "fission",
+        "nu-fission",
+        "heating-local",
+    ]
+    tallies.append(axial)
+
+    # Current across all vacuum boundaries provides a leakage diagnostic.
+    if geometry is not None:
+        vacuum_surfaces = _vacuum_surfaces(geometry)
+        if vacuum_surfaces:
+            leakage = openmc.Tally(name="nerva_vacuum_boundary_current")
+            leakage.filters = [
+                openmc.SurfaceFilter(vacuum_surfaces)
+            ]
+            leakage.scores = ["current"]
+            tallies.append(leakage)
 
     return openmc.Tallies(tallies)
