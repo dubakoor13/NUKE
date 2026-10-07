@@ -78,6 +78,9 @@ jobs:
       - name: Validate expanded NERVA OpenMC diagnostics
         run: python -m ntr.nerva.validate_openmc_diagnostics
 
+      - name: Validate NERVA fuel-sector geometry
+        run: python -m ntr.nerva.validate_fuel_sectors
+
       - name: Validate NERVA stochastic-volume setup
         run: python -m ntr.nerva.validate_volumes
 
