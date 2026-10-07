@@ -215,6 +215,27 @@ Real-gas hydrogen properties, 2-D/3-D fuel conduction, radiation, local
 fuel-element power peaking, tie-tube turn losses and temperature feedback
 remain next-fidelity layers.
 
+## Run the complete post-OpenMC analysis in one command
+
+After OpenMC has produced a statepoint, the orchestrator runs normalization,
+fuel-channel thermal analysis, tie-tube counterflow, and plotting:
+
+```bash
+python -m ntr.nerva.run_analysis \
+  statepoint.80.h5 \
+  --power-mw 100 \
+  --rings 5 \
+  --fuel-mass-flow-kg-s 2.0 \
+  --tie-mass-flow-kg-s 0.40 \
+  --inlet-temperature-k 500 \
+  --inlet-pressure-mpa 8 \
+  --hydrogen-model constant \
+  --output-root build/nerva_analysis
+```
+
+Use `--hydrogen-model coolprop` after installing CoolProp, or `--no-plots`
+when matplotlib is not installed.
+
 ## Plot postprocessed results
 
 The plotting CLI accepts any subset of the available result products:
