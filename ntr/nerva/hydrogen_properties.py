@@ -66,3 +66,13 @@ class CoolPropHydrogenModel:
             thermal_conductivity_w_m_k=conductivity,
             prandtl=prandtl,
         )
+
+
+def make_hydrogen_property_model(name: str):
+    """Create an optional state-dependent hydrogen property backend."""
+    normalized = name.strip().lower()
+    if normalized == "constant":
+        return None
+    if normalized == "coolprop":
+        return CoolPropHydrogenModel()
+    raise ValueError("hydrogen model must be 'constant' or 'coolprop'")
