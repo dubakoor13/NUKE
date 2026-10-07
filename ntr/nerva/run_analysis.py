@@ -80,6 +80,7 @@ def main() -> int:
     element_channels_dir = root / "element_channels"
     openmc_plots_dir = root / "openmc_plots"
     element_plots_dir = root / "element_channel_plots"
+    tie_instance_plots_dir = root / "tie_instance_plots"
     plots_dir = root / "plots"
     root.mkdir(parents=True, exist_ok=True)
 
@@ -289,6 +290,31 @@ def main() -> int:
             [
                 python,
                 "-m",
+                "ntr.nerva.plot_tie_instances",
+                "--summary-csv",
+                str(
+                    tie_instances_dir
+                    / "tie_instance_summary.csv"
+                ),
+                "--supply-profile",
+                str(
+                    tie_instances_dir
+                    / "hottest_tie_supply_profile.csv"
+                ),
+                "--return-profile",
+                str(
+                    tie_instances_dir
+                    / "hottest_tie_return_profile.csv"
+                ),
+                "--output",
+                str(tie_instance_plots_dir),
+            ]
+        )
+
+        _run(
+            [
+                python,
+                "-m",
                 "ntr.nerva.plot_results",
                 "--power-fields",
                 str(fields),
@@ -320,6 +346,7 @@ def main() -> int:
     if not args.no_plots:
         print(f"  OpenMC plots: {openmc_plots_dir}")
         print(f"  element/channel plots: {element_plots_dir}")
+        print(f"  tie-instance plots: {tie_instance_plots_dir}")
         print(f"  thermal plots: {plots_dir}")
     return 0
 
