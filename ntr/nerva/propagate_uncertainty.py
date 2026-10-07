@@ -11,6 +11,7 @@ import numpy as np
 from .config import NervaConfig
 from .fuel_conduction import (
     FuelSolidProperties,
+    estimate_fuel_sector_temperatures,
     estimate_fuel_solid_temperatures,
 )
 from .hydrogen_properties import make_hydrogen_property_model
@@ -83,18 +84,34 @@ def _solve(
         properties=HydrogenProperties(),
         property_model=property_model,
     )
-    solid = estimate_fuel_solid_temperatures(
-        solution,
-        config=config,
-        properties=FuelSolidProperties(
-            fuel_matrix_conductivity_w_m_k=summary[
-                "fuel_matrix_conductivity_W_m_K"
-            ],
-            zrc_conductivity_w_m_k=summary[
-                "zrc_conductivity_W_m_K"
-            ],
-        ),
+    solid_properties = FuelSolidProperties(
+        fuel_matrix_conductivity_w_m_k=summary[
+            "fuel_matrix_conductivity_W_m_K"
+        ],
+        zrc_conductivity_w_m_k=summary[
+            "zrc_conductivity_W_m_K"
+        ],
     )
+    if (
+        summary.get("solid_conduction_model")
+        == "equivalent-annulus-sector"
+    ):
+        sector_area_m2 = float(
+            summary["uncertainty_replay_sector_fuel_area_m2"]
+        )
+        solid = estimate_fuel_sector_temperatures(
+            solution,
+            z_edges_m=z_edges,
+            sector_fuel_area_m2=sector_area_m2,
+            config=config,
+            properties=solid_properties,
+        )
+    else:
+        solid = estimate_fuel_solid_temperatures(
+            solution,
+            config=config,
+            properties=solid_properties,
+        )
     return {
         "outlet_temperature_K": solution.outlet_temperature_k,
         "outlet_pressure_Pa": solution.outlet_pressure_pa,
@@ -201,6 +218,10 @@ def main() -> int:
         "channel": channel + 1,
         "solid_heating_uncertainty_basis": (
             solid_uncertainty_basis
+        ),
+        "solid_conduction_model": summary.get(
+            "solid_conduction_model",
+            "ligament-slab",
         ),
         "fuel_element_integrated_heating_relative_sigma": (
             wall_rel_sigma
