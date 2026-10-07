@@ -113,6 +113,30 @@ def main() -> int:
         else:
             tie_heating = _score_mesh_field(tie_tally, "heating-local")
 
+        try:
+            fuel_h2_tally = statepoint.get_tally(
+                name="nerva_3d_fuel_hydrogen_heating"
+            )
+        except LookupError:
+            fuel_h2_heating = np.zeros_like(fuel_heating)
+        else:
+            fuel_h2_heating = _score_mesh_field(
+                fuel_h2_tally,
+                "heating-local",
+            )
+
+        try:
+            tie_h2_tally = statepoint.get_tally(
+                name="nerva_3d_tie_hydrogen_heating"
+            )
+        except LookupError:
+            tie_h2_heating = np.zeros_like(fuel_heating)
+        else:
+            tie_h2_heating = _score_mesh_field(
+                tie_h2_tally,
+                "heating-local",
+            )
+
         normalized = normalize_regular_mesh(
             heating_ev_per_source=heating,
             fission_per_source=fission,
@@ -166,6 +190,18 @@ def main() -> int:
         tie_power_density = (
             tie_heating * EV_TO_J * normalized.source_rate_s / cell_volume_cm3
         )
+        fuel_hydrogen_power_density = (
+            fuel_h2_heating
+            * EV_TO_J
+            * normalized.source_rate_s
+            / cell_volume_cm3
+        )
+        tie_hydrogen_power_density = (
+            tie_h2_heating
+            * EV_TO_J
+            * normalized.source_rate_s
+            / cell_volume_cm3
+        )
 
     np.savez_compressed(
         args.output / "nerva_mesh_fields.npz",
@@ -178,6 +214,8 @@ def main() -> int:
         power_density_std_w_cm3=power_density_std,
         fuel_power_density_w_cm3=fuel_power_density,
         tie_power_density_w_cm3=tie_power_density,
+        fuel_hydrogen_power_density_w_cm3=fuel_hydrogen_power_density,
+        tie_hydrogen_power_density_w_cm3=tie_hydrogen_power_density,
         lower_left_cm=lower_left,
         upper_right_cm=upper_right,
         dimension=dimension,
@@ -211,6 +249,8 @@ def main() -> int:
                 "power_density_std_W_cm3",
                 "fuel_power_density_W_cm3",
                 "tie_power_density_W_cm3",
+                "fuel_hydrogen_power_density_W_cm3",
+                "tie_hydrogen_power_density_W_cm3",
             )
         )
         for i in range(dimension[0]):
@@ -233,11 +273,19 @@ def main() -> int:
                             power_density_std[i, j, k],
                             fuel_power_density[i, j, k],
                             tie_power_density[i, j, k],
+                            fuel_hydrogen_power_density[i, j, k],
+                            tie_hydrogen_power_density[i, j, k],
                         )
                     )
 
     fuel_power_w = float(np.sum(fuel_power_density) * cell_volume_cm3)
     tie_power_w = float(np.sum(tie_power_density) * cell_volume_cm3)
+    fuel_hydrogen_power_w = float(
+        np.sum(fuel_hydrogen_power_density) * cell_volume_cm3
+    )
+    tie_hydrogen_power_w = float(
+        np.sum(tie_hydrogen_power_density) * cell_volume_cm3
+    )
 
     maximum_power_density = float(np.max(power_density))
     active_mask = power_density > 1.0e-9 * maximum_power_density
@@ -283,6 +331,14 @@ def main() -> int:
         "fuel_power_fraction": fuel_power_w / normalized.total_power_w,
         "tie_power_W": tie_power_w,
         "tie_power_fraction": tie_power_w / normalized.total_power_w,
+        "fuel_hydrogen_direct_power_W": fuel_hydrogen_power_w,
+        "fuel_hydrogen_direct_power_fraction": (
+            fuel_hydrogen_power_w / normalized.total_power_w
+        ),
+        "tie_hydrogen_direct_power_W": tie_hydrogen_power_w,
+        "tie_hydrogen_direct_power_fraction": (
+            tie_hydrogen_power_w / normalized.total_power_w
+        ),
         "mesh_power_peaking_max_to_mean_active": mesh_power_peaking,
         "maximum_power_density_W_cm3": maximum_power_density,
         "mean_active_power_density_W_cm3": mean_active_power_density,
@@ -302,6 +358,8 @@ def main() -> int:
             "power_density_std": "W/cm3",
             "fuel_power_density": "W/cm3",
             "tie_power_density": "W/cm3",
+            "fuel_hydrogen_power_density": "W/cm3",
+            "tie_hydrogen_power_density": "W/cm3",
         },
     }
     (args.output / "metadata.json").write_text(
@@ -317,6 +375,14 @@ def main() -> int:
     print(f"  fuel power fraction: {fuel_power_w / normalized.total_power_w:.6f}")
     print(f"  tie-solid power: {tie_power_w / 1.0e6:.6g} MW")
     print(f"  tie power fraction: {tie_power_w / normalized.total_power_w:.6f}")
+    print(
+        f"  direct fuel-channel H2 heating: "
+        f"{fuel_hydrogen_power_w / 1.0e6:.6g} MW"
+    )
+    print(
+        f"  direct tie-tube H2 heating: "
+        f"{tie_hydrogen_power_w / 1.0e6:.6g} MW"
+    )
     print(f"  mesh max/mean-active power peaking: {mesh_power_peaking:.6f}")
     print(f"  mesh heating p95 relative error: {p95_relative_error:.6f}")
     print(f"  mesh: {tuple(int(value) for value in dimension)}")
