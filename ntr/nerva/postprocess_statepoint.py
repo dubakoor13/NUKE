@@ -34,8 +34,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def _score_field(tally: openmc.Tally, score: str) -> np.ndarray:
-    values = tally.get_values(scores=[score], value="mean")
-    return np.asarray(values, dtype=float).reshape(-1)
+    sliced = tally.get_slice(scores=[score])
+    values = sliced.get_reshaped_data(value="mean", expand_dims=True)
+    return np.asarray(values, dtype=float).squeeze()
 
 
 def main() -> int:
@@ -73,9 +74,13 @@ def main() -> int:
         )
 
         shape = tuple(int(value) for value in dimension)
-        power_density = normalized.power_density_w_cm3.reshape(shape, order="F")
-        fission_rate = normalized.fission_rate_cm3_s.reshape(shape, order="F")
-        flux_rate = normalized.flux_cm2_s.reshape(shape, order="F")
+        if heating.shape != shape:
+            raise ValueError(
+                f"expanded mesh tally has shape {heating.shape}, expected {shape}"
+            )
+        power_density = normalized.power_density_w_cm3
+        fission_rate = normalized.fission_rate_cm3_s
+        flux_rate = normalized.flux_cm2_s
 
     np.savez_compressed(
         args.output / "nerva_mesh_fields.npz",
