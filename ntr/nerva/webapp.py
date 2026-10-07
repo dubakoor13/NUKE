@@ -16,6 +16,13 @@ from .engine_performance import (
     ideal_nozzle_performance,
 )
 from .historical_presets import PRESETS, HistoricalNervaPreset
+from .propulsion_modes import (
+    FOUR_PROPULSION_MODES,
+    lch4_lox_mass_bookkeeping,
+    lch4_ntp_reference,
+    lh2_lox_lantr_reference,
+    lh2_ntp_reference,
+)
 from .lantr import (
     BASE_CHAMBER_PRESSURE_PA,
     BASE_ISP_S,
@@ -393,6 +400,111 @@ def _render_lantr(
     st.markdown(f"[NASA bimodal source]({NASA_BIMODAL_URL})")
 
 
+
+def _render_propulsion_family(
+    family_key: str,
+    methane_case_number: int,
+    lantr_mr: float,
+    methane_lox_ratio: float,
+) -> None:
+    mode = FOUR_PROPULSION_MODES[family_key]
+
+    if family_key == "lh2_ntp":
+        point = lh2_ntp_reference()
+    elif family_key == "lch4_ntp":
+        point = lch4_ntp_reference(methane_case_number)
+    elif family_key == "lh2_lox_lantr":
+        point = lh2_lox_lantr_reference(lantr_mr)
+    elif family_key == "lch4_lox_augmented":
+        point = lch4_lox_mass_bookkeeping(
+            methane_lox_ratio,
+            methane_case_number=methane_case_number,
+        )
+    else:
+        raise KeyError(f"unknown propulsion family {family_key!r}")
+
+    st.success(f"{mode.name} — {mode.fidelity}")
+    st.write(mode.notes)
+
+    row1 = st.columns(5)
+    with row1[0]:
+        _metric(
+            "Reactor power",
+            "—" if point.reactor_power_mw is None
+            else f"{point.reactor_power_mw:.2f} MW",
+        )
+    with row1[1]:
+        _metric(
+            "Chamber temperature",
+            "—" if point.chamber_temperature_k is None
+            else f"{point.chamber_temperature_k:.1f} K",
+        )
+    with row1[2]:
+        _metric(
+            "Chamber pressure",
+            "—" if point.chamber_pressure_mpa is None
+            else f"{point.chamber_pressure_mpa:.3f} MPa",
+        )
+    with row1[3]:
+        _metric(
+            "Isp",
+            "—" if point.isp_s is None else f"{point.isp_s:.2f} s",
+        )
+    with row1[4]:
+        _metric(
+            "Thrust",
+            "—" if point.thrust_n is None
+            else f"{point.thrust_n / 1000.0:.2f} kN",
+        )
+
+    row2 = st.columns(4)
+    with row2[0]:
+        _metric(
+            f"{mode.nuclear_propellant} flow",
+            "—" if point.nuclear_propellant_flow_kg_s is None
+            else f"{point.nuclear_propellant_flow_kg_s:.2f} kg/s",
+        )
+    with row2[1]:
+        _metric(
+            "LOX/O2 flow",
+            "—" if point.oxygen_flow_kg_s is None
+            else f"{point.oxygen_flow_kg_s:.2f} kg/s",
+        )
+    with row2[2]:
+        _metric(
+            "Total flow",
+            "—" if point.total_flow_kg_s is None
+            else f"{point.total_flow_kg_s:.2f} kg/s",
+        )
+    with row2[3]:
+        _metric("Operating point", point.operating_point)
+
+    st.subheader("Model status")
+    st.code(point.performance_status)
+
+    if family_key == "lch4_ntp":
+        st.info(
+            "Both methane PBM source cases are retained. Case 1 is the "
+            "~2100 K chamber-limited sizing point; Case 2 is the ~2850 K "
+            "fuel-limited / ~2630 K chamber point."
+        )
+    elif family_key == "lh2_lox_lantr":
+        st.info(
+            "These values come directly from the published NASA 1000-psia "
+            "LANTR table for the selected O/H mixture ratio. No arbitrary "
+            "pressure scaling is applied in this view."
+        )
+    elif family_key == "lch4_lox_augmented":
+        st.warning(
+            "The uploaded methane-NTP deck does not contain a LOX-augmented "
+            "methane case, and the NASA LANTR tables are for hydrogen. "
+            "Therefore only O2/CH4 mass bookkeeping is shown here. Isp and "
+            "thrust remain blank until a validated reacting-flow chemistry "
+            "and nozzle model is connected."
+        )
+
+    st.caption(f"Source basis: {mode.source_basis}")
+
 def _render_calculated(
     metadata: dict[str, Any],
     fuel: dict[str, Any],
@@ -589,6 +701,7 @@ def main() -> None:
             "Mode",
             (
                 "Historical NERVA reference",
+                "Propulsion families",
                 "Bimodal NTR + LANTR",
                 "Synthetic demo",
                 "Auto-load analysis directory",
@@ -597,6 +710,10 @@ def main() -> None:
         )
 
         historical_preset = None
+        propulsion_family_key = None
+        propulsion_methane_case = 2
+        propulsion_lantr_mr = 3.0
+        propulsion_methane_lox_ratio = 1.0
         lantr_mr = None
         lantr_architecture = None
         lantr_pressure_mpa = None
@@ -609,6 +726,40 @@ def main() -> None:
                 format_func=lambda key: PRESETS[key].name,
             )
             historical_preset = PRESETS[selected]
+            metadata = fuel = tie = {}
+            using_fallback = False
+        elif mode == "Propulsion families":
+            propulsion_family_key = st.selectbox(
+                "Propulsion family",
+                tuple(FOUR_PROPULSION_MODES),
+                format_func=lambda key: FOUR_PROPULSION_MODES[key].name,
+            )
+            if propulsion_family_key in ("lch4_ntp", "lch4_lox_augmented"):
+                propulsion_methane_case = st.selectbox(
+                    "Methane PBM source case",
+                    (1, 2),
+                    index=1,
+                )
+            if propulsion_family_key == "lh2_lox_lantr":
+                propulsion_lantr_mr = st.slider(
+                    "NASA LANTR O/H mixture ratio",
+                    min_value=0.0,
+                    max_value=5.0,
+                    value=3.0,
+                    step=0.1,
+                )
+            if propulsion_family_key == "lch4_lox_augmented":
+                propulsion_methane_lox_ratio = st.slider(
+                    "Exploratory O2/CH4 mass ratio",
+                    min_value=0.0,
+                    max_value=4.0,
+                    value=1.0,
+                    step=0.1,
+                    help=(
+                        "Mass-bookkeeping input only. This is not a "
+                        "validated methane+LOX performance map."
+                    ),
+                )
             metadata = fuel = tie = {}
             using_fallback = False
         elif mode == "Bimodal NTR + LANTR":
@@ -693,7 +844,11 @@ def main() -> None:
         exit_pressure_kpa = 1.0
         ambient_pressure_kpa = 0.0
 
-        if mode not in ("Historical NERVA reference", "Bimodal NTR + LANTR"):
+        if mode not in (
+            "Historical NERVA reference",
+            "Propulsion families",
+            "Bimodal NTR + LANTR",
+        ):
             st.header("Nozzle assumptions")
             gamma = st.slider("γ", 1.10, 1.50, 1.35, 0.01)
             nozzle_efficiency = st.slider(
@@ -718,6 +873,13 @@ def main() -> None:
 
     if historical_preset is not None:
         _render_historical(historical_preset)
+    elif propulsion_family_key is not None:
+        _render_propulsion_family(
+            propulsion_family_key,
+            propulsion_methane_case,
+            propulsion_lantr_mr,
+            propulsion_methane_lox_ratio,
+        )
     elif lantr_mr is not None:
         _render_lantr(
             lantr_mr,
