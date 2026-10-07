@@ -260,6 +260,10 @@ def main() -> int:
         [row["heating_W"] for row in fuel_rows],
         dtype=float,
     )
+    fuel_power_std = np.asarray(
+        [row["heating_std_W"] for row in fuel_rows],
+        dtype=float,
+    )
     if fuel_power.size and float(np.sum(fuel_power)) > 0.0:
         fuel_fractions = fuel_power / float(np.sum(fuel_power))
         hottest = int(np.argmax(fuel_power))
@@ -277,6 +281,10 @@ def main() -> int:
         for index, row in enumerate(fuel_rows)
     }
     channel_direct_matrix = np.zeros(
+        (len(fuel_rows), 19),
+        dtype=float,
+    )
+    channel_direct_std_matrix = np.zeros(
         (len(fuel_rows), 19),
         dtype=float,
     )
@@ -300,6 +308,9 @@ def main() -> int:
         channel_index = int(row["channel"]) - 1
         channel_direct_matrix[element_index, channel_index] += float(
             row["direct_nuclear_heating_W"]
+        )
+        channel_direct_std_matrix[element_index, channel_index] = (
+            float(row["heating_std_W"])
         )
 
     channel_power_by_number = {}
@@ -325,8 +336,10 @@ def main() -> int:
     np.savez_compressed(
         args.output / "instance_power_fractions.npz",
         fuel_element_power_w=fuel_power,
+        fuel_element_heating_std_w=fuel_power_std,
         fuel_element_power_fraction=fuel_fractions,
         channel_direct_nuclear_heating_w=channel_direct_matrix,
+        channel_direct_nuclear_heating_std_w=channel_direct_std_matrix,
     )
 
     summary = {
@@ -336,6 +349,9 @@ def main() -> int:
         "fuel_element_power_sum_W": float(
             np.sum(fuel_power)
         ) if fuel_power.size else 0.0,
+        "fuel_element_power_quadrature_std_W": float(
+            np.sqrt(np.sum(fuel_power_std**2))
+        ) if fuel_power_std.size else 0.0,
         "fuel_element_max_to_mean_power": fuel_peaking,
         "hottest_fuel_element_instance": hottest,
         "hydrogen_channel_row_count": len(channel_rows),
