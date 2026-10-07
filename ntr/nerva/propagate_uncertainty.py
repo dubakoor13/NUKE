@@ -138,14 +138,30 @@ def main() -> int:
         dtype=float,
     )
 
-    fuel_mean = np.asarray(
-        instances["fuel_element_power_w"],
-        dtype=float,
-    )[element]
-    fuel_std = np.asarray(
-        instances["fuel_element_heating_std_w"],
-        dtype=float,
-    )[element]
+    if (
+        "fuel_channel_sector_heating_w" in instances.files
+        and "fuel_channel_sector_heating_std_w"
+        in instances.files
+    ):
+        fuel_mean = np.asarray(
+            instances["fuel_channel_sector_heating_w"],
+            dtype=float,
+        )[element, channel]
+        fuel_std = np.asarray(
+            instances["fuel_channel_sector_heating_std_w"],
+            dtype=float,
+        )[element, channel]
+        solid_uncertainty_basis = "fuel_channel_sector"
+    else:
+        fuel_mean = np.asarray(
+            instances["fuel_element_power_w"],
+            dtype=float,
+        )[element]
+        fuel_std = np.asarray(
+            instances["fuel_element_heating_std_w"],
+            dtype=float,
+        )[element]
+        solid_uncertainty_basis = "fuel_element_legacy"
 
     direct_mean_matrix = np.asarray(
         instances["channel_direct_nuclear_heating_w"],
@@ -173,6 +189,9 @@ def main() -> int:
     result = {
         "element_instance": element,
         "channel": channel + 1,
+        "solid_heating_uncertainty_basis": (
+            solid_uncertainty_basis
+        ),
         "fuel_element_integrated_heating_relative_sigma": (
             wall_rel_sigma
         ),
@@ -184,7 +203,9 @@ def main() -> int:
         "plus_1sigma_screening": upper,
         "interpretation": (
             "Screening envelope using independent ±1σ scaling of the "
-            "integrated repeated-cell OpenMC heating tallies while preserving "
+            "channel-associated fuel-sector OpenMC heating tally when "
+            "available (legacy fallback: whole-element heating) and the "
+            "direct-H2 tally while preserving "
             "their reconstructed axial shapes. It does not include tally "
             "covariance, cross-section uncertainty, geometry uncertainty, "
             "thermal-property uncertainty, or flow-distribution uncertainty."
