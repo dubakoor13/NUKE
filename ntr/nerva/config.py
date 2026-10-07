@@ -28,6 +28,15 @@ class NervaConfig:
     core_rings: int = 3
     reflector_thickness_cm: float = 5.0
 
+    # Reactor-periphery engineering surrogates. The public NASA cross section
+    # establishes the topology (12 drums in a Be reflector, Al-alloy vessel),
+    # but not all dimensions below are tied to a single historical article.
+    control_drum_count: int = 12
+    control_drum_radius_cm: float = 1.20
+    control_absorber_thickness_cm: float = 0.20
+    control_drum_angle_deg: float = 0.0
+    pressure_vessel_thickness_cm: float = 0.50
+
     uranium_enrichment_wt_percent: float = 5.0
     fuel_matrix_density_g_cm3: float = 1.85
     hydrogen_density_g_cm3: float = 0.0030
@@ -37,6 +46,8 @@ class NervaConfig:
     graphite_density_g_cm3: float = 1.70
     zrh_density_g_cm3: float = 5.60
     inconel_density_g_cm3: float = 8.19
+    b4c_density_g_cm3: float = 2.52
+    aluminum_density_g_cm3: float = 2.70
 
     batches: int = 80
     inactive: int = 20
@@ -115,6 +126,18 @@ class NervaConfig:
     def reflector_outer_radius_cm(self) -> float:
         return self.core_radius_cm + self.reflector_thickness_cm
 
+    @property
+    def control_drum_center_radius_cm(self) -> float:
+        return self.core_radius_cm + 0.5 * self.reflector_thickness_cm
+
+    @property
+    def control_absorber_inner_radius_cm(self) -> float:
+        return self.control_drum_radius_cm - self.control_absorber_thickness_cm
+
+    @property
+    def pressure_vessel_outer_radius_cm(self) -> float:
+        return self.reflector_outer_radius_cm + self.pressure_vessel_thickness_cm
+
     def validate(self) -> None:
         if self.core_rings < 1:
             raise ValueError("core_rings must be >= 1")
@@ -134,6 +157,20 @@ class NervaConfig:
             raise ValueError("inactive batches must be less than total batches")
         if self.particles < 100:
             raise ValueError("particles should be at least 100")
+        if self.control_drum_count < 3:
+            raise ValueError("control_drum_count must be at least 3")
+        if self.control_drum_radius_cm <= 0.0:
+            raise ValueError("control drum radius must be positive")
+        if not (0.0 < self.control_absorber_thickness_cm < self.control_drum_radius_cm):
+            raise ValueError("control absorber thickness must be between 0 and drum radius")
+        if self.pressure_vessel_thickness_cm <= 0.0:
+            raise ValueError("pressure vessel thickness must be positive")
+        inner_drum_edge = self.control_drum_center_radius_cm - self.control_drum_radius_cm
+        outer_drum_edge = self.control_drum_center_radius_cm + self.control_drum_radius_cm
+        if inner_drum_edge <= self.core_radius_cm:
+            raise ValueError("control drums intrude into the cylindrical core envelope")
+        if outer_drum_edge >= self.reflector_outer_radius_cm:
+            raise ValueError("control drums protrude beyond the Be reflector")
 
         radii = (
             self.tie_inner_tube_inner_radius_cm,
