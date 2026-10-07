@@ -151,6 +151,25 @@ def main() -> int:
         [
             python,
             "-m",
+            "ntr.nerva.propagate_uncertainty",
+            "--element-summary",
+            str(element_channels_dir / "element_channel_summary.json"),
+            "--reconstruction",
+            str(
+                element_channels_dir
+                / "element_channel_power_reconstruction.npz"
+            ),
+            "--instance-fields",
+            str(instances_dir / "instance_power_fractions.npz"),
+            "--output",
+            str(root / "hottest_channel_uncertainty.json"),
+        ]
+    )
+
+    _run(
+        [
+            python,
+            "-m",
             "ntr.nerva.solve_thermal",
             str(fields),
             "--rings",
@@ -257,6 +276,10 @@ def main() -> int:
     print(f"  OpenMC diagnostics: {diagnostics_dir}")
     print(f"  instance tallies: {instances_dir}")
     print(f"  element/channel thermal: {element_channels_dir}")
+    print(
+        f"  hottest-channel uncertainty: "
+        f"{root / 'hottest_channel_uncertainty.json'}"
+    )
     print(f"  fuel thermal: {fuel_dir}")
     print(f"  tie thermal: {tie_dir}")
     print(f"  QA report: {root / 'analysis_validation.json'}")
