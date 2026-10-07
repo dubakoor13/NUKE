@@ -370,6 +370,48 @@ def build_tallies(
                 ]
                 tallies.append(channel_axial_tally)
 
+
+    if (
+        geometry is not None
+        and config.instance_axial_tallies
+        and instance_axial_filter is not None
+    ):
+        tie_supply_cells = _cells_named(
+            geometry,
+            "tie-tube hydrogen supply",
+        )
+        if tie_supply_cells:
+            tie_supply_instance_axial = openmc.Tally(
+                name="nerva_tie_supply_hydrogen_axial_instances"
+            )
+            tie_supply_instance_axial.filters = [
+                openmc.DistribcellFilter(tie_supply_cells[0]),
+                instance_axial_filter,
+            ]
+            tie_supply_instance_axial.scores = [
+                "absorption",
+                "heating-local",
+            ]
+            tallies.append(tie_supply_instance_axial)
+
+        tie_return_cells = _cells_named(
+            geometry,
+            "tie-tube hydrogen return",
+        )
+        if tie_return_cells:
+            tie_return_instance_axial = openmc.Tally(
+                name="nerva_tie_return_hydrogen_axial_instances"
+            )
+            tie_return_instance_axial.filters = [
+                openmc.DistribcellFilter(tie_return_cells[0]),
+                instance_axial_filter,
+            ]
+            tie_return_instance_axial.scores = [
+                "absorption",
+                "heating-local",
+            ]
+            tallies.append(tie_return_instance_axial)
+
     # Material-resolved transport and energy deposition.
     if materials is not None:
         material_list = [
