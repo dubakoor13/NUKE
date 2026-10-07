@@ -47,6 +47,7 @@ def build_model(
     settings.batches = config.batches
     settings.inactive = config.inactive
     settings.particles = config.particles
+    settings.photon_transport = config.photon_transport
 
     half_length = 0.5 * config.active_length_cm
     source_radius = max(0.5, 0.8 * source_region_radius)
@@ -58,11 +59,32 @@ def build_model(
         constraints={"fissionable": True},
     )
 
+    # Shannon source-entropy mesh for eigenvalue source-convergence
+    # diagnostics. This changes observability, not reactor design.
+    entropy_mesh = openmc.RegularMesh(name="nerva_entropy_mesh")
+    entropy_mesh.dimension = (
+        config.entropy_mesh_xy,
+        config.entropy_mesh_xy,
+        config.entropy_mesh_z,
+    )
+    entropy_mesh.lower_left = (
+        -source_region_radius,
+        -source_region_radius,
+        -half_length,
+    )
+    entropy_mesh.upper_right = (
+        source_region_radius,
+        source_region_radius,
+        half_length,
+    )
+    settings.entropy_mesh = entropy_mesh
+
     tallies = build_tallies(
         config,
         radial_extent_cm=radial_extent,
         fuel_material=material_map["fuel"],
         geometry=geometry,
+        materials=material_map,
     )
 
     plot = openmc.SlicePlot(name=f"nerva_{assembly}_xy")
