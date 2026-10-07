@@ -47,6 +47,12 @@ jobs:
       - name: Validate state-dependent hydrogen property backend
         run: python -m ntr.nerva.validate_hydrogen_backend
 
+      - name: Install optional CoolProp backend
+        run: python -m pip install CoolProp
+
+      - name: Validate CoolProp hydrogen backend
+        run: python -m ntr.nerva.validate_coolprop
+
       - name: Validate NERVA fuel-solid conduction estimate
         run: python -m ntr.nerva.validate_fuel_conduction
 
