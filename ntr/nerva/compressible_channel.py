@@ -36,19 +36,19 @@ class SubsonicFlowError(ValueError):
     """Supplied pressure/flow/heating cannot be resolved subsonically."""
 
 
-def _state(t: float, p: float):
-    return hydrogen_state(t, p, mode="frozen")
+def _state(t: float, p: float, chemistry_mode: str = "frozen"):
+    return hydrogen_state(t, p, mode=chemistry_mode)
 
 
 def _temperature_from_total_enthalpy(
     target_j_kg: float, pressure_pa: float, mass_flux: float,
-    guess_k: float
+    guess_k: float, chemistry_mode: str = "frozen"
 ) -> float:
     """Invert h(T)+[G*R*T/p]^2/2 with safeguarded Newton iteration."""
     if not math.isfinite(pressure_pa) or pressure_pa <= 0:
         raise SubsonicFlowError("nonpositive pressure during energy solve")
     def f(t: float):
-        hs = _state(t,pressure_pa)
+        hs = _state(t,pressure_pa,chemistry_mode)
         speed=mass_flux/hs.density_kg_m3
         return hs.enthalpy_j_kg+0.5*speed**2-target_j_kg, hs, speed
 
@@ -60,7 +60,7 @@ def _temperature_from_total_enthalpy(
         )
     lower,upper=T_MIN,T_MAX
     t=max(lower,min(upper,guess_k))
-    for _ in range(28):
+    for _ in range(50 if chemistry_mode == "equilibrium" else 28):
         val,hs,speed=f(t)
         if abs(val)<=1e-10*max(1.,abs(target_j_kg),abs(hs.enthalpy_j_kg)):
             return t
@@ -68,10 +68,16 @@ def _temperature_from_total_enthalpy(
             upper=t
         else:
             lower=t
-        derivative=hs.frozen_cp_j_kg_k+speed*speed/t
-        trial=t-val/derivative
-        if not math.isfinite(trial) or trial<=lower or trial>=upper:
+        if chemistry_mode == "equilibrium":
+            # Chemical dissociation adds a large, strongly varying
+            # effective heat capacity. A frozen-cp Newton derivative
+            # would be physically and numerically inconsistent.
             trial=0.5*(lower+upper)
+        else:
+            derivative=hs.frozen_cp_j_kg_k+speed*speed/t
+            trial=t-val/derivative
+            if not math.isfinite(trial) or trial<=lower or trial>=upper:
+                trial=0.5*(lower+upper)
         t=trial
     val,hs,_=f(t)
     if abs(val)>2e-8*max(1.,abs(target_j_kg),abs(hs.enthalpy_j_kg)):
@@ -79,14 +85,42 @@ def _temperature_from_total_enthalpy(
     return t
 
 
-def _mach(state, mass_flux: float) -> float:
-    cp=state.frozen_cp_j_kg_k
-    if cp<=R_H2:
-        raise ValueError("invalid pure hydrogen heat-capacity ratio")
-    gamma=cp/(cp-R_H2)
-    a=math.sqrt(gamma*R_H2*state.temperature_k)
-    return (mass_flux/state.density_kg_m3)/a
+def _mach(state, mass_flux: float, chemistry_mode: str = "frozen") -> float:
+    """Local Mach number, including equilibrium sound speed when requested.
 
+    For equilibrium chemistry, a^2=(dp/drho)_s evaluated along
+    an isentrope via total differentials of s(T,p) and rho(T,p).
+    For frozen molecular H2, use standard gamma R T.
+    """
+    if chemistry_mode == "frozen":
+        cp=state.frozen_cp_j_kg_k
+        if cp<=R_H2:
+            raise ValueError("invalid pure hydrogen heat-capacity ratio")
+        gamma=cp/(cp-R_H2)
+        a=math.sqrt(gamma*R_H2*state.temperature_k)
+    elif chemistry_mode == "equilibrium":
+        t,p=state.temperature_k,state.pressure_pa
+        dp=p*1e-4
+        dt=min(t*1e-4,0.2*(t-T_MIN),0.2*(T_MAX-t))
+        if dt<=0:
+            raise SubsonicFlowError("equilibrium sound-speed derivative at NASA7 boundary")
+        hp=_state(t,p+dp,chemistry_mode)
+        hm=_state(t,p-dp,chemistry_mode)
+        tp=_state(t+dt,p,chemistry_mode)
+        tm=_state(t-dt,p,chemistry_mode)
+        ds_dp=(hp.entropy_j_kg_k-hm.entropy_j_kg_k)/(2*dp)
+        ds_dt=(tp.entropy_j_kg_k-tm.entropy_j_kg_k)/(2*dt)
+        dr_dp=(hp.density_kg_m3-hm.density_kg_m3)/(2*dp)
+        dr_dt=(tp.density_kg_m3-tm.density_kg_m3)/(2*dt)
+        if ds_dt<=0 or not math.isfinite(ds_dt):
+            raise SubsonicFlowError("nonpositive equilibrium entropy temperature derivative")
+        drho_dp_s=dr_dp-dr_dt*ds_dp/ds_dt
+        if drho_dp_s<=0 or not math.isfinite(drho_dp_s):
+            raise SubsonicFlowError("nonphysical equilibrium sound speed")
+        a=math.sqrt(1./drho_dp_s)
+    else:
+        raise ValueError("chemistry_mode must be frozen or equilibrium")
+    return (mass_flux/state.density_kg_m3)/a
 
 def solve_fuel_channel_compressible(
     axial_total_fuel_power_w: np.ndarray,
@@ -101,6 +135,7 @@ def solve_fuel_channel_compressible(
     roughness_m: float = 1e-6,
     axial_direct_coolant_power_w: np.ndarray | None = None,
     max_mach: float = 0.85,
+    chemistry_mode: str = "frozen",
 ) -> ChannelSolution:
     """Quasi-steady mass/momentum/total-enthalpy for an H2 channel.
 
@@ -114,6 +149,8 @@ def solve_fuel_channel_compressible(
             "compressible NASA-7 solver does not support CoolProp "
             "without a consistent real-fluid stagnation-enthalpy backend"
         )
+    if chemistry_mode not in ("frozen","equilibrium"):
+        raise ValueError("chemistry_mode must be frozen or equilibrium")
     props=properties or HydrogenProperties()
     power=np.asarray(axial_total_fuel_power_w,dtype=float)
     z=np.asarray(z_edges_m,dtype=float)
@@ -166,15 +203,16 @@ def solve_fuel_channel_compressible(
     energy_residual=np.empty(n)
     momentum_residual=np.empty(n)
     re=np.full(n,reynolds)
+    dissociation=np.empty(n)
 
     for i in range(n):
         q_wall=float(wall[i])
         q_direct=float(gas[i])
         q=q_wall+q_direct
         dz=float(z[i+1]-z[i])
-        gas_in=_state(t_in,p_in)
+        gas_in=_state(t_in,p_in,chemistry_mode)
         v_in=G/gas_in.density_kg_m3
-        m_in=_mach(gas_in,G)
+        m_in=_mach(gas_in,G,chemistry_mode)
         if m_in>=max_mach:
             raise SubsonicFlowError(
                 f"cell {i} inlet Mach {m_in:.3g} exceeds allowed "
@@ -184,8 +222,8 @@ def solve_fuel_channel_compressible(
         target=gas_in.enthalpy_j_kg+0.5*v_in*v_in+q/mdot
         guess=min(T_MAX,max(T_MIN,t_in+q/(mdot*gas_in.frozen_cp_j_kg_k)))
         def evaluate(p: float):
-            temperature=_temperature_from_total_enthalpy(target,p,G,guess)
-            gas_out=_state(temperature,p)
+            temperature=_temperature_from_total_enthalpy(target,p,G,guess,chemistry_mode)
+            gas_out=_state(temperature,p,chemistry_mode)
             v_out=G/gas_out.density_kg_m3
             # Darcy friction using midpoint of endpoint specific volumes.
             friction_dp=f*(dz/d)*G*(v_in+v_out)/4
@@ -196,7 +234,7 @@ def solve_fuel_channel_compressible(
         p=p_in
         for iteration in range(45):
             residual,t,gas_out,v_out,fric,acc=evaluate(p)
-            m_out=_mach(gas_out,G)
+            m_out=_mach(gas_out,G,chemistry_mode)
             if m_out>=max_mach:
                 raise SubsonicFlowError(
                     f"cell {i} predicted Mach {m_out:.3g} exceeds "
@@ -237,7 +275,10 @@ def solve_fuel_channel_compressible(
         if abs(momentum_err)>1e-8*max(1.,p_in):
             raise RuntimeError(f"cell {i} momentum balance audit failed")
         mean_t=0.5*(t_in+t)
-        cp_mean=_state(mean_t,0.5*(p_in+p)).frozen_cp_j_kg_k
+        cp_mean=_state(mean_t,0.5*(p_in+p),chemistry_mode).frozen_cp_j_kg_k
+        # Existing screening Nu/Pr closure is still based on frozen
+        # species cp and fixed H2 transport coefficients; no claim
+        # of validated wall chemistry or high-temperature viscosity.
         pr=cp_mean*props.dynamic_viscosity_pa_s/props.thermal_conductivity_w_m_k
         nu=nusselt_number(reynolds,pr)
         h=nu*props.thermal_conductivity_w_m_k/d
@@ -251,6 +292,7 @@ def solve_fuel_channel_compressible(
         heat_flux[i]=flux
         htc[i]=h
         mach[i]=m_out
+        dissociation[i]=gas_out.dissociation_fraction
         dp_f[i]=fric
         dp_acc[i]=acc
         energy_residual[i]=energy_err
@@ -275,4 +317,5 @@ def solve_fuel_channel_compressible(
         acceleration_pressure_loss_pa=dp_acc,
         energy_residual_w=energy_residual,
         momentum_residual_pa=momentum_residual,
+        dissociation_fraction=dissociation,
     )
