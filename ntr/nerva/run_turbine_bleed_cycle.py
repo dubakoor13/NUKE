@@ -56,7 +56,16 @@ def main() -> int:
     parser.add_argument("--resolved-thermal-parameters", type=Path)
     parser.add_argument("--resolved-thermal-state", type=Path)
     parser.add_argument("--resolved-dt-s", type=float)
-    parser.add_argument("--resolved-inlet-temperature-k", type=float)
+    parser.add_argument("--resolved-inlet-temperature-k", type=float,
+                        help="Initial fuel H2 inlet temperature in resolved gas model")
+    parser.add_argument("--resolved-tie-inlet-temperature-k", type=float,
+                        help="Separate tie supply H2 GAS inlet; NASA-7 requires >=200 K")
+    parser.add_argument("--couple-fuel-header-temperature", action="store_true",
+                        help="Feed solved warm engine header into resolved fuel inlet fixed point")
+    parser.add_argument("--header-temperature-tolerance-k", type=float,
+                        default=0.5)
+    parser.add_argument("--header-temperature-relaxation", type=float,
+                        default=0.5)
     parser.add_argument("--resolved-flow-feedback", action="store_true",
                         help="Iterate thermal fuel/tie flows against shaft-cycle mass flows")
     parser.add_argument("--flow-feedback-iterations", type=int, default=12)
@@ -102,9 +111,19 @@ def main() -> int:
         args.resolved_dt_s, args.resolved_inlet_temperature_k,
     )
     requested=(args.openmc_transfer_mode=="resolved-implicit"
-               or any(v is not None for v in (*sources,*fractions,*temporal)))
+               or any(v is not None for v in (*sources,*fractions,*temporal))
+               or args.resolved_tie_inlet_temperature_k is not None
+               or args.couple_fuel_header_temperature)
     if args.resolved_flow_feedback and args.openmc_transfer_mode != "resolved-implicit":
         raise ValueError("flow feedback requires resolved-implicit heat mapping")
+    if args.couple_fuel_header_temperature and (
+        not args.resolved_flow_feedback
+        or args.resolved_tie_inlet_temperature_k is None
+    ):
+        raise ValueError(
+            "warm-header temperature coupling requires resolved flow "
+            "feedback and a separate tie-supply gas inlet"
+        )
     if requested:
         if cooling is None or not all(v is not None for v in sources):
             raise ValueError(
@@ -114,7 +133,7 @@ def main() -> int:
         if args.openmc_transfer_mode=="fractions":
             if not all(v is not None for v in fractions) or any(
                 v is not None for v in temporal
-            ):
+            ) or args.resolved_tie_inlet_temperature_k is not None:
                 raise ValueError(
                     "fraction mode requires three fractions and forbids "
                     "resolved-transient state options"
@@ -178,6 +197,10 @@ def main() -> int:
                     relative_flow_tolerance=args.flow_feedback_tolerance,
                     profile_tolerance_k=args.flow_feedback_profile_tol_k,
                     relaxation=args.flow_feedback_relaxation,
+                    tie_supply_inlet_temperature_k=args.resolved_tie_inlet_temperature_k,
+                    couple_fuel_header_temperature=args.couple_fuel_header_temperature,
+                    header_temperature_tolerance_k=args.header_temperature_tolerance_k,
+                    header_temperature_relaxation=args.header_temperature_relaxation,
                 )
                 step=flow_solution.thermal_step
                 core=flow_solution.mapped_core
@@ -188,6 +211,7 @@ def main() -> int:
                 step=advance_resolved(
                     heating,old_state,parameters,
                     args.resolved_inlet_temperature_k,args.resolved_dt_s,
+                    tie_supply_inlet_t_k=args.resolved_tie_inlet_temperature_k,
                 )
                 core,cooling,ledger=project_resolved_wall_power(
                     heating,old_state,step,parameters,core,cooling,
@@ -201,7 +225,18 @@ def main() -> int:
                 "old_state_path":str(args.resolved_thermal_state.resolve()),
                 "parameters":asdict(parameters),
                 "dt_s":args.resolved_dt_s,
-                "thermal_inlet_temperature_k":args.resolved_inlet_temperature_k,
+                "thermal_inlet_temperature_k":(
+                    flow_solution.thermal_inlet_temperature_k if flow_solution
+                    else args.resolved_inlet_temperature_k
+                ),
+                "tie_supply_gas_inlet_temperature_k":(
+                    flow_solution.tie_supply_inlet_temperature_k if flow_solution
+                    else (args.resolved_tie_inlet_temperature_k
+                          if args.resolved_tie_inlet_temperature_k is not None
+                          else args.resolved_inlet_temperature_k)
+                ),
+                "fuel_header_temperature_feedback_enabled":
+                    args.couple_fuel_header_temperature,
                 "thermal_reconstruction_fuel_flow_kg_s":
                     heating.total_fuel_flow_kg_s,
                 "thermal_reconstruction_tie_flow_kg_s":
@@ -213,11 +248,18 @@ def main() -> int:
                     "iterations":flow_solution.iterations,
                     "max_relative_flow_error":flow_solution.max_relative_flow_error,
                     "max_profile_update_k":flow_solution.max_thermal_profile_update_k,
+                    "fuel_header_temperature_error_k":
+                        flow_solution.fuel_header_temperature_error_k,
+                    "fuel_header_feedback_converged":
+                        flow_solution.fuel_header_feedback_converged,
                     "iteration_trace":[asdict(v) for v in flow_solution.diagnostics],
                     "same_old_state_used_per_iteration":True,
                 } if flow_solution is not None else None,
-                "thermal_inlet_fixed_externally":True,
-                "fuel_and_tie_have_single_shared_inlet_temperature":True,
+                "thermal_inlet_fixed_externally":
+                    not args.couple_fuel_header_temperature,
+                "fuel_and_tie_have_single_shared_inlet_temperature":
+                    args.resolved_tie_inlet_temperature_k is None,
+                "tie_supply_cryogenic_phase_model_present":False,
                 "full_conjugate_cycle_closed":False,
             }
         power_bridge={
@@ -260,7 +302,7 @@ def main() -> int:
             point.regenerative_cooling.tie_tube_mass_flow_kg_s
         )/point.regenerative_cooling.tie_tube_mass_flow_kg_s
         diag["thermal_inlet_vs_solved_header_delta_k"]=(
-            args.resolved_inlet_temperature_k-point.warm_header_temperature_k
+            diag["thermal_inlet_temperature_k"]-point.warm_header_temperature_k
         )
     data={
         "status":"PASS",

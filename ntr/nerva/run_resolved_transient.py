@@ -37,7 +37,11 @@ def parse_args():
     p.add_argument("--dt-s", type=float, required=True)
     p.add_argument("--initial-solid-k", type=float, required=True)
     p.add_argument("--initial-gas-k", type=float, required=True)
-    p.add_argument("--inlet-temperature-k", type=float, required=True)
+    p.add_argument("--inlet-temperature-k", type=float, required=True,
+                   help="Fuel-channel gas inlet (200-3500 K in NASA-7 mode)")
+    p.add_argument("--tie-supply-inlet-temperature-k", type=float,
+                   help="Separate tie-supply gas inlet; defaults to fuel inlet. "
+                        "NASA-7 H2 excludes cryogenic liquid temperatures.")
     p.add_argument("--expected-power-mw", type=float)
     p.add_argument("--fuel-solid-capacity-j-k", type=float, required=True)
     p.add_argument("--fuel-gas-capacity-j-k", type=float, required=True)
@@ -124,7 +128,10 @@ def main() -> int:
     old_state=state
     rows=[]
     for k in range(a.steps):
-        step=advance_resolved(heat,state,p,a.inlet_temperature_k,a.dt_s)
+        step=advance_resolved(
+            heat,state,p,a.inlet_temperature_k,a.dt_s,
+            tie_supply_inlet_t_k=a.tie_supply_inlet_temperature_k,
+        )
         state=step.state
         row={
             "time_s":(k+1)*a.dt_s,
@@ -164,6 +171,13 @@ def main() -> int:
         "total_tie_flow_kg_s":heat.total_tie_flow_kg_s,
         "step_s":a.dt_s,"steps":a.steps,
         "enthalpy_model":a.gas_enthalpy_model,
+        "fuel_h2_inlet_temperature_k":a.inlet_temperature_k,
+        "tie_supply_h2_gas_inlet_temperature_k":(
+            a.tie_supply_inlet_temperature_k
+            if a.tie_supply_inlet_temperature_k is not None
+            else a.inlet_temperature_k
+        ),
+        "cryogenic_two_phase_tie_inlet_modeled":False,
         "input_parameters_assumed_not_calibrated":True,
         "inputs_sha256":{
             "mesh_fields":sha256(a.mesh_fields),
@@ -179,6 +193,7 @@ def main() -> int:
             a.steps*a.dt_s, base_steps=a.steps,
             levels=a.refine_levels,
             tolerance_k=a.refine_tolerance_k,
+            tie_supply_inlet_temperature_k=a.tie_supply_inlet_temperature_k,
         )
         details["temporal_refinement"] = asdict(convergence)
         (root/"temporal_convergence_report.json").write_text(

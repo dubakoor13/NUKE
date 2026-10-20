@@ -280,18 +280,24 @@ class ResolvedStep:
     fuel_outlet_t_k: np.ndarray
     tie_outlet_t_k: np.ndarray
     tie_coupling_max_iterations: int
+    fuel_inlet_t_k: float | None = None
+    tie_supply_inlet_t_k: float | None = None
 
 
 def advance_resolved(
     heat: ResolvedHeating, state: ResolvedState,
-    parameters: ResolvedParameters, inlet_t_k: float, dt_s: float
+    parameters: ResolvedParameters, inlet_t_k: float, dt_s: float,
+    *, tie_supply_inlet_t_k: float | None = None,
 ) -> ResolvedStep:
     """Independent fuel channel BE + shared-solid nonlinear tie counterflow.
 
     All heating is fixed for the timestep; no neutron feedback is inferred.
+    Fuel inlet and tie-supply inlet can differ thermodynamically.
     In tie duct, supply H2 enters at physical z=0, returns from z=L to 0.
     Thus outward supply flow joins return flow at the far end, and ONLY
-    the return path z=0 end is a net hydraulic outlet.
+    the return path z=0 end is a net hydraulic outlet. Both boundaries
+    are GAS temperatures in the selected enthalpy model; NASA-7 H2
+    explicitly rejects cryogenic temperatures below 200 K.
     """
     heat.validate()
     parameters.validate()
@@ -308,7 +314,12 @@ def advance_resolved(
     model = parameters.enthalpy_model
     cp = parameters.hydrogen_cp_reference_j_kg_k
     h = lambda t: hydrogen_specific_enthalpy(t, cp, model)
-    hin = h(inlet_t_k)
+    tie_inlet = (inlet_t_k if tie_supply_inlet_t_k is None
+                 else float(tie_supply_inlet_t_k))
+    # Validate both independent boundary enthalpies, even when the tie
+    # duct is only weakly heated or has zero wall conductance.
+    h(inlet_t_k)
+    h_tie = h(tie_inlet)
     n_elem, n_channels, n_fuel_z = heat.fuel_solid_w.shape
     n_tie, n_tie_z = heat.tie_solid_w.shape
     fsolid = np.empty_like(state.fuel_solid_t_k)
@@ -365,7 +376,7 @@ def advance_resolved(
         for it in range(1, parameters.max_coupling_iterations+1):
             # Supply flows from z=0 to L; use each new-time upstream value.
             for i in range(n_tie_z):
-                hup = hin if i == 0 else h(float(sup[i-1]))
+                hup = h_tie if i == 0 else h(float(sup[i-1]))
                 sup[i] = _gas_root(
                     float(sup_prev[i]), float(sg[i]), hup, m_sup,
                     us, float(heat.tie_supply_h2_w[j,i]),
@@ -398,7 +409,7 @@ def advance_resolved(
         # Recalculate fresh gas at converged solid; material correction
         # is small under the configured convergence tolerance.
         for i in range(n_tie_z):
-            hup = hin if i == 0 else h(float(sup[i-1]))
+            hup = h_tie if i == 0 else h(float(sup[i-1]))
             sup[i] = _gas_root(float(sup_prev[i]),float(sg[i]),hup,m_sup,us,
                                float(heat.tie_supply_h2_w[j,i]),flow,dt_s,cp,model)
         for i in range(n_tie_z-1,-1,-1):
@@ -411,7 +422,7 @@ def advance_resolved(
             stored += c_s*(float(sg[i])-float(solid_prev[i]))
             stored += m_sup*(h(float(sup[i]))-h(float(sup_prev[i])))
             stored += m_ret*(h(float(ret[i]))-h(float(ret_prev[i])))
-        incoming += flow*hin
+        incoming += flow*h_tie
         outgoing += flow*h(float(ret[0]))
         maxiter = max(maxiter,it)
 
@@ -439,4 +450,6 @@ def advance_resolved(
         fuel_outlet_t_k=fgas[:,:,-1].copy(),
         tie_outlet_t_k=tret[:,0].copy(),
         tie_coupling_max_iterations=maxiter,
+        fuel_inlet_t_k=float(inlet_t_k),
+        tie_supply_inlet_t_k=float(tie_inlet),
     )

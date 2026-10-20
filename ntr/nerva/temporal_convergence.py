@@ -87,6 +87,7 @@ def refine_resolved_timestep(
     tolerance_k: float = 0.25,
     require_decreasing: bool = True,
     max_steps: int = 4096,
+    tie_supply_inlet_temperature_k: float | None = None,
 ) -> TemporalRefinement:
     """Integrate with refinement factors 1,2,4,... at fixed physical time.
 
@@ -126,7 +127,8 @@ def refine_resolved_timestep(
         sum_residual = 0.0
         for _ in range(n):
             result = advance_resolved(
-                heating, state, params, inlet_temperature_k, dt
+                heating, state, params, inlet_temperature_k, dt,
+                tie_supply_inlet_t_k=tie_supply_inlet_temperature_k,
             )
             state = result.state
             residual = result.energy_residual_j
