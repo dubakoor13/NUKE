@@ -1256,6 +1256,61 @@ model yet supplies NASA-qualified conjugate/boiling/CHF or
 neutronic-feedback predictions. Do not interpret the EOS pressure
 profile as one calculated from Darcy friction or two-phase momentum.
 
+## Pressure-driven axial tie H2 finite volumes (quasisteady screening)
+
+`pressure_driven_tie.py` extends the rigid-volume real-fluid H2
+tie-tube model to calculate **one signed mass flux per axial
+interface**, rather than prescribing the same `mdot` through every
+cell. Its supply channel runs z=0→L, and the return channel runs
+z=L→0. The turnaround has one shared interface, so no artificial
+mass or hydrogen enthalpy is created between paths.
+
+Each interface uses the declared effective restriction area `A`,
+discharge coefficient `Cd`, local EOS pressures and **upwind**
+hydrogen mixture density:
+
+```text
+mdot_e = sign(p_left-p_right)
+         * Cd*A*sqrt(2*rho_upwind*abs(p_left-p_right))
+
+m_cell,new = m_cell,old + dt*(mdot_in-mdot_out)
+U_cell,new = (m*u)_old + dt*(mdot_in*h_upwind,in
+                             - mdot_out*h_upwind,out
+                             + Q_wall + Q_direct_nuclear_H2)
+rho_new = m_new / V
+(p_new,T_new,h_new,quality_new) = CoolProp(rho_new,U_new/m_new)
+Cs*(Ts_new-Ts_old)/dt = Q_solid_nuclear-Q_wall_supply-Q_wall_return
+```
+
+All fluxes are computed once using the **old** EOS state and used
+identically on both sides of shared interfaces, giving exact
+telescoping mass/enthalpy terms. Fluid and solid storage use true
+internal-energy/thermal-capacity increments. The external pump and
+exit reservoirs have independently prescribed pressure and
+enthalpy. Signed upwind transport allows reverse pressure gradient
+without silently reversing the supply/return geometry.
+
+The explicit first-order time advance enforces a maximum fraction
+of each cell's inventory exchanged per timestep (default 0.20) and
+rejects reservoir pressure differences beyond the selected
+quasisteady-orifice screening domain (default 0.45 of the larger
+interface pressure). It reports local/global fluid mass and energy
+residuals and each tie's `2*Nz+1` interface fluxes. Run synthetic
+two-phase checks with
+
+`python -m ntr.nerva.validate_pressure_driven_tie`.
+
+**Physical scope:** this is a pressure-driven *quasisteady*
+restriction law, **not** an integrated unsteady momentum equation
+with inertia, choking, Darcy–Weisbach geometry, two-phase
+slip/critical flow, buoyancy, or junction dynamics. The restriction
+area and coefficient are user screening inputs, not NASA measurements.
+The current module does not yet solve the pump/nozzle/turbine
+operating-point boundary values, pressure-driven CHF/boiling HTC,
+wall expansion, or neutronic reactivity. Older validated solvers
+are untouched. The source fields in CI remain synthetic and do
+not constitute an OpenMC neutron-transport benchmark.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
