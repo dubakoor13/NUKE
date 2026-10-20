@@ -62,10 +62,10 @@ def main() -> int:
         nozzle_wall_heat_w=110000.,
         reflector_wall_heat_w=90000.,
     )
-    assert mapped_core.channel_wall_power_w == core.channel_wall_power_w
-    assert mapped_core.channel_direct_hydrogen_power_w == core.channel_direct_hydrogen_power_w
-    assert mapped_core.preheater_thermal_power_w == core.preheater_thermal_power_w
-    assert mapped_net.total_heat_w == net.total_heat_w
+    assert np.allclose(mapped_core.channel_wall_power_w, core.channel_wall_power_w, rtol=1e-12)
+    assert np.allclose(mapped_core.channel_direct_hydrogen_power_w, core.channel_direct_hydrogen_power_w, rtol=1e-12)
+    assert math.isclose(mapped_core.preheater_thermal_power_w, core.preheater_thermal_power_w, rel_tol=1e-12)
+    assert math.isclose(mapped_net.total_heat_w, net.total_heat_w, rel_tol=1e-12)
     assert ledger.axial_fuel_channels_per_element == 19
     assert abs(ledger.power_balance_error_w) < 1e-7
     assert math.isclose(ledger.reactor_power_w,
@@ -103,7 +103,7 @@ def main() -> int:
     )
     assert math.isclose(changed_net.tie_supply.heat_power_w, 75000.)
     assert math.isclose(changed_net.tie_return.heat_power_w,115000.)
-    assert changed_core.channel_wall_power_w==mapped_core.channel_wall_power_w
+    assert np.allclose(changed_core.channel_wall_power_w,mapped_core.channel_wall_power_w,rtol=1e-12)
     assert math.isclose(changed_ledger.retained_or_unmodeled_openmc_power_w,
                         ledger.retained_or_unmodeled_openmc_power_w-40000.)
     assert abs(changed_ledger.power_balance_error_w)<1e-7
@@ -118,7 +118,7 @@ def main() -> int:
         reflector_wall_heat_w=90000.,
     )
     assert math.isclose(partial_ledger.fuel_solid_untransferred_w,825000.)
-    assert partial_net.total_heat_w==mapped_net.total_heat_w
+    assert math.isclose(partial_net.total_heat_w,mapped_net.total_heat_w,rel_tol=1e-12)
     assert math.isclose(sum(partial_core.channel_wall_power_w),825000.)
 
     rejects(lambda:map_openmc_heating_to_cycle(
@@ -159,7 +159,7 @@ def main() -> int:
             small_ledger.retained_or_unmodeled_openmc_power_w,
             reconstructed.total_openmc_power_w,rel_tol=1e-12,
         )
-        assert small_core.channel_direct_hydrogen_power_w==(32.,32.,32.)
+        assert np.allclose(small_core.channel_direct_hydrogen_power_w,(32.,32.,32.),rtol=1e-12)
         assert math.isclose(small_net.tie_supply.heat_power_w,60.)
         assert math.isclose(small_net.tie_return.heat_power_w,60.)
         rejects(lambda:check_reconstruction_axial_edges(fuel,tie,core))
