@@ -196,3 +196,109 @@ This milestone is designed to prove that nozzle flow, chamber
 pressure, compressor work and fuel-channel hydrogen heating do
 not vary independently, while keeping unimplemented cycle physics
 explicit instead of inventing LH2 turbopump behavior.
+
+
+## Cryogenic LH2 pump and vaporizing preheater physics
+
+\`lh2_feed_cycle.py\` and \`run_lh2_feed_cycle.py\` extend the prior
+**gas-only** network with a distinct, thermodynamically consistent
+**cryogenic liquid H2 pump / lumped preheater / real-fluid warm core /
+choked-nozzle operating-point model**.
+
+The actual physical NERVA coolant sequence is more involved (tank,
+pump, nozzle jacket, reflector, shield, core and turbine bleed) and
+requires distributed phase change, losses, turbine-drive dynamics and
+real pump curves. This implementation does **NOT** claim those
+subsystems exist. It does not replace the legacy NASA-7 hot-hydrogen
+engine code, and is not valid for historical hot-core temperatures.
+
+### Equations implemented
+
+Tank liquid H2 (temperature \`T1\`, pressure \`P1\`), followed by
+an externally prescribed pump pressure head characteristic:
+
+\`\`\`text
+P2 = P1 + pump_shutoff_deltaP - Kpump * mdot^2
+
+h2s = H(P2,s1)    // isentropic liquid pump
+h2  = h1 + (h2s - h1) / eta_pump
+Wpump = mdot*(h2-h1)
+
+P3 = P2 - Kfeed * mdot^2
+h3 = h2 + Qpreheater/mdot
+
+h0_core_exit = h3 + (Qwall + Qdirect_H2) / mdot
+Pchamber = Pcore_exit - Kchamber * mdot^2
+
+mdot = At * choked_gas_mass_flux(Pchamber,Tchamber)
+Wpump + Qpreheater + Qcore =
+      mdot * (h0_chamber - h_tank)
+\`\`\`
+
+The code uses a **single CoolProp enthalpy/entropy reference** from
+subcooled LH2 to gaseous core exit; pump isentropic efficiency is
+calculated from actual Helmholtz hydrogen EOS values. The preheater
+is permitted to cross the liquid/vapor phase boundary in a **lumped
+isenthalpic-state flash**; however the core refuses liquid/two-phase
+states and requires a gas inlet above 200 K. This is not a resolved
+two-phase heat-exchanger/boiling model.
+
+For gaseous core bins, mass conservation uses \`G=mdot/A\`; total
+enthalpy adds kinetic energy \`h+v²/2\` and the momentum equation
+includes both gas acceleration and Darcy friction, with CoolProp
+density, viscosity and sonic speed. A chamber diffuser recovers
+core-exit kinetic energy into stagnation enthalpy (with a separate
+prescribed chamber pressure loss). The nozzle uses the existing
+perfect-gas formula with **local** chamber \`gamma=cp/cv\` and
+\`R_eff=P/(rho*T)\` obtained from CoolProp. This nozzle approximation
+is **not** a real-fluid isentropic expansion solver.
+
+### Execute numerical example
+
+Requires the optional \`CoolProp\` package:
+
+\`\`\`bash
+python -m pip install CoolProp
+
+python -m ntr.nerva.validate_lh2_feed_cycle \
+  --write-example build/lh2_cycle_case.json
+
+python -m ntr.nerva.run_lh2_feed_cycle \
+  --config build/lh2_cycle_case.json \
+  --output build/lh2_cycle_result.json
+\`\`\`
+
+The generated parameters and reactor heating are **hypothetical
+software-physics test values**, not NERVA engine test settings. The
+report contains pump discharge properties, shaft work, NPSH available,
+warm gas channel pressure and temperature, nozzle pressure, flow,
+thrust and Isp, with explicit pressure, enthalpy and mass residuals.
+
+### Temperature and physical limitations
+
+- CoolProp's Hydrogen Helmholtz EOS is limited to **Tmax 1000 K**.
+  This code imposes **T <= 900 K** throughout the warm gas cycle.
+  It CANNOT predict ~2500 K historical NERVA reactor heating and MUST
+  NOT extrapolate CoolProp into that regime.
+- Liquid pump is represented through *isentropic efficiency and a
+  user-specified pressure-head curve*. No speed/torque turbine-map
+  matching, vapor cavitation dynamics, NPSH required curve, turbine
+  bleed, bearings, regenerative nozzle jacket or tie tube circuit.
+- NPSH available is computed from liquid density and vapor pressure,
+  but without a manufacturer NPSH-required curve it is NOT a pump
+  cavitation qualification.
+- Warm core gas uses single-phase H2 and bounded subsonic pressure
+  solution. Preheater latent heating is an imposed lumped heat budget.
+  No realistic two-phase startup/chilldown transient.
+- Nuclear energy is externally assigned to preheater and channel
+  bins; OpenMC cross-section data are not loaded here.
+- Historical NERVA flowrates, pump pressure, thermal power and
+  exhaust chemistry remain to be calibrated to documents and
+  independently checked with engine data.
+
+Background:
+- CoolProp Hydrogen fluid limits: https://coolprop.org/fluid_properties/fluids/Hydrogen.html
+- Historical NERVA engine flow path: NASA NTRS 19730062635
+  https://ntrs.nasa.gov/citations/19730062635
+- NERVA startup includes liquid / two-phase / gas zones:
+  https://www.nasa.gov/wp-content/uploads/2025/06/b1-nerva-start-up-dynamics-and-control-1966.pdf
