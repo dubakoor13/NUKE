@@ -126,6 +126,9 @@ jobs:
       - name: Validate fixed-volume CoolProp H2 tie mass and internal-energy conservation
         run: python -m ntr.nerva.validate_isochoric_tie
 
+      - name: Validate pressure-driven axial tie interface flows and mass/internal energy
+        run: python -m ntr.nerva.validate_pressure_driven_tie
+
       - name: Validate real-fluid tie heating and regenerative branch hydraulic fixed point
         run: python -m ntr.nerva.validate_cryogenic_tie_hydraulic_coupling
 
