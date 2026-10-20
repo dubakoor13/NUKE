@@ -62,7 +62,8 @@ def _temperature_from_total_enthalpy(
     t=max(lower,min(upper,guess_k))
     for _ in range(50 if chemistry_mode == "equilibrium" else 28):
         val,hs,speed=f(t)
-        if abs(val)<=1e-10*max(1.,abs(target_j_kg),abs(hs.enthalpy_j_kg)):
+        tolerance=1e-12 if chemistry_mode=="equilibrium" else 1e-10
+        if abs(val)<=tolerance*max(1.,abs(target_j_kg),abs(hs.enthalpy_j_kg)):
             return t
         if val>0:
             upper=t
