@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from importlib.metadata import version
 from pathlib import Path
 
 from .nasa_hydrogen import hydrogen_state
@@ -99,6 +100,7 @@ def main() -> int:
     report = {
         "reference": NASA_CEA_REFERENCE,
         "cea_source": NASA_CEA_SOURCE,
+        "cea_package_version": version("cea"),
         "test_model": "GRI-Mech 3.0 NASA-7 two-species H2/H",
         "validating_model": "NASA CEA full package, restricted to H2/H",
         "scope": "TP equilibrium thermodynamics only; not full NERVA",
@@ -113,12 +115,12 @@ def main() -> int:
         )
         # Broad engineering *sanity* checks; tight cross-database parity
         # requires a dedicated numerical tolerance/coefficients study.
-        if abs(row["density_relative_error"]) > 0.10:
-            raise AssertionError("density discrepancy > 10% vs NASA CEA")
-        if abs(row["frozen_cp_relative_error"]) > 0.15:
-            raise AssertionError("cp discrepancy > 15% vs NASA CEA")
-        if abs(row["alpha_absolute_error"]) > 0.03:
-            raise AssertionError("dissociation discrepancy > 0.03 vs NASA CEA")
+        if abs(row["density_relative_error"]) > 0.005:
+            raise AssertionError("density discrepancy > 0.5% vs NASA CEA")
+        if abs(row["frozen_cp_relative_error"]) > 0.01:
+            raise AssertionError("cp discrepancy > 1% vs NASA CEA")
+        if abs(row["alpha_absolute_error"]) > max(1e-5, 0.03*row["alpha_cea"]):
+            raise AssertionError("dissociation discrepancy > 3% vs NASA CEA")
     if a.output:
         a.output.parent.mkdir(parents=True, exist_ok=True)
         a.output.write_text(json.dumps(report, indent=2)+"\n", encoding="utf-8")
