@@ -278,6 +278,32 @@ validated in CI using synthetic providers; the pipeline has not yet been
 executed with an installed OpenMC transport binary, compatible HDF5
 neutron data and historical NERVA test datasets in CI.
 
+### Energy-consistent uniform coolant temperature feedback
+
+The channel-resolved thermal solver stores the gas inventory as
+`m_H2 = Cgas/cp_reference` and advances `m_H2 * h(T)` with NASA-7
+frozen molecular H2 enthalpy, rather than advancing `Cgas * T`.
+When reducing the many fuel-channel and tie-passage temperatures to
+the single uniform OpenMC H2 material-temperature surrogate,
+`reduce_openmc_material_state` now conserves that modeled hydrogen
+enthalpy:
+
+```text
+sum_i m_i * h_NASA7(T_i) = (sum_i m_i) * h_NASA7(T_uniform)
+```
+
+A monotone bounded inversion over 200–3500 K determines `T_uniform`.
+The constant-cp mode retains the equivalent gas-mass-weighted arithmetic
+temperature average. Invalid NASA-7 temperatures fail closed.
+This eliminates a temperature-projection *energy mismatch*; it does NOT
+change the imposed reactor power, solve coolant density/momentum feedback,
+or provide spatially resolved OpenMC temperatures. The current transport
+still uses one uniform H2 density proxy based on a prescribed pressure.
+
+Verification: `python -m ntr.nerva.validate_resolved_openmc_feedback`
+checks NASA-7 enthalpy preservation for nonuniform channels, constant-cp
+behavior, invariance of a uniform state, and thermo-domain rejection.
+
 ### Run a real-data feedback study
 
 \`\`\`bash
