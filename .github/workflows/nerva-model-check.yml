@@ -43,6 +43,9 @@ jobs:
       - name: Check statepoint postprocessor CLI
         run: python -m ntr.nerva.postprocess_statepoint --help
 
+      - name: Validate OpenMC statepoint identity and Monte Carlo heating quality
+        run: python -m ntr.nerva.validate_statepoint_quality
+
       - name: Validate resolved OpenMC transport feedback Picard and QA gates
         run: python -m ntr.nerva.validate_resolved_openmc_feedback
 
