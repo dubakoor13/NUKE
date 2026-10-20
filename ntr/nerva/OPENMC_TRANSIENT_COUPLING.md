@@ -100,3 +100,60 @@ This mode *never* calls OpenMC and is tagged \`synthetic_unverified\`.
 
 Outputs: \`openmc_transient_report.json\` and
 \`openmc_transient_history.csv\` under the configured output root.
+
+
+## Variable-enthalpy and implicit transient integration (current)
+
+The time integrator now supports:
+
+\`\`\`bash
+--integrator implicit --gas-enthalpy-model nasa7-h2
+\`\`\`
+
+This is the **default for the transient runner**. The legacy
+\`--integrator explicit --gas-enthalpy-model constant\` remains available
+for regression comparisons.
+
+The implicit solver updates each axial gas cell using a monotonic,
+bounded nonlinear solve of the mass-specific hydrogen **enthalpy**
+equation. It uses the existing pure-molecular (frozen H2) GRI-Mech
+NASA-7 polynomial for sensible enthalpy; pressure is assumed fixed in
+the thermodynamic equation. Variable cp(T) is accounted for through
+\`h(Tnew)-h(Told)\`, and upstream advection uses **new-time enthalpy**.
+
+\`\`\`text
+C_s (T_s,new - T_s,old) / dt
+     = Q_s - UA*(T_s,new - T_g,new)
+
+m_g (h(T_g,new) - h(T_g,old)) / dt
+     = UA*(T_s,new - T_g,new) + Q_direct_gas
+       + mdot*(h(T_up,new)-h(T_g,new))
+
+m_g = C_g,reference / cp_reference
+\`\`\`
+
+The gas-mass inventory is held fixed over a timestep and inferred from
+a **supplied effective reference gas heat capacity**. The solid uses
+a supplied effective constant heat capacity. Both capacities are
+per axial cell, not per engine.
+
+The algorithm is backward Euler: unconditionally stable for this
+co-current passive heat-exchange system within its single-phase
+assumptions; it can still be **temporally inaccurate for large steps**
+and rejects expansion beyond the supported NASA-7 200–3500 K domain.
+It does not introduce physically correct pump-driven pressure changes,
+material-dependent solid properties, equilibrium dissociation kinetics,
+or genuine transient neutronics. OpenMC feedback still uses an
+axially-uniform material-temperature proxy and externally supplied
+reactor power.
+
+Validation command:
+
+\`\`\`bash
+python -m ntr.nerva.validate_implicit_hydrogen
+\`\`\`
+
+The checks include energy conservation, exact zero-flow heat balance,
+a timestep far larger than the explicit stability threshold,
+causal upwind enthalpy transport, nonconstant cp, failure outside
+the thermo range, and an iterative feedback accounting regression.
