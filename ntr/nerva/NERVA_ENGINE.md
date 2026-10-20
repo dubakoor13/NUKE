@@ -738,3 +738,94 @@ python -m ntr.nerva.validate_geometry_regenerative
   OpenMC power map feeds this reduced-order cycle yet.
 - The existing separate turbine bleed remains; expander turbine
   exhaust recombination and turbine map/dynamics are pending.
+
+
+
+## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
+
+\`regenerative_cooling.py\` now implements an explicit
+\`two_phase_friction_model="homogeneous-mcadams"\` option for
+**geometry-derived coolant passages**. The default is \`"reject"\`
+to avoid quietly applying a single-phase Darcy friction factor to
+coexisting liquid/vapor hydrogen.
+
+At **subcritical** coolant pressure, CoolProp gives the equilibrium
+vapor *mass quality* \`x(P,h)\`, and saturated dynamic viscosities
+\`mu_l(P)\` and \`mu_v(P)\`. The mixture correlation is the
+mass-quality weighted inverse-viscosity rule attributed to McAdams:
+
+\`\`\`text
+1/mu_mix = (1-x)/mu_liquid + x/mu_vapor
+
+Re_mix = mass_flux*D_h/mu_mix
+f_D = 64/Re_mix             (laminar)
+      Haaland(Re_mix,e/D_h) (turbulent)
+
+K = f_D*L/D_h + K_minor
+
+p_in-p_out =
+    mass_flux*(v_out-v_in)
+    + K*mass_flux*(v_in+v_out)/4
+
+mdot*(h0_out-h0_in) = deposited_coolant_heat
+\`\`\`
+
+The **homogeneous-equilibrium assumption** forces vapor and liquid
+to share one velocity; mixture specific volume is provided by
+CoolProp's equilibrium hydrogen density (no adjustable void
+fraction or slip ratio). As before, \`G=mdot/A\`; acceleration and
+wall/minor losses remain separate. The flow is restricted to
+subsonic screening conditions. To avoid misusing CoolProp's
+single-phase sound-speed derivatives, the two-phase sound speed
+is approximated by a finite isentropic density derivative:
+
+\`\`\`text
+1/a_HEM^2 = (d rho / dP) at constant entropy, using
+            rho(P+deltaP,s) and rho(P-deltaP,s)
+\`\`\`
+
+This derivative permits equilibrium phase redistribution but is
+not a model for metastable boiling, acoustic relaxation or shocks.
+The report includes inlet/outlet vapor quality, midpoint quality,
+mixture dynamic viscosity, Reynolds, effective friction K and
+estimated outlet Mach. The old single-phase/supercritical solution
+remains unchanged if no two-phase state occurs.
+
+Example, for one cooling leg:
+
+\`\`\`json
+{
+  "heat_power_w": 1000.0,
+  "flow_area_m2": 0.003,
+  "length_m": 0.8,
+  "hydraulic_diameter_m": 0.007,
+  "roughness_m": 0.000003,
+  "minor_loss_coefficient": 0.5,
+  "pressure_loss_coefficient": 0.0,
+  "two_phase_friction_model": "homogeneous-mcadams"
+}
+\`\`\`
+
+Test with:
+
+\`\`\`bash
+python -m ntr.nerva.validate_two_phase_cooling
+\`\`\`
+
+**Critical engineering caveats:** The McAdams model is empirical,
+and the homogeneous-equilibrium approximation cannot by itself
+resolve flow regimes, slip, wall dryout, critical heat flux,
+cavitation, pressure-wave propagation, flashing instabilities, or
+two-phase heat-transfer coefficients. It is *not NERVA-qualified*,
+and its temperature and pressure domain is checked by CoolProp.
+A hydrogen coolant circuit at approximately 6 MPa is **above**
+H2's critical pressure, so this two-phase branch is exercised
+separately in a low-pressure subcritical numerical test, not
+claimed for the original high-pressure engine example.
+
+References:
+- CoolProp documentation warns that ordinary thermodynamic
+  derivatives are single-phase only:
+  https://coolprop.org/coolprop/HighLevelAPI.html
+- McAdams homogeneous viscosity and pressure-drop models reviewed:
+  https://www.sciencedirect.com/science/article/pii/S0894177708001027
