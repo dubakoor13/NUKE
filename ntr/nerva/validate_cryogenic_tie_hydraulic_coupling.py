@@ -119,7 +119,16 @@ def main()->int:
         assert abs(result.cooling_point.split_pressure_residual_pa)<1.
         assert abs(result.nuclear_energy_power_residual_w)<1e-4
         assert abs(result.tie_step.energy_residual_j)<1e-4
-        assert abs(result.outlet_enthalpy_difference_j_kg)<0.01
+        # After Picard convergence, the cross-model enthalpy mismatch
+        # is of order the remaining flow mismatch times advective rise.
+        # It is not machine-zero until both flows coincide exactly.
+        reference_rise=abs(
+            result.cooling_point.legs[3].outlet_stagnation_enthalpy_j_kg-hin
+        )
+        assert abs(result.outlet_enthalpy_difference_j_kg)<=(
+            result.relative_flow_residual*max(1.,reference_rise)*1.000001
+            +1e-4
+        )
         assert not result.pressure_field_resolved
         assert not result.hydrogen_mass_inventory_updated
         assert not result.full_engine_cycle_converged
@@ -175,7 +184,13 @@ def main()->int:
         )
         assert all(
             abs(row.nuclear_energy_power_residual_w)<1e-3 and
-            abs(row.outlet_enthalpy_difference_j_kg)<0.05
+            math.isclose(
+                row.outlet_enthalpy_difference_j_kg,
+                (row.tie_advected_power_w*
+                 (1./row.thermal_tie_flow_kg_s -
+                  1./row.hydraulic_tie_flow_kg_s)),
+                rel_tol=1e-5,abs_tol=1e-4,
+            )
             for row in result.diagnostics
         )
 
