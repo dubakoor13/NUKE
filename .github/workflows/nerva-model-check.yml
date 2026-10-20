@@ -2,6 +2,10 @@ name: NERVA model check
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ntr/nerva/**'
+      - '.github/workflows/nerva-model-check.yml'
   push:
     branches:
       - main
@@ -71,6 +75,9 @@ jobs:
 
       - name: Validate NERVA engine performance layer
         run: python -m ntr.nerva.validate_engine_performance
+
+      - name: Validate NASA-7 variable-property hot-hydrogen nozzle
+        run: python -m ntr.nerva.validate_nasa_hydrogen
 
       - name: Validate physics-based NERVA engine solver
         run: python -m ntr.nerva.validate_nerva_engine
