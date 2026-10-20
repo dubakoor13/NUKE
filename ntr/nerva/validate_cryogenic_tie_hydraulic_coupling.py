@@ -6,8 +6,10 @@ run, full pump/turbine/nozzle closure, or historical NERVA validation.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
+import json
 import math
+import sys
 from pathlib import Path
 import tempfile
 
@@ -16,7 +18,11 @@ import numpy as np
 from .cryogenic_tie_enthalpy import (
     CryogenicTieParameters, CryogenicTieState, advance_cryogenic_tie,
 )
-from .cryogenic_tie_hydraulic_coupling import couple_cryogenic_tie_hydraulics
+from .cryogenic_tie_hydraulic_coupling import (
+    couple_cryogenic_tie_hydraulics, pumped_regenerative_inlet,
+)
+from .run_cryogenic_tie_hydraulic_coupling import main as run_coupled_cli
+from .regenerative_cooling import pump_and_regenerative_cooling
 from .lh2_feed_cycle import HydrogenEOS
 from .resolved_transient import read_resolved_heating
 from .validate_resolved_transient import write_synthetic_reconstructions
@@ -34,20 +40,16 @@ def rejects(f):
 
 def physical_inlet(eos, total_mdot):
     core=hot_case()
-    t=core.tank_temperature_k
-    p=core.tank_pressure_pa
-    rise=core.pump_shutoff_pressure_rise_pa-(
-        core.pump_head_quadratic_pa_s2_kg2*total_mdot**2
+    pin,hin=pumped_regenerative_inlet(core,total_mdot,eos=eos)
+    independently=pump_and_regenerative_cooling(
+        core,network(),total_mdot,eos=eos,
     )
-    assert rise>0
-    pump_pressure=p+rise
-    h1=eos.tp("Hmass",t,p)
-    s1=eos.tp("Smass",t,p)
-    h2=h1+(eos.sp("Hmass",s1,pump_pressure)-h1)/core.pump_isentropic_efficiency
-    pressure=pump_pressure-core.feed_loss_quadratic_pa_s2_kg2*total_mdot**2
-    assert pressure>p
-    return pressure,h2
-
+    first_leg=independently.cooling.legs[0]
+    assert math.isclose(first_leg.inlet_pressure_pa,pin,rel_tol=1e-12)
+    assert math.isclose(
+        first_leg.inlet_stagnation_enthalpy_j_kg,hin,rel_tol=1e-12
+    )
+    return pin,hin
 
 def main()->int:
     eos=HydrogenEOS()
@@ -165,6 +167,63 @@ def main()->int:
             abs(row.outlet_enthalpy_difference_j_kg)<0.05
             for row in result.diagnostics
         )
+
+        # Execute the public CLI using the same NPZ reconstruction
+        # format and physically validated pump boundary.
+        with np.load(tie,allow_pickle=False) as npz:
+            items={key:np.asarray(npz[key]).copy() for key in npz.files}
+        items["tie_mass_flow_kg_s"]=heating.tie_flow_kg_s.copy()
+        mapped_tie=Path(temp)/"mapped_tie.npz"
+        np.savez_compressed(mapped_tie,**items)
+        config=Path(temp)/"cycle_inputs.json"
+        config.write_text(json.dumps({
+            "lh2_cycle":asdict(hot_case()),
+            "regenerative_cooling":asdict(network()),
+        }),encoding="utf-8")
+        output=Path(temp)/"combined_report"
+        prior=sys.argv
+        try:
+            sys.argv=[
+                "run_cryogenic_tie_hydraulic_coupling",
+                str(mesh),str(fuel),str(mapped_tie),
+                "--cycle-config",str(config),
+                "--total-mass-flow-kg-s",str(total_flow),
+                "--initial-pressure-fraction","0.99",
+                "--initial-fluid-temperature-k","24",
+                "--initial-solid-temperature-k","150",
+                "--solid-capacity-j-k","3000",
+                "--supply-inventory-kg","0.0004",
+                "--return-inventory-kg","0.0004",
+                "--supply-ua-w-k","0.8",
+                "--return-ua-w-k","0.8",
+                "--nozzle-wall-heat-w","110000",
+                "--reflector-wall-heat-w","90000",
+                "--dt-s","0.1",
+                "--max-iterations","18",
+                "--relative-flow-tolerance","0.004",
+                "--relative-pressure-tolerance","0.004",
+                "--relative-source-tolerance","0.004",
+                "--output",str(output),
+            ]
+            assert run_coupled_cli()==0
+        finally:
+            sys.argv=prior
+        report=json.loads(
+            (output/"cryogenic_tie_hydraulic_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["status"]=="PASS"
+        assert report["flow_and_representative_pressure_fixed_point_converged"]
+        assert not report["full_engine_cycle_converged"]
+        assert not report["pressure_field_resolved"]
+        assert abs(report["nuclear_energy_power_residual_w"])<0.001
+        assert report["relative_flow_residual"]<=0.004
+        assert len(report["iteration_trace"])==report["iterations"]
+        with np.load(output/"tie_hydraulic_fixed_point.npz",
+                     allow_pickle=False) as npz:
+            assert npz["tie_flow_kg_s"].shape==heating.tie_flow_kg_s.shape
+            assert np.all(npz["return_density_kg_m3"]>0)
 
         # Fail closed rather than reporting only pressure OR mass-flow
         # convergence. Hard upper bound of 2 iterations is insufficient.
