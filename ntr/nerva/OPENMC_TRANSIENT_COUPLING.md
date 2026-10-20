@@ -49,3 +49,54 @@ synthetic NPZ is never admissible to the feedback interface.
 - No burnup, depletion, fissile-load optimization, or control-drum search.
 
 See the run CLI documentation for configuration and QA requirements.
+
+
+## Run commands
+
+Frozen normalized OpenMC data (no feedback):
+
+\`\`\`bash
+python -m ntr.nerva.run_openmc_transient --statepoint PATH/TO/statepoint.h5 \
+  --power-mw 10 --steps 10 --dt-s 0.01 \
+  --inlet-temperature-k 500 --initial-solid-k 650 --initial-gas-k 500 \
+  --fuel-mass-flow-kg-s 2 --tie-mass-flow-kg-s 0.4 \
+  --fuel-solid-capacity-j-k 1000000 --fuel-gas-capacity-j-k 200000 \
+  --tie-solid-capacity-j-k 400000 --tie-gas-capacity-j-k 100000 \
+  --fuel-ua-w-k 100000 --tie-ua-w-k 20000
+\`\`\`
+
+Bidirectional, **quasi-static** temperature-feedback to freshly rerun OpenMC:
+
+\`\`\`bash
+python -m ntr.nerva.run_openmc_transient \
+  --cross-sections /PATH/TO/cross_sections.xml \
+  --power-mw 10 --steps 10 --dt-s 0.01 \
+  --inlet-temperature-k 500 --initial-solid-k 650 --initial-gas-k 500 \
+  --inlet-pressure-mpa 5 \
+  --fuel-mass-flow-kg-s 2 --tie-mass-flow-kg-s 0.4 \
+  --fuel-solid-capacity-j-k 1000000 --fuel-gas-capacity-j-k 200000 \
+  --tie-solid-capacity-j-k 400000 --tie-gas-capacity-j-k 100000 \
+  --fuel-ua-w-k 100000 --tie-ua-w-k 20000 \
+  --feedback-max-iterations 4 \
+  --feedback-temperature-tolerance-k 0.5
+\`\`\`
+
+Capacity, UA and flow inputs above are illustrative **user assumptions**,
+not recovered NERVA parameters. For real studies substitute defensible
+material masses, specific heat, heat-transfer coefficients and flow rate.
+
+At every macro timestep the feedback driver calls real OpenMC transport at
+updated uniform fuel and hydrogen temperatures and an ideal-gas H2 density.
+The new tally normalization is used for the next thermal trial, always
+starting from the same OLD thermal state. A failure of XS temperature-range
+audit, negative heating, double-counted power, large unmodeled deposition,
+unstable timestep or fixed-point convergence aborts the run. The code
+records the input nuclear-data hash, statepoint hashes, iteration history,
+source type and stepwise conservation residuals.
+
+For a synthetic CI-only demonstration, replace \`--statepoint\` with
+\`--fields build/nerva_synthetic/nerva_mesh_fields.npz --allow-synthetic\`.
+This mode *never* calls OpenMC and is tagged \`synthetic_unverified\`.
+
+Outputs: \`openmc_transient_report.json\` and
+\`openmc_transient_history.csv\` under the configured output root.
