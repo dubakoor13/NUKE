@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install official NASA CEA Python package
-        run: python -m pip install numpy cea
+        run: python -m pip install numpy cea==3.3.4
       - name: Compare hydrogen thermodynamic properties to NASA CEA
         run: |
           python -m ntr.nerva.compare_nasa_cea \
