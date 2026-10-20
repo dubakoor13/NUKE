@@ -82,7 +82,12 @@ def main()->int:
             return_ua_w_k=0.8,
         )
         p0=params.pressure_pa
-        h_initial=eos.tp("Hmass",24.,p0)
+        # Begin at the pump-supplied inlet enthalpy. A warmer
+        # initially trapped inventory would represent chilldown and can
+        # temporarily give negative advected leg heat; the current
+        # positive-source regenerative network rejects that branch.
+        h_initial=hin
+        initial_fluid_t=eos.hp("T",hin,p0)
         state=CryogenicTieState(
             np.full_like(heating.tie_solid_w,150.),
             np.full_like(heating.tie_solid_w,h_initial),
@@ -215,7 +220,7 @@ def main()->int:
                 "--cycle-config",str(config),
                 "--total-mass-flow-kg-s",str(total_flow),
                 "--initial-pressure-fraction","0.99",
-                "--initial-fluid-temperature-k","24",
+                "--initial-fluid-temperature-k",str(initial_fluid_t),
                 "--initial-solid-temperature-k","150",
                 "--solid-capacity-j-k","3000",
                 "--supply-inventory-kg","0.0004",
