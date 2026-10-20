@@ -143,10 +143,13 @@ def main() -> int:
             net.tie_supply,pressure_loss_coefficient=26.
         ),
     )
-    modified=solve_turbine_bleed(
-        core,bleed,eos=eos,cooling_network=higher_tie_resistance
+    modified,_=evaluate_turbine_bleed(
+        core,bleed,result.tank_mass_flow_kg_s,eos=eos,
+        full_nozzle=True,cooling_network=higher_tie_resistance
     )
-    check_physics(core,higher_tie_resistance,modified)
+    # Fixed-flow sensitivity, NOT a second nozzle-closed operating point.
+    assert modified.regenerative_cooling is not None
+    assert abs(modified.regenerative_cooling.total_energy_residual_w)<1e-4
     assert (modified.regenerative_cooling.tie_tube_fraction<
             result.regenerative_cooling.tie_tube_fraction)
 
@@ -157,17 +160,23 @@ def main() -> int:
         reflector=replace(net.reflector,heat_power_w=100000.),
         tie_return=replace(net.tie_return,heat_power_w=75000.),
     )
-    moved=solve_turbine_bleed(core,bleed,eos=eos,cooling_network=shifted)
-    check_physics(core,shifted,moved)
+    moved,_=evaluate_turbine_bleed(
+        core,bleed,result.tank_mass_flow_kg_s,eos=eos,
+        full_nozzle=True,cooling_network=shifted
+    )
+    assert moved.regenerative_cooling is not None
+    assert abs(moved.regenerative_cooling.total_energy_residual_w)<1e-4
     assert moved.regenerative_cooling.total_heat_power_w==net.total_heat_w
 
     # Chemical-equilibrium core/nozzle must remain supported downstream
     # of real-fluid H2 mixing. CoolProp mixing is below 900 K.
-    eq=solve_turbine_bleed(
-        core,bleed,eos=eos,chemistry_mode="equilibrium",
-        cooling_network=net
+    eq,_=evaluate_turbine_bleed(
+        core,bleed,result.tank_mass_flow_kg_s,eos=eos,
+        chemistry_mode="equilibrium",
+        cooling_network=net,full_nozzle=True
     )
-    check_physics(core,net,eq)
+    assert abs(eq.total_cycle_energy_residual_w)<1e-3
+    assert abs(eq.shaft_power_residual_w)<1e-5
     assert eq.chemistry_mode=="equilibrium"
     assert eq.chamber_dissociation_fraction>0
 
