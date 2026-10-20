@@ -10,6 +10,7 @@ provenance SHA256. Synthetic input is explicitly opt-in.
 from __future__ import annotations
 import argparse
 import csv
+from dataclasses import asdict
 import hashlib
 import json
 import math
@@ -21,6 +22,7 @@ from .resolved_transient import (
     read_resolved_heating, ResolvedParameters, initial_resolved_state,
     advance_resolved
 )
+from .temporal_convergence import refine_resolved_timestep
 
 
 def parse_args():
@@ -49,6 +51,12 @@ def parse_args():
     p.add_argument("--gas-enthalpy-model", choices=("nasa7-h2","constant"),
                    default="nasa7-h2")
     p.add_argument("--max-unresolved-fraction", type=float, default=0.5)
+    p.add_argument("--refine-levels", type=int, default=0,
+                   help="0 disables audit; 3-8 runs 1x,2x,4x... timesteps "
+                        "on the same frozen OpenMC heating and checks convergence.")
+    p.add_argument("--refine-tolerance-k", type=float, default=0.25,
+                   help="Maximum allowed penultimate-to-finest state-field "
+                        "temperature difference, K.")
     p.add_argument("--output", type=Path,
                    default=Path("build/nerva_resolved_transient"))
     return p.parse_args()
@@ -113,6 +121,7 @@ def main() -> int:
         heat,solid_temperature_k=a.initial_solid_k,
         gas_temperature_k=a.initial_gas_k
     )
+    old_state=state
     rows=[]
     for k in range(a.steps):
         step=advance_resolved(heat,state,p,a.inlet_temperature_k,a.dt_s)
@@ -164,6 +173,20 @@ def main() -> int:
         },
         "history":rows,
     }
+    if a.refine_levels != 0:
+        convergence = refine_resolved_timestep(
+            heat, old_state, p, a.inlet_temperature_k,
+            a.steps*a.dt_s, base_steps=a.steps,
+            levels=a.refine_levels,
+            tolerance_k=a.refine_tolerance_k,
+        )
+        details["temporal_refinement"] = asdict(convergence)
+        (root/"temporal_convergence_report.json").write_text(
+            json.dumps(details["temporal_refinement"],indent=2)+"\n",
+            encoding="utf-8",
+        )
+        print("Time-refinement audit: "+convergence.status+
+              f", finest-state difference={convergence.finest_difference_k:.6g} K")
     (root/"resolved_transient_summary.json").write_text(
         json.dumps(details,indent=2)+"\n",encoding="utf-8"
     )
@@ -183,6 +206,9 @@ def main() -> int:
         tie_outlet_t_k=state.tie_return_t_k[:,0],
         unresolved_energy_j=np.array([state.unresolved_energy_j]),
     )
+    if a.refine_levels != 0 and convergence.status != "PASS":
+        print("Resolved NERVA temporal convergence: FAIL")
+        return 2
     print("Resolved NERVA transient: PASS")
     return 0
 
