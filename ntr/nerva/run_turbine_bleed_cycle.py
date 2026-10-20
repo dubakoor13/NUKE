@@ -45,14 +45,15 @@ def main() -> int:
     if "regenerative_cooling" in raw:
         config=raw["regenerative_cooling"]
         expected={"nozzle_jacket","reflector","tie_supply","tie_return"}
-        if not isinstance(config,dict) or set(config)-expected:
+        if not isinstance(config,dict) or set(config)-(expected|{"min_branch_fraction"}):
             raise ValueError("unknown regenerative cooling fields")
         sections={}
         for name in expected:
             if name not in config or not isinstance(config[name],dict):
                 raise ValueError(f"cooling leg missing: {name}")
             sections[name]=CoolingLeg(**config[name])
-        cooling=CoolingNetwork(**sections)
+        cooling=CoolingNetwork(**sections,
+                               min_branch_fraction=config.get("min_branch_fraction",0.02))
     point=solve_turbine_bleed(core,turbine,chemistry_mode=args.chemistry_mode,
                              cooling_network=cooling)
     data={
