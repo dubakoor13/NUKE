@@ -52,6 +52,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batches", type=int, default=80)
     parser.add_argument("--inactive", type=int, default=20)
     parser.add_argument("--drum-angle", type=float, default=0.0)
+    parser.add_argument("--fuel-temperature-k", type=float,
+                        help="Uniform OpenMC fuel surrogate temperature for snapshot feedback.")
+    parser.add_argument("--hydrogen-temperature-k", type=float,
+                        help="Uniform OpenMC hydrogen material temperature for snapshot feedback.")
+    parser.add_argument("--hydrogen-density-g-cm3", type=float,
+                        help="Uniform OpenMC hydrogen material density for snapshot feedback.")
     parser.add_argument("--photon-transport", action="store_true")
     parser.add_argument("--diagnostic-energy-groups", type=int, default=80)
     parser.add_argument("--axial-mesh-bins", type=int, default=96)
@@ -137,6 +143,11 @@ def main() -> int:
 
     config = NervaConfig(
         core_rings=args.rings,
+        fuel_temperature_k=args.fuel_temperature_k,
+        hydrogen_temperature_k=(args.hydrogen_temperature_k if args.hydrogen_temperature_k is not None
+                                else NervaConfig.hydrogen_temperature_k),
+        hydrogen_density_g_cm3=(args.hydrogen_density_g_cm3 if args.hydrogen_density_g_cm3 is not None
+                                else NervaConfig.hydrogen_density_g_cm3),
         particles=args.particles,
         batches=args.batches,
         inactive=args.inactive,
@@ -182,6 +193,11 @@ def main() -> int:
         encoding="utf-8",
     )
 
+    if (args.fuel_temperature_k is not None or args.hydrogen_temperature_k is not None) and not temperature_audit[
+        "model_explicit_temperature_coverage_ok"
+    ]:
+        raise RuntimeError("OpenMC temperature feedback outside available neutron XS temperature range")
+
     model = build_model(config, assembly=args.assembly)
     model.export_to_xml(directory=args.output)
 
@@ -200,6 +216,9 @@ def main() -> int:
             "batches": config.batches,
             "inactive": config.inactive,
             "control_drum_angle_deg": config.control_drum_angle_deg,
+            "fuel_temperature_k": config.fuel_temperature_k,
+            "hydrogen_temperature_k": config.hydrogen_temperature_k,
+            "hydrogen_density_g_cm3": config.hydrogen_density_g_cm3,
             "photon_transport": config.photon_transport,
             "diagnostic_energy_groups": config.diagnostic_energy_groups,
             "axial_mesh_bins": config.axial_mesh_bins,

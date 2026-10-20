@@ -13,6 +13,8 @@ def build_materials(config: NervaConfig) -> dict[str, openmc.Material]:
 
     fuel = openmc.Material(name="conceptual (U,Zr)C-graphite surrogate")
     fuel.set_density("g/cm3", config.fuel_matrix_density_g_cm3)
+    if config.fuel_temperature_k is not None:
+        fuel.temperature = config.fuel_temperature_k
     fuel.add_element("C", 0.90, percent_type="ao")
     fuel.add_element("Zr", 0.08, percent_type="ao")
     fuel.add_element(
