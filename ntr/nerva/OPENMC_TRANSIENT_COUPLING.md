@@ -614,3 +614,103 @@ source convergence or absence of source bias. The ensemble SEM
 also does not include systematic cross-section uncertainties,
 spatial-model error, normalization covariance, or historical
 NERVA qualification. Additional benchmark experiments remain pending.
+
+
+## Subsonic compressible hydrogen channel energy and momentum (new)
+
+The repeated-fuel-element **steady thermal-hydraulic reconstruction**
+now accepts \`--channel-physics compressible-nasa7\`; its previous
+friction-only, approximate-\`cp\` behavior remains available as
+\`--channel-physics legacy-friction-only\` (the default for backward
+compatibility). This is a substantive physics improvement: the
+high-fidelity option solves local **streamwise momentum and
+stagnation enthalpy** self-consistently for the given channel diameter,
+imposed flow, axial heat deposition and inlet pressure.
+
+Per cylindrical, constant-area axial segment:
+
+\`\`\`text
+G = mass_flow / A
+v = G / rho
+
+mass_flow * [(h_out + 0.5*v_out^2)
+              - (h_in + 0.5*v_in^2)]
+    = Q_solid_wall + Q_direct_nuclear_H2
+
+p_in - p_out
+    = G*(v_out-v_in)
+      + f_D*(dz/D)*G*(v_in+v_out)/4
+\`\`\`
+
+The second term is Darcy friction using the mean specific volume
+of the two segment endpoints. **Flow acceleration** (the first term)
+is calculated separately and reported, preventing the old model's
+failure to deduct acceleration losses from the total pressure drop.
+The solver computes state-dependent pure-molecular-H2 ideal-gas
+density and NASA-7 \(h(T)\) and \(c_p(T)\), rather than treating
+hydrogen heat capacity as a fixed constant. It uses existing
+screening correlations for viscosity, conductivity and heat transfer;
+the current constants should be replaced with a pressure-/temperature-
+dependent transport correlation in subsequent work.
+
+Example on a genuine OpenMC fuel-sector reconstruction:
+
+\`\`\`bash
+python -m ntr.nerva.solve_element_channels \
+  build/nerva_full_run/analysis/power/nerva_mesh_fields.npz \
+  build/nerva_full_run/analysis/instance_power/instance_power_fractions.npz \
+  --fuel-mass-flow-kg-s 2.0 \
+  --inlet-temperature-k 500 --inlet-pressure-mpa 5 \
+  --channel-physics compressible-nasa7 \
+  --channel-max-mach 0.85 \
+  --solid-conduction-model equivalent-annulus-sector \
+  --output build/nerva_compressible_fuel
+\`\`\`
+
+Adjust the paths to match the existing \`run_analysis\` output.
+All numeric inputs here are **illustrative placeholders**, not
+NASA-verified NERVA inlet states or a design point.
+The CSV channel summary now includes Mach, separate friction and
+acceleration pressure losses, and independent energy/momentum residuals
+when the advanced channel solver is enabled.
+
+The algorithm uses a bounded Newton solve for pure-H2 stagnation
+enthalpy at fixed outlet pressure, plus a damped Newton pressure solve.
+A near-choked or non-subsonic solution is a **hard failure**, not an
+artificially limited pressure drop. It also refuses temperature
+solutions outside the NASA-7 200–3500 K domain or combinations with
+CoolProp transport properties without a consistent real-fluid
+enthalpy/density backend.
+
+### Physics limitations
+
+- Quasi-steady, constant-area, single-phase pure-H2 gas in each channel;
+  no liquid cryogenic inlet, phase change, pump start dynamics, shock,
+  transient pressure waves or choked-flow boundary condition.
+- External imposed mass flows, no inlet/exit minor losses or orificing.
+- Simple Darcy and Dittus-Boelter screening correlations, fixed dynamic
+  viscosity and thermal conductivity; no validated high-temperature
+  wall friction, erosion/corrosion, radiation, axial conduction or
+  fuel-coating damage model.
+- This solver improves the **steady OpenMC-channel postprocessor**.
+  The channel-resolved **transient** thermal solver still has
+  prescribed flows and no dynamic pressure/momentum evolution.
+  Do not claim the two are yet a fully transient thermo-hydraulic plant.
+- The nuclear heat deposition remains externally normalized to prescribed
+  reactor thermal power; no reactor kinetics have been introduced.
+
+Validation:
+
+\`\`\`bash
+python -m ntr.nerva.validate_compressible_channel
+\`\`\`
+
+Tests independently recompute per-cell mass, total-enthalpy and momentum
+closure, compare low-Mach friction with the Darcy limit, preserve direct
+hydrogen heating, and reject unacceptable Mach and thermodynamic domains.
+They are mathematical verification, NOT actual NERVA experimental
+benchmarking. Historical NASA work discusses channel pressure loss and
+flow choking: see NTRS technical memo NASA-TM-105867,
+https://ntrs.nasa.gov/citations/19930009917 and
+NASA thermal-hydraulic methodology
+https://ntrs.nasa.gov/citations/20130001802.

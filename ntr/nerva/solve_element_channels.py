@@ -34,6 +34,7 @@ from .parallel_flow import (
     update_parallel_mass_flow,
 )
 from .thermal import HydrogenProperties, solve_fuel_channel
+from .compressible_channel import solve_fuel_channel_compressible
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,6 +65,17 @@ def parse_args() -> argparse.Namespace:
         "--hydrogen-model",
         choices=("constant", "coolprop"),
         default="constant",
+    )
+    parser.add_argument(
+        "--channel-physics",
+        choices=("legacy-friction-only", "compressible-nasa7"),
+        default="legacy-friction-only",
+        help="Use coupled stagnation-enthalpy and compressible momentum "
+             "with friction AND flow acceleration, or original screening model.",
+    )
+    parser.add_argument(
+        "--channel-max-mach", type=float, default=0.85,
+        help="Maximum accepted Mach for subsonic compressible model.",
     )
     parser.add_argument(
         "--solid-conduction-model",
@@ -483,6 +495,15 @@ def main() -> int:
     property_model = make_hydrogen_property_model(
         args.hydrogen_model
     )
+    if args.channel_physics == "compressible-nasa7":
+        if args.hydrogen_model != "constant":
+            raise ValueError(
+                "compressible NASA-7 gas cannot be mixed with CoolProp "
+                "properties without a consistent real-fluid enthalpy solver"
+            )
+        channel_solver = solve_fuel_channel_compressible
+    else:
+        channel_solver = solve_fuel_channel
     solid_properties = FuelSolidProperties(
         fuel_matrix_conductivity_w_m_k=(
             args.fuel_conductivity_w_m_k
@@ -511,7 +532,7 @@ def main() -> int:
 
             for element in range(n_elements):
                 for channel in range(n_channels):
-                    trial = solve_fuel_channel(
+                    trial = channel_solver(
                         axial_total_fuel_power_w=(
                             channel_wall_axial[
                                 element,
@@ -546,6 +567,9 @@ def main() -> int:
                         ),
                         properties=HydrogenProperties(),
                         property_model=property_model,
+                        **({"max_mach": args.channel_max_mach}
+                           if args.channel_physics == "compressible-nasa7"
+                           else {}),
                     )
                     delta_pressure[element, channel] = (
                         args.inlet_pressure_mpa * 1.0e6
@@ -586,7 +610,7 @@ def main() -> int:
 
     for element in range(n_elements):
         for channel in range(n_channels):
-            solution = solve_fuel_channel(
+            solution = channel_solver(
                 axial_total_fuel_power_w=(
                     channel_wall_axial[element, channel, :]
                 ),
@@ -605,6 +629,9 @@ def main() -> int:
                 ),
                 properties=HydrogenProperties(),
                 property_model=property_model,
+                **({"max_mach": args.channel_max_mach}
+                   if args.channel_physics == "compressible-nasa7"
+                   else {}),
             )
             if (
                 args.solid_conduction_model
@@ -667,6 +694,26 @@ def main() -> int:
                 "max_peak_fuel_temperature_K": max_peak,
                 "min_reynolds": float(np.min(solution.reynolds)),
                 "max_reynolds": float(np.max(solution.reynolds)),
+                "max_mach": (
+                    float(np.max(solution.mach_number))
+                    if solution.mach_number is not None else None
+                ),
+                "friction_pressure_drop_Pa": (
+                    float(np.sum(solution.friction_pressure_loss_pa))
+                    if solution.friction_pressure_loss_pa is not None else None
+                ),
+                "acceleration_pressure_drop_Pa": (
+                    float(np.sum(solution.acceleration_pressure_loss_pa))
+                    if solution.acceleration_pressure_loss_pa is not None else None
+                ),
+                "max_abs_stagnation_energy_residual_W": (
+                    float(np.max(np.abs(solution.energy_residual_w)))
+                    if solution.energy_residual_w is not None else None
+                ),
+                "max_abs_momentum_residual_Pa": (
+                    float(np.max(np.abs(solution.momentum_residual_pa)))
+                    if solution.momentum_residual_pa is not None else None
+                ),
             }
             rows.append(row)
 
@@ -767,6 +814,15 @@ def main() -> int:
         ),
         "reconstructed_total_fuel_mass_flow_kg_s": float(
             np.sum(branch_flow_flat)
+        ),
+        "channel_physics": args.channel_physics,
+        "max_channel_mach": (
+            float(max(x["max_mach"] for x in rows))
+            if args.channel_physics == "compressible-nasa7" else None
+        ),
+        "subsonic_max_mach_limit": (
+            args.channel_max_mach if args.channel_physics == "compressible-nasa7"
+            else None
         ),
         "flow_balance_enabled": args.balance_flow,
         "flow_balance_converged": flow_balance_converged,

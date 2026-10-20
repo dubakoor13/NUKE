@@ -34,6 +34,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install .
 
+      - name: Validate compressible channel thermodynamics and momentum physics
+        run: python -m ntr.nerva.validate_compressible_channel
+
+      - name: Check fuel-element compressible channel CLI
+        run: python -m ntr.nerva.solve_element_channels --help
+
       - name: Validate NERVA fuel and tie-tube geometry
         run: python -m ntr.nerva.validate_layout
 

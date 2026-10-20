@@ -36,6 +36,13 @@ class ChannelSolution:
     direct_coolant_power_w: np.ndarray
     mass_flow_kg_s: float
     channel_diameter_m: float
+    # Optional high-fidelity diagnostics. Legacy channel solver leaves
+    # these unset; the compressible enthalpy/momentum solver populates them.
+    mach_number: np.ndarray | None = None
+    friction_pressure_loss_pa: np.ndarray | None = None
+    acceleration_pressure_loss_pa: np.ndarray | None = None
+    energy_residual_w: np.ndarray | None = None
+    momentum_residual_pa: np.ndarray | None = None
 
     @property
     def outlet_temperature_k(self) -> float:
