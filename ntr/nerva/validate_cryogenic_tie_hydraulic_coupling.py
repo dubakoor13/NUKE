@@ -51,6 +51,17 @@ def physical_inlet(eos, total_mdot):
     )
     return pin,hin
 
+def balanced_network():
+    """Synthetic smaller tie flow passages after tie heating ceases to
+    be the legacy prescribed 150 kW. The geometry is NOT NERVA data."""
+    net=network()
+    return replace(
+        net,
+        tie_supply=replace(net.tie_supply,flow_area_m2=8e-5),
+        tie_return=replace(net.tie_return,flow_area_m2=9e-5),
+    )
+
+
 def main()->int:
     eos=HydrogenEOS()
     total_flow=0.051885
@@ -78,7 +89,7 @@ def main()->int:
             np.full_like(heating.tie_solid_w,h_initial),
         )
         result=couple_cryogenic_tie_hydraulics(
-            heating,state,params,network(),total_flow,pressure,hin,0.1,
+            heating,state,params,balanced_network(),total_flow,pressure,hin,0.1,
             nozzle_wall_heat_w=110000.,
             reflector_wall_heat_w=90000.,
             max_iterations=18,
@@ -178,7 +189,7 @@ def main()->int:
         config=Path(temp)/"cycle_inputs.json"
         config.write_text(json.dumps({
             "lh2_cycle":asdict(hot_case()),
-            "regenerative_cooling":asdict(network()),
+            "regenerative_cooling":asdict(balanced_network()),
         }),encoding="utf-8")
         output=Path(temp)/"combined_report"
         prior=sys.argv
@@ -228,14 +239,14 @@ def main()->int:
         # Fail closed rather than reporting only pressure OR mass-flow
         # convergence. Hard upper bound of 2 iterations is insufficient.
         rejects(lambda:couple_cryogenic_tie_hydraulics(
-            heating,state,params,network(),total_flow,pressure,hin,0.1,
+            heating,state,params,balanced_network(),total_flow,pressure,hin,0.1,
             nozzle_wall_heat_w=110000.,reflector_wall_heat_w=90000.,
             max_iterations=2,relative_flow_tolerance=1e-8,
             relative_pressure_tolerance=1e-8,
             relative_source_tolerance=1e-8,eos=eos,
         ))
         rejects(lambda:couple_cryogenic_tie_hydraulics(
-            heating,state,params,network(),total_flow,pressure,hin,0.1,
+            heating,state,params,balanced_network(),total_flow,pressure,hin,0.1,
             nozzle_wall_heat_w=110000.,reflector_wall_heat_w=90000.,
             relaxation=0.,eos=eos,
         ))
@@ -245,7 +256,7 @@ def main()->int:
             eos=eos,
         ))
         rejects(lambda:couple_cryogenic_tie_hydraulics(
-            heating,state,params,network(),total_flow,pressure,hin,0.1,
+            heating,state,params,balanced_network(),total_flow,pressure,hin,0.1,
             nozzle_wall_heat_w=110000.,reflector_wall_heat_w=90000.,
             max_iterations=1,eos=eos,
         ))
