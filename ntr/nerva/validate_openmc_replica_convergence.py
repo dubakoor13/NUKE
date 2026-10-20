@@ -31,6 +31,9 @@ def reject(operation, error=(ValueError, RuntimeError)):
 
 def _write_replica(root: Path, *, axial_shift: float = 0.) -> tuple[Path,Path,Path]:
     mesh, fuel, tie = write_synthetic_reconstructions(root)
+    standard_mesh = root/"nerva_mesh_fields.npz"
+    mesh.rename(standard_mesh)
+    mesh = standard_mesh
     factors=np.array([1.+axial_shift,1.,1.-axial_shift])
     with np.load(mesh,allow_pickle=False) as d:
         data={k:np.array(d[k]) for k in d.files}
