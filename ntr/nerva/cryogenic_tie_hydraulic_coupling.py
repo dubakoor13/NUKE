@@ -37,9 +37,47 @@ from .cryogenic_tie_enthalpy import (
     CryogenicTieParameters, CryogenicTieState, CryogenicTieStep,
     advance_cryogenic_tie,
 )
-from .lh2_feed_cycle import HydrogenEOS
+from .lh2_feed_cycle import HydrogenEOS, LH2Cycle, CryogenicCycleError
 from .regenerative_cooling import CoolingNetwork, CoolingNetworkPoint, solve_cooling_network
 from .resolved_transient import ResolvedHeating
+
+
+def pumped_regenerative_inlet(
+    core: LH2Cycle, total_coolant_flow_kg_s: float,
+    *, eos: HydrogenEOS | None = None,
+) -> tuple[float,float]:
+    """Return pressure and total H2 enthalpy after pump and feed loss.
+
+    Uses the SAME isentropic-efficiency and shaft/head curve used by
+    pump_and_regenerative_cooling, but does not prematurely solve the
+    heating-dependent downstream splitter. Inputs are validated; this
+    is a pump boundary evaluation, NOT a new pump operating-point solve.
+    """
+    core.validate()
+    if not math.isfinite(total_coolant_flow_kg_s) or total_coolant_flow_kg_s<=0:
+        raise ValueError("pump coolant flow must be positive finite")
+    eos=eos or HydrogenEOS()
+    m=total_coolant_flow_kg_s
+    t,p=core.tank_temperature_k,core.tank_pressure_pa
+    psat=eos.get("P","T",t,"Q",0.)
+    if p<=psat or eos.tp("Dmass",t,p)<=20:
+        raise CryogenicCycleError("pump inlet not subcooled dense H2")
+    rise=core.pump_shutoff_pressure_rise_pa-core.pump_head_quadratic_pa_s2_kg2*m*m
+    if rise<=0:
+        raise CryogenicCycleError("pump head exhausted")
+    p2=p+rise
+    h1=eos.tp("Hmass",t,p)
+    s1=eos.tp("Smass",t,p)
+    h2s=eos.sp("Hmass",s1,p2)
+    if h2s<=h1:
+        raise CryogenicCycleError("pump isentropic work nonpositive")
+    h2=h1+(h2s-h1)/core.pump_isentropic_efficiency
+    if eos.hp("T",h2,p2)>=34 or eos.hp("Dmass",h2,p2)<=20:
+        raise CryogenicCycleError("pump outlet not dense LH2")
+    pin=p2-core.feed_loss_quadratic_pa_s2_kg2*m*m
+    if pin<=p:
+        raise CryogenicCycleError("feed loss eliminates pump pressure")
+    return pin,h2
 
 
 @dataclass(frozen=True)
