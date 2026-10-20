@@ -33,21 +33,47 @@ import math
 import numpy as np
 
 from .lh2_feed_cycle import HydrogenEOS, LH2Cycle, CryogenicCycleError
+from .thermal import friction_factor
 
 
 @dataclass(frozen=True)
 class CoolingLeg:
     heat_power_w: float
     flow_area_m2: float
-    pressure_loss_coefficient: float
+    # Legacy aggregate resistance. For geometry-based mode leave at zero.
+    pressure_loss_coefficient: float = 0.
+    length_m: float | None = None
+    hydraulic_diameter_m: float | None = None
+    roughness_m: float = 0.
+    minor_loss_coefficient: float = 0.
+
+    @property
+    def geometry_based(self) -> bool:
+        return self.length_m is not None
 
     def validate(self):
-        for name in ("heat_power_w","flow_area_m2","pressure_loss_coefficient"):
+        for name in (
+            "heat_power_w","flow_area_m2","pressure_loss_coefficient",
+            "roughness_m","minor_loss_coefficient",
+        ):
             val=getattr(self,name)
             if not math.isfinite(val) or val<0:
                 raise ValueError(f"invalid cooling leg {name}")
         if self.flow_area_m2<=0:
             raise ValueError("cooling leg flow area must be positive")
+        if (self.length_m is None) != (self.hydraulic_diameter_m is None):
+            raise ValueError("length and hydraulic diameter must both be specified")
+        if self.geometry_based:
+            if (
+                not math.isfinite(self.length_m) or self.length_m <= 0
+                or not math.isfinite(self.hydraulic_diameter_m)
+                or self.hydraulic_diameter_m <= 0
+            ):
+                raise ValueError("geometry length and hydraulic diameter must be positive")
+            if self.pressure_loss_coefficient != 0:
+                raise ValueError("geometry-based Darcy K cannot be combined with legacy K")
+        elif self.roughness_m != 0 or self.minor_loss_coefficient != 0:
+            raise ValueError("roughness/minor losses require length and diameter")
 
 
 @dataclass(frozen=True)
@@ -63,9 +89,12 @@ class CoolingNetwork:
             section.validate()
         if not math.isfinite(self.min_branch_fraction) or not 0<self.min_branch_fraction<0.45:
             raise ValueError("invalid minimum hydraulic branch flow")
-        if all(x.pressure_loss_coefficient==0 for x in (
-            self.nozzle_jacket,self.reflector,self.tie_supply,self.tie_return
-        )):
+        if all(
+            x.pressure_loss_coefficient==0 and not x.geometry_based
+            for x in (
+                self.nozzle_jacket,self.reflector,self.tie_supply,self.tie_return
+            )
+        ):
             raise ValueError("at least one hydraulic resistance is required")
 
     @property
@@ -92,6 +121,12 @@ class CoolingLegState:
     acceleration_pressure_drop_pa: float
     energy_residual_w: float
     momentum_residual_pa: float
+    effective_pressure_loss_coefficient: float = 0.
+    reynolds: float | None = None
+    darcy_friction_factor: float | None = None
+    darcy_pressure_drop_pa: float | None = None
+    minor_pressure_drop_pa: float | None = None
+    outlet_mach: float | None = None
 
 
 @dataclass(frozen=True)
@@ -162,6 +197,43 @@ def _static_state(
     return h,rho,t,quality
 
 
+
+def _geometry_resistance(
+    eos: HydrogenEOS, leg: CoolingLeg,
+    mass_flux: float, pin: float, pout: float,
+    hin: float, hout: float,
+) -> tuple[float, float, float, float]:
+    """Return (K_total, K_Darcy, Reynolds, Darcy f).
+
+    Darcy K=f_D*L/D, evaluated at midpoint thermodynamic state.
+    For parallel channels, area is the total open flow area and D_h
+    is the hydraulic diameter of an individual passage.
+
+    The fluid property closure is SINGLE PHASE or SUPERCRITICAL only.
+    Two-phase friction needs a separate validated multiplier/slip
+    model and cannot be inferred from a one-phase Haaland relation.
+    """
+    if not leg.geometry_based:
+        raise ValueError("geometry resistance requested on aggregate-K leg")
+    p_mid=0.5*(pin+pout)
+    h_mid=0.5*(hin+hout)
+    quality=eos.hp("Q",h_mid,p_mid)
+    if 0. <= quality <= 1.:
+        raise CryogenicCycleError(
+            "two-phase midpoint cannot use single-phase Darcy geometry; "
+            "requires validated two-phase friction model"
+        )
+    viscosity=eos.hp("VISCOSITY",h_mid,p_mid)
+    if viscosity<=0 or not math.isfinite(viscosity):
+        raise CryogenicCycleError("nonphysical hydrogen viscosity")
+    re=abs(mass_flux)*leg.hydraulic_diameter_m/viscosity
+    if not math.isfinite(re) or re<=0:
+        raise CryogenicCycleError("invalid hydraulic Reynolds number")
+    f=friction_factor(re,leg.roughness_m/leg.hydraulic_diameter_m)
+    kd=float(f)*leg.length_m/leg.hydraulic_diameter_m
+    return kd+leg.minor_loss_coefficient,kd,re,float(f)
+
+
 def _leg(
     eos: HydrogenEOS, name: str, leg: CoolingLeg,
     mdot: float, pin: float, h0in: float,
@@ -178,9 +250,28 @@ def _leg(
     def f(p: float):
         hout,rhoout,tout,qout=_static_state(eos,p,h0out,G)
         vout=G/rhoout
-        irrev=leg.pressure_loss_coefficient*G*(vin+vout)/4.
+        if leg.geometry_based:
+            ktot,kdarcy,reynolds,darcy_f=_geometry_resistance(
+                eos,leg,G,pin,p,hin,hout
+            )
+            sound=eos.hp("A",hout,p)
+            mach=vout/sound
+            if not math.isfinite(mach) or mach>=0.85:
+                raise CryogenicCycleError(
+                    "geometry coolant passage requires subsonic Mach below 0.85"
+                )
+            darcy_loss=kdarcy*G*(vin+vout)/4.
+            minor_loss=leg.minor_loss_coefficient*G*(vin+vout)/4.
+        else:
+            ktot=leg.pressure_loss_coefficient
+            reynolds=darcy_f=mach=None
+            darcy_loss=minor_loss=None
+        irrev=ktot*G*(vin+vout)/4.
         acc=G*(vout-vin)
-        return p+irrev+acc-pin,(hout,tout,qout,irrev,acc)
+        return p+irrev+acc-pin,(
+            hout,tout,qout,irrev,acc,ktot,reynolds,darcy_f,
+            darcy_loss,minor_loss,mach
+        )
 
     # Fixed-point momentum solve with damping. In the subsonic regime,
     # loss coefficients depend on outlet density, which itself changes
@@ -188,7 +279,7 @@ def _leg(
     p=pin
     for _ in range(15):
         residual,out=f(p)
-        _hout,_tout,_qout,irrev,acc=out
+        irrev,acc=out[3],out[4]
         estimated=pin-irrev-acc
         if estimated<=0 or estimated>pin:
             raise CryogenicCycleError(
@@ -206,7 +297,8 @@ def _leg(
         )
     pout=p
     residual,out=f(pout)
-    hout,tout,qout,irrev,acc=out
+    (hout,tout,qout,irrev,acc,ktot,reynolds,darcy_f,
+     darcy_loss,minor_loss,mach)=out
     energy=mdot*((hout+0.5*(G/eos.hp("Dmass",hout,pout))**2)-
                  (hin+0.5*vin**2))-leg.heat_power_w
     if abs(residual)>1e-7*pin:
@@ -225,6 +317,11 @@ def _leg(
         irreversible_pressure_drop_pa=irrev,
         acceleration_pressure_drop_pa=acc,
         energy_residual_w=energy,momentum_residual_pa=residual,
+        effective_pressure_loss_coefficient=ktot,
+        reynolds=reynolds,darcy_friction_factor=darcy_f,
+        darcy_pressure_drop_pa=darcy_loss,
+        minor_pressure_drop_pa=minor_loss,
+        outlet_mach=mach,
     )
 
 
