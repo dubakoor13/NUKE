@@ -1015,6 +1015,93 @@ and convergence failure; and `validate_openmc_cycle_coupling` checks
 the public engine CLI, status fields, and incompatible flags. All
 transport-coupling fixtures in CI are synthetic, not NERVA test data.
 
+## Real-fluid cryogenic tie-tube enthalpy/boiling energy solver
+
+`cryogenic_tie_enthalpy.py` and `run_cryogenic_tie_enthalpy.py`
+provide a **separate** opt-in tie-tube finite-volume solver with
+CoolProp `HEOS::Hydrogen` at cryogenic inlet temperatures. Unlike the
+existing NASA-7 frozen molecular H2 thermal solver, **fluid enthalpy**
+is stored in each supply/return cell, so saturation/latent heat and
+liquid-to-vapor conversion are represented.
+
+Every real-fluid tie instance has a shared solid node per axial slice,
+supply coolant flowing from z=0 to L, and counterflow return from
+z=L to 0. For each implicit backward-Euler timestep:
+
+```text
+Cs * (Ts_new - Ts_old)/dt
+    = Qsolid_nuclear - UAs*(Ts_new - T_supply_new)
+                     - UAr*(Ts_new - T_return_new)
+
+Ms*(h_supply_new - h_supply_old)/dt
+    = m_tie*(h_supply_upstream_new - h_supply_new)
+      + UAs*(Ts_new - T_supply_new) + Qdirect_supply
+
+Mr*(h_return_new - h_return_old)/dt
+    = m_tie*(h_return_upstream_new - h_return_new)
+      + UAr*(Ts_new - T_return_new) + Qdirect_return
+```
+
+Each implicit hydrogen enthalpy root uses `T(P,h)` from CoolProp,
+which remains thermodynamically meaningful through saturation.
+The solver explicitly stores each fluid's H2 mass (kg) rather than
+using constant `cp(T)` through vaporization. It returns fluid
+temperature, density, quality, enthalpy, solid temperature, wall heat,
+solid/fluid inventory rates, and both local and global first-law
+residuals. Counterflow return inlet at z=L equals the NEW supply
+outlet enthalpy; this turnaround is not heated twice.
+
+To run the synthetic reconstruction fixture, or a correctly
+normalized externally supplied OpenMC analysis reconstruction:
+
+```bash
+python -m ntr.nerva.run_cryogenic_tie_enthalpy \
+  build/nerva_analysis/power/nerva_mesh_fields.npz \
+  build/nerva_analysis/element_channels/element_channel_power_reconstruction.npz \
+  build/nerva_analysis/tie_instances/tie_instance_reconstruction.npz \
+  --pressure-pa 550000 \
+  --inlet-quality 0.3 \
+  --initial-fluid-quality 0.3 \
+  --initial-solid-temperature-k 400 \
+  --solid-capacity-j-k 3000 \
+  --supply-inventory-kg 0.005 \
+  --return-inventory-kg 0.005 \
+  --supply-ua-w-k 0.8 \
+  --return-ua-w-k 0.8 \
+  --dt-s 0.1 --steps 2 \
+  --output build/nerva_realfluid_tie
+```
+
+For a compressed-liquid inlet, use `--inlet-temperature-k 20`
+at a separately specified appropriate pressure instead of
+`--inlet-quality`. Optional old-fluid state may similarly be
+specified by temperature or vapor quality. The example pressure,
+flow inventories, solid capacity and wall UAs are *illustrative
+synthetic test assumptions*, NOT independently verified NERVA
+operating inputs.
+
+**Scope and remaining coupling:** This new real-fluid tie energy
+solver is deliberately **not silently substituted** into the
+NASA-7 gas-based `advance_resolved` or the shaft-closed engine:
+that would equate real-fluid cell pressure, fixed gas inventory
+and coolant hydraulic flow without a consistent momentum/phase
+model. It is a separate, tested, cryogenic *energy* capability,
+and an integration prerequisite. Each tie cell has externally
+prescribed, fixed pressure and externally prescribed, fixed H2
+mass inventory, representing a mixed/fixed-mass inventory with
+implicit enthalpy, not rigid-volume compressible continuity.
+The model currently has NO axial momentum/pressure-drop solve,
+two-phase slip, wall-boiling HTC/CHF, chilldown, mechanical
+stress or neutron-temperature feedback. It cannot establish
+a NERVA reactor transient or a NASA-validated tie-tube design.
+
+`validate_cryogenic_tie_enthalpy` performs a real CoolProp
+subcritical saturation/quality regression, checks supply/return
+counterflow, independent solid and H2 storage, zero-wall and
+direct-H2 heat response, local and global conservation, EOS
+bounds, and end-to-end CLI file outputs. Synthetic source files
+are clearly labeled and **no actual OpenMC transport is run**.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
