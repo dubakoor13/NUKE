@@ -6,6 +6,8 @@ on:
       - 'ntr/nerva/compare_nasa_cea.py'
       - 'ntr/nerva/nasa_cea_rocket.py'
       - 'ntr/nerva/validate_nasa_cea_rocket.py'
+      - 'ntr/nerva/engine_stream_balance.py'
+      - 'ntr/nerva/nerva_xe_stream_report.py'
       - '.github/workflows/nerva-cea-compare.yml'
   push:
     branches: [main]
@@ -34,9 +36,12 @@ jobs:
             --output build/nerva_nasa_cea_comparison.json
       - name: Validate NASA CEA IAC rocket nozzle and custom NASA-7 cross-check
         run: python -m ntr.nerva.validate_nasa_cea_rocket
+      - name: Reconstruct XE-Prime mass/thrust closure with explicit bleed assumptions
+        run: python -m ntr.nerva.nerva_xe_stream_report
       - uses: actions/upload-artifact@v4
         with:
           name: nerva-nasa-cea-comparison
           path: |
             build/nerva_nasa_cea_comparison.json
             build/nerva/cea_rocket_reference_comparison.json
+            build/nerva/xe_prime_stream_balance.json
