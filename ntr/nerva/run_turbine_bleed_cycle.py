@@ -21,6 +21,10 @@ from pathlib import Path
 from .lh2_feed_cycle import LH2Cycle
 from .turbine_bleed_cycle import TurbineBleed, solve_turbine_bleed
 from .regenerative_cooling import CoolingLeg, CoolingNetwork
+from .resolved_transient import read_resolved_heating
+from .openmc_cycle_coupling import (
+    check_reconstruction_axial_edges, map_openmc_heating_to_cycle,
+)
 
 
 def main() -> int:
@@ -30,6 +34,16 @@ def main() -> int:
                         default="frozen")
     parser.add_argument("--output",type=Path,
                         default=Path("build/nerva_shaft_closed_cycle.json"))
+    # Explicit opt-in mapping of externally provided normalized OpenMC-style
+    # power reconstructions. This CLI never executes or verifies transport.
+    parser.add_argument("--openmc-mesh-fields", type=Path)
+    parser.add_argument("--openmc-fuel-reconstruction", type=Path)
+    parser.add_argument("--openmc-tie-reconstruction", type=Path)
+    parser.add_argument("--fuel-solid-transfer-fraction", type=float)
+    parser.add_argument("--tie-solid-transfer-fraction", type=float)
+    parser.add_argument("--tie-solid-supply-fraction", type=float)
+    parser.add_argument("--nozzle-wall-heat-w", type=float)
+    parser.add_argument("--reflector-wall-heat-w", type=float)
     args=parser.parse_args()
     raw=json.loads(args.config.read_text(encoding="utf-8"))
     if not isinstance(raw,dict) or not {"lh2_cycle","turbine"} <= set(raw) or set(raw)-{"lh2_cycle","turbine","regenerative_cooling"}:
@@ -54,8 +68,54 @@ def main() -> int:
             sections[name]=CoolingLeg(**config[name])
         cooling=CoolingNetwork(**sections,
                                min_branch_fraction=config.get("min_branch_fraction",0.02))
+    power_bridge=None
+    source_args=(
+        args.openmc_mesh_fields, args.openmc_fuel_reconstruction,
+        args.openmc_tie_reconstruction, args.fuel_solid_transfer_fraction,
+        args.tie_solid_transfer_fraction, args.tie_solid_supply_fraction,
+        args.nozzle_wall_heat_w, args.reflector_wall_heat_w,
+    )
+    if any(x is not None for x in source_args):
+        if cooling is None or not all(x is not None for x in source_args):
+            raise ValueError(
+                "power coupling requires regenerative_cooling plus all "
+                "three NPZ paths, three solid-transfer fractions and two "
+                "declared non-OpenMC wall heat inputs"
+            )
+        check_reconstruction_axial_edges(
+            args.openmc_fuel_reconstruction,
+            args.openmc_tie_reconstruction,
+            core,
+        )
+        heating=read_resolved_heating(
+            args.openmc_fuel_reconstruction, args.openmc_tie_reconstruction,
+            args.openmc_mesh_fields,
+        )
+        core,cooling,ledger=map_openmc_heating_to_cycle(
+            heating,core,cooling,
+            fuel_solid_transfer_fraction=args.fuel_solid_transfer_fraction,
+            tie_solid_transfer_fraction=args.tie_solid_transfer_fraction,
+            tie_solid_supply_fraction=args.tie_solid_supply_fraction,
+            nozzle_wall_heat_w=args.nozzle_wall_heat_w,
+            reflector_wall_heat_w=args.reflector_wall_heat_w,
+        )
+        power_bridge={
+            "source_kind":"external NPZ reconstruction, not independently "
+                          "verified against an OpenMC statepoint",
+            "nuclear_transport_run_in_this_cli":False,
+            "power_ledger":asdict(ledger),
+            "source_files":{
+                "mesh":str(args.openmc_mesh_fields.resolve()),
+                "fuel":str(args.openmc_fuel_reconstruction.resolve()),
+                "tie":str(args.openmc_tie_reconstruction.resolve()),
+            },
+            "mapped_cycle_inputs":{
+                "lh2_cycle":asdict(core),
+                "regenerative_cooling":asdict(cooling),
+            },
+        }
     point=solve_turbine_bleed(core,turbine,chemistry_mode=args.chemistry_mode,
-                             cooling_network=cooling)
+                              cooling_network=cooling)
     data={
         "status":"PASS",
         "model":"single bleed turbine shaft drives cryogenic LH2 pump; "
@@ -65,6 +125,8 @@ def main() -> int:
         "turbine_exhaust_thrust_included":False,
         "complete_turbomachinery_map":False,
         "parallel_cooling_branches_solved": cooling is not None,
+        "reconstructed_openmc_heating_mapped": power_bridge is not None,
+        "power_bridge":power_bridge,
         "inputs":raw,
         "point":{k:v for k,v in asdict(point).items() if k!="nozzle"},
         "nozzle":{
