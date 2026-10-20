@@ -23,7 +23,7 @@ def main() -> int:
     old = ThermalState((1000.0,), (300.0,))
     total0 = 3000*1000+1000*300
     for _ in range(4000):
-        res = advance_thermal(closed_cell, old, 300, 0, 14000, 0.05)
+        res = advance_thermal(closed_cell, old, 300, 0, 14000, 0.5)
         assert abs(res.energy_balance_error_j) < 1e-8
         old = res.state
     total1 = 3000*old.solid_t_k[0]+1000*old.gas_t_k[0]
