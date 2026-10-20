@@ -5,7 +5,9 @@ real OpenMC transport nor a validated historical NERVA model.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
+import json
+import sys
 import math
 from pathlib import Path
 import tempfile
@@ -21,6 +23,7 @@ from .validate_hot_lh2_cycle import hot_case
 from .validate_regenerative_cooling import network
 from .validate_resolved_transient import write_synthetic_reconstructions
 from .validate_turbine_bleed_cycle import sample_turbine
+from .run_turbine_bleed_cycle import main as run_cycle_cli
 
 
 def rejects(fn) -> None:
@@ -168,6 +171,82 @@ def main() -> int:
             net,fuel_solid_transfer_fraction=1.,
             tie_solid_transfer_fraction=0.,tie_solid_supply_fraction=0.5,
             nozzle_wall_heat_w=110000.,reflector_wall_heat_w=90000.))
+
+    # End-to-end runner: write normalized OpenMC-style power NPZ arrays
+    # and separate reconstructed instance arrays, then solve the shaft-
+    # closed operating point through its public CLI. This is synthetic.
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        z = np.asarray(core.z_edges_m)
+        mesh = root/"mesh_fields.npz"
+        fuel_path = root/"fuel_reconstruction.npz"
+        tie_path = root/"tie_reconstruction.npz"
+        np.savez_compressed(
+            fuel_path,
+            channel_wall_axial_power_w=fw,
+            channel_direct_h2_axial_power_w=fd,
+            branch_mass_flow_kg_s=np.full((1,19),0.02),
+            z_edges_m=z,
+        )
+        np.savez_compressed(
+            tie_path, tie_solid_axial_power_w=ts,
+            tie_supply_direct_h2_axial_power_w=sd,
+            tie_return_direct_h2_axial_power_w=rd,
+            tie_mass_flow_kg_s=np.array([0.05]), z_edges_m=z,
+        )
+        fsum=fw.sum(axis=(0,1)).reshape((1,1,3))
+        dsum=fd.sum(axis=(0,1)).reshape((1,1,3))
+        tsum=ts.reshape((1,1,3))
+        ssum=sd.reshape((1,1,3))
+        rsum=rd.reshape((1,1,3))
+        full=fsum+dsum+tsum+ssum+rsum+unresolved/3.
+        np.savez_compressed(
+            mesh, dimension=np.array((1,1,3)),
+            lower_left_cm=np.zeros(3),
+            upper_right_cm=np.array((1.,1.,3.)),
+            power_density_w_cm3=full,
+            fuel_power_density_w_cm3=fsum,
+            fuel_hydrogen_power_density_w_cm3=dsum,
+            tie_power_density_w_cm3=tsum,
+            tie_supply_hydrogen_power_density_w_cm3=ssum,
+            tie_return_hydrogen_power_density_w_cm3=rsum,
+        )
+        config=root/"cycle.json"
+        output=root/"coupled_output.json"
+        config.write_text(json.dumps({
+            "lh2_cycle":asdict(core),
+            "turbine":asdict(turbine),
+            "regenerative_cooling":asdict(net),
+        }),encoding="utf-8")
+        args=[
+            "run_turbine_bleed_cycle", "--config",str(config),
+            "--openmc-mesh-fields",str(mesh),
+            "--openmc-fuel-reconstruction",str(fuel_path),
+            "--openmc-tie-reconstruction",str(tie_path),
+            "--fuel-solid-transfer-fraction","1",
+            "--tie-solid-transfer-fraction","0",
+            "--tie-solid-supply-fraction","0.5",
+            "--nozzle-wall-heat-w","110000",
+            "--reflector-wall-heat-w","90000",
+            "--output",str(output),
+        ]
+        prev=sys.argv
+        try:
+            sys.argv=args
+            assert run_cycle_cli()==0
+        finally:
+            sys.argv=prev
+        doc=json.loads(output.read_text(encoding="utf-8"))
+        assert doc["status"]=="PASS"
+        assert doc["reconstructed_openmc_heating_mapped"] is True
+        assert doc["real_openmc_transport_performed"] is False
+        assert doc["power_bridge"]["nuclear_transport_run_in_this_cli"] is False
+        assert abs(doc["power_bridge"]["power_ledger"]["power_balance_error_w"])<1e-7
+        assert math.isclose(
+            doc["point"]["chamber_pressure_pa"],
+            reference.chamber_pressure_pa,rel_tol=2e-8,
+        )
+        assert abs(doc["point"]["total_cycle_energy_residual_w"])<1e-3
 
     print("NERVA OpenMC reconstructed heating -> engine/cooling power closure: PASS")
     print(f"  reactor heating: {ledger.reactor_power_w:.8g} W")
