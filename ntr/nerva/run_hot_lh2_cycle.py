@@ -22,6 +22,9 @@ from .hot_lh2_cycle import solve_hot_core_cycle
 def main() -> int:
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config",type=Path,required=True)
+    p.add_argument("--chemistry-mode", choices=("frozen","equilibrium"),
+                   default="frozen", help="Frozen molecular H2 or local "
+                   "equilibrium H2 <-> 2H in heated core and nozzle.")
     p.add_argument("--output",type=Path,
                    default=Path("build/nerva_hot_lh2_cycle_result.json"))
     a=p.parse_args()
@@ -30,7 +33,7 @@ def main() -> int:
     if not isinstance(raw,dict) or set(raw)-allowed:
         raise ValueError("configuration must contain only LH2Cycle fields")
     cfg=LH2Cycle(**raw)
-    solution=solve_hot_core_cycle(cfg)
+    solution=solve_hot_core_cycle(cfg,chemistry_mode=a.chemistry_mode)
     body={
         "status":"PASS",
         "physics_model":"CoolProp liquid H2 pump + preheater, matched "
@@ -39,7 +42,8 @@ def main() -> int:
         "real_OpenMC_transport_performed":False,
         "full_thermal_hydraulic_network":False,
         "pump_turbine_thermodynamic_cycle_solved":False,
-        "hot_channel_eos":"NASA7 frozen pure H2 ideal gas; 200-3500 K",
+        "hot_channel_eos":"NASA7 ideal-gas H2 and H, mode="+a.chemistry_mode+
+              "; 200-3500 K",
         "thermodynamic_bridge":"one matched enthalpy reference at "
            "preheater outlet temperature and pressure",
         "inputs":asdict(cfg),
@@ -62,6 +66,8 @@ def main() -> int:
     print(f"  flow: {solution.mass_flow_kg_s:.7g} kg/s")
     print(f"  pump discharge: {solution.pump_discharge_pressure_pa/1e6:.7g} MPa")
     print(f"  core inlet: {solution.bridge_temperature_k:.7g} K")
+    print(f"  chemistry: {solution.chemistry_mode}; "
+          f"chamber dissociation fraction: {solution.chamber_dissociation_fraction:.6g}")
     print(f"  chamber: {solution.chamber_pressure_pa/1e6:.7g} MPa / "
           f"{solution.chamber_temperature_k:.7g} K")
     print(f"  thrust: {solution.nozzle.thrust_n:.7g} N / "

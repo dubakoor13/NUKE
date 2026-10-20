@@ -29,6 +29,7 @@ import numpy as np
 
 from .compressible_channel import (
     R_H2, SubsonicFlowError, solve_fuel_channel_compressible,
+    _temperature_from_total_enthalpy,
 )
 from .gas_feed_network import (
     _static_channel_inlet_temperature, _temperature_at_enthalpy,
@@ -72,6 +73,9 @@ class HotCoreOperatingPoint:
     max_channel_energy_residual_w: float
     max_channel_momentum_residual_pa: float
     nozzle: HydrogenNozzle
+    chemistry_mode: str
+    chamber_dissociation_fraction: float
+    channel_outlet_dissociation_fraction: float
 
 
 def _pump_and_preheater(
@@ -120,6 +124,7 @@ def evaluate_hot_core_cycle(
     config: LH2Cycle, mass_flow_kg_s: float,
     *, eos: HydrogenEOS | None = None,
     calculate_full_nozzle: bool = False,
+    chemistry_mode: str = "frozen",
 ) -> tuple[HotCoreOperatingPoint | None,float]:
     """Evaluate one trial; full NASA-7 nozzle only on converged root.
 
@@ -128,6 +133,8 @@ def evaluate_hot_core_cycle(
     mass-flow trial. This is still exact NASA-7 frozen choking.
     """
     config.validate()
+    if chemistry_mode not in ("frozen","equilibrium"):
+        raise ValueError("chemistry_mode must be frozen or equilibrium")
     eos=eos or HydrogenEOS()
     m=float(mass_flow_kg_s)
     if not math.isfinite(m) or m<=0 or m>config.maximum_mass_flow_kg_s:
@@ -136,7 +143,7 @@ def evaluate_hot_core_cycle(
 
     # Reference bridge at the same T and P; do NOT equate the two EOS
     # absolute enthalpies directly (they use different zero references).
-    nano3=hydrogen_state(t3,p3,mode="frozen")
+    nano3=hydrogen_state(t3,p3,mode=chemistry_mode)
     offset=h3-nano3.enthalpy_j_kg
     cp_cp=eos.tp("Cpmass",t3,p3)
     rho_cp=eos.tp("Dmass",t3,p3)
@@ -146,8 +153,8 @@ def evaluate_hot_core_cycle(
     area=math.pi*config.channel_diameter_m**2/4
     branch_m=m/config.number_of_channels
     flux=branch_m/area
-    t_channel=_static_channel_inlet_temperature(
-        nano3.enthalpy_j_kg,p3,flux
+    t_channel=_temperature_from_total_enthalpy(
+        nano3.enthalpy_j_kg,p3,flux,t3,chemistry_mode
     )
     heat_wall=np.asarray(config.channel_wall_power_w,dtype=float)
     heat_direct=np.asarray(config.channel_direct_hydrogen_power_w,dtype=float)
@@ -158,20 +165,24 @@ def evaluate_hot_core_cycle(
         roughness_m=config.channel_roughness_m,
         axial_direct_coolant_power_w=heat_direct,
         max_mach=config.allowable_mach,
+        chemistry_mode=chemistry_mode,
     )
     pe=channel.outlet_pressure_pa
     te=channel.outlet_temperature_k
-    state_e=hydrogen_state(te,pe,mode="frozen")
+    state_e=hydrogen_state(te,pe,mode=chemistry_mode)
     ve=flux/state_e.density_kg_m3
     h0_nasa=state_e.enthalpy_j_kg+0.5*ve**2
     pc=pe-config.chamber_loss_quadratic_pa_s2_kg2*m*m
     if pc<=0:
         raise CryogenicCycleError("chamber pressure nonpositive")
-    tc=_temperature_at_enthalpy(h0_nasa,pc)
+    tc=_temperature_from_total_enthalpy(
+        h0_nasa,pc,0.,te,chemistry_mode
+    )
     if not T_MIN <= tc <= T_MAX:
         raise CryogenicCycleError("hot-core chamber outside NASA7 domain")
-    # Exact frozen-H2 isentropic throat flow, not local constant gamma.
-    gstar=choked_hydrogen_mass_flux(pc,tc,mode="frozen")
+    # Variable NASA7 thermochemistry, with dissociation and
+    # equilibrium recombination if chemistry_mode='equilibrium'.
+    gstar=choked_hydrogen_mass_flux(pc,tc,mode=chemistry_mode)
     nozzle_flow=gstar*config.throat_area_m2
     residual=m-nozzle_flow
     if not calculate_full_nozzle:
@@ -179,7 +190,7 @@ def evaluate_hot_core_cycle(
 
     nozzle=hydrogen_nozzle(
         pc,tc,config.throat_area_m2,config.nozzle_expansion_ratio,
-        mode="frozen",nozzle_efficiency=config.nozzle_efficiency,
+        mode=chemistry_mode,nozzle_efficiency=config.nozzle_efficiency,
         ambient_pressure_pa=config.ambient_pressure_pa,
     )
     qcore=float(heat_wall.sum()+heat_direct.sum())
@@ -225,6 +236,11 @@ def evaluate_hot_core_cycle(
         max_channel_energy_residual_w=float(max(abs(channel.energy_residual_w))),
         max_channel_momentum_residual_pa=float(max(abs(channel.momentum_residual_pa))),
         nozzle=nozzle,
+        chemistry_mode=chemistry_mode,
+        chamber_dissociation_fraction=hydrogen_state(
+            tc,pc,mode=chemistry_mode
+        ).dissociation_fraction,
+        channel_outlet_dissociation_fraction=state_e.dissociation_fraction,
     )
     return point,point.nozzle_mass_flow_residual_kg_s
 
@@ -233,9 +249,12 @@ def solve_hot_core_cycle(
     config: LH2Cycle,
     *, eos: HydrogenEOS | None = None, bracket_samples: int = 38,
     relative_mass_tolerance: float = 2e-6,
+    chemistry_mode: str = "frozen",
 ) -> HotCoreOperatingPoint:
     """Solve pump-head / gas-channel / exact frozen-nozzle mass closure."""
     config.validate()
+    if chemistry_mode not in ("frozen","equilibrium"):
+        raise ValueError("chemistry_mode must be frozen or equilibrium")
     eos=eos or HydrogenEOS()
     if not 16<=bracket_samples<=500:
         raise ValueError("bracket_samples must lie in [16,500]")
@@ -250,7 +269,9 @@ def solve_hot_core_cycle(
     bracket=None
     for m in np.geomspace(lower,upper,bracket_samples):
         try:
-            _,fx=evaluate_hot_core_cycle(config,float(m),eos=eos)
+            _,fx=evaluate_hot_core_cycle(
+                config,float(m),eos=eos,chemistry_mode=chemistry_mode
+            )
         except (ValueError,RuntimeError,OverflowError):
             continue
         if prev is not None and fx*prev[1] <= 0:
@@ -265,7 +286,9 @@ def solve_hot_core_cycle(
     lo,hi,flo,fhi=bracket
     for _ in range(65):
         middle=(lo+hi)/2.
-        _,fm=evaluate_hot_core_cycle(config,middle,eos=eos)
+        _,fm=evaluate_hot_core_cycle(
+            config,middle,eos=eos,chemistry_mode=chemistry_mode
+        )
         if abs(fm)<=relative_mass_tolerance*middle*0.1:
             break
         if (fm>0)==(flo>0):
@@ -273,7 +296,8 @@ def solve_hot_core_cycle(
         else:
             hi,fhi=middle,fm
     point,err=evaluate_hot_core_cycle(
-        config,middle,eos=eos,calculate_full_nozzle=True
+        config,middle,eos=eos,calculate_full_nozzle=True,
+        chemistry_mode=chemistry_mode
     )
     if point is None or abs(err)>relative_mass_tolerance*point.mass_flow_kg_s:
         raise CryogenicCycleError("hot-core nozzle/feed mass flow did not converge")

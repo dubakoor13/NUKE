@@ -43,6 +43,7 @@ class ChannelSolution:
     acceleration_pressure_loss_pa: np.ndarray | None = None
     energy_residual_w: np.ndarray | None = None
     momentum_residual_pa: np.ndarray | None = None
+    dissociation_fraction: np.ndarray | None = None
 
     @property
     def outlet_temperature_k(self) -> float:

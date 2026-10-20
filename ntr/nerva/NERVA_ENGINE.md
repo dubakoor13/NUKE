@@ -394,3 +394,90 @@ python -m ntr.nerva.run_hot_lh2_cycle \
   rather than high-temperature property fits.
 - No neutron kinetics, detailed solid thermal conduction, full
   OpenMC feedback or experimental XE/NRX/NERVA validation in this CLI.
+
+
+
+## Hot-core hydrogen dissociation: frozen vs local chemical equilibrium
+
+The cryogenic-pump to hot-channel to nozzle model now has a
+\`--chemistry-mode frozen|equilibrium\` option (default \`frozen\`
+for backwards compatibility). It reuses NUKE's GRI-Mech NASA-7
+H2/H species coefficients, valid from 200 to 3500 K; it is
+**not** a NASA-CEA or finite-rate hydrogen kinetic model.
+
+In \`equilibrium\` mode, every heated channel control volume
+solves mass, total energy and momentum with the composition
+determined by local chemical equilibrium:
+
+\`\`\`text
+H2 <-> 2H
+alpha = alpha_equilibrium(T,P)
+rho = P*M_H2 / [(1+alpha)*R_universal*T]
+
+mdot[(h_out+v_out^2/2)-(h_in+v_in^2/2)]
+    = Q_wall + Q_direct_H2
+
+P_in-P_out =
+    mass_flux*(v_out-v_in)
+    + f_D*(dz/D)*mass_flux*(v_in+v_out)/4
+
+h(T,P) = (1-alpha)*h_H2(T) + 2*alpha*h_H(T),
+         expressed per conserved initial H2-equivalent kg
+\`\`\`
+
+Dissociation stores energy in chemical bonds instead of immediately
+heating the gas. It changes density, channel acceleration, pressure,
+chamber temperature and the choked nozzle mass-flow requirement.
+The code inverts temperature against the *equilibrium* chemical
+enthalpy rather than incorrectly using frozen heat capacity in
+the energy Newton derivative; it uses a bounded bisection.
+
+For subsonic gating, equilibrium-mode sound speed uses the local
+thermodynamic derivative \`a^2=(dP/dRho)_s\`, including composition
+response through the equilibrated entropy and density. It is a
+numerical equilibrium acoustic-speed estimate and does not describe
+finite-rate chemistry or dissociation relaxation.
+
+The chamber and nozzle share the same chemistry assumption:
+frozen molecular H2 throughout, or locally equilibrated H/H2.
+The latter allows isentropic recombination during nozzle expansion.
+The nozzle is a 1-D ideal-gas, ideal-chemistry approximation and
+still uses a scalar nozzle kinetic-efficiency factor.
+
+The cryogenic \`CoolProp\` pump/preheater to NASA-7 reference shift
+remains matched at the warm-gas header, now with the chosen
+composition model at that same pressure and temperature.
+The bridge heat-capacity/density mismatch is exposed and the
+overall pump + preheater + reactor heat budget is independently
+audited. Actual reactor heating profiles and source curves remain
+externally specified.
+
+### Run and compare
+
+\`\`\`bash
+python -m ntr.nerva.validate_equilibrium_hot_hydrogen \
+  --write-example build/hot_chemistry_case.json
+
+python -m ntr.nerva.run_hot_lh2_cycle \
+  --config build/hot_chemistry_case.json \
+  --chemistry-mode frozen \
+  --output build/hot_frozen.json
+
+python -m ntr.nerva.run_hot_lh2_cycle \
+  --config build/hot_chemistry_case.json \
+  --chemistry-mode equilibrium \
+  --output build/hot_equilibrium.json
+\`\`\`
+
+The example is a hypothetical subscale heat/mass-flow case; no
+new OpenMC neutron transport, measured NERVA geometry or historical
+test calibration is performed by this feature.
+
+**Remaining physics:** equilibrium in every segment is the fast
+reaction limit. Real finite-rate chemistry, vibrational non-equilibrium,
+variable transport properties of atomic/molecular mixtures, ionization,
+hot wall materials, feedback to nuclear data, multiple branch
+hydraulics, turbine-drive dynamics, and validated high-temperature
+fuel thermal conduction are absent. Existing Dittus-Boelter and Darcy
+transport correlations still use screening-level fluid properties,
+and cannot be taken as NERVA qualification without external data.
