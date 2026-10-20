@@ -163,6 +163,12 @@ def advance_pressure_driven_tie(
             pleft=float(inlet_pressure_pa if k==0 else p[j,k-1])
             pright=float(outlet_pressure_pa if k==2*nz else p[j,k])
             dp=pleft-pright
+            # CoolProp's P(rho,u) inverse is not bitwise identical to
+            # the input P used for initialising rho/u. Without a small
+            # relative equilibrium band a sqrt(dp) restriction creates
+            # artificial flux under physically identical reservoirs.
+            if abs(dp)<=1e-8*max(1.,pleft,pright):
+                dp=0.
             frac=abs(dp)/max(pleft,pright)
             max_dp_ratio=max(max_dp_ratio,frac)
             if frac>params.max_fractional_pressure_drop:
