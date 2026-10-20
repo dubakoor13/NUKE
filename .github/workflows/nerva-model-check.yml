@@ -43,6 +43,12 @@ jobs:
       - name: Check statepoint postprocessor CLI
         run: python -m ntr.nerva.postprocess_statepoint --help
 
+      - name: Validate channel-resolved fuel and tie-counterflow transients
+        run: python -m ntr.nerva.validate_resolved_transient
+
+      - name: Check channel-resolved thermal CLI
+        run: python -m ntr.nerva.run_resolved_transient --help
+
       - name: Validate implicit hydrogen thermochemistry and energy integration
         run: python -m ntr.nerva.validate_implicit_hydrogen
 
@@ -235,6 +241,24 @@ jobs:
 
       - name: Run synthetic end-to-end thermal pipeline
         run: |
+          python -m ntr.nerva.validate_resolved_transient \
+            --write-fixture build/nerva_synthetic/resolved_inputs
+          python -m ntr.nerva.run_resolved_transient \
+            build/nerva_synthetic/resolved_inputs/mesh_fields.npz \
+            build/nerva_synthetic/resolved_inputs/fuel_reconstruction.npz \
+            build/nerva_synthetic/resolved_inputs/tie_reconstruction.npz \
+            --allow-synthetic --steps 3 --dt-s 0.1 \
+            --initial-solid-k 500 --initial-gas-k 300 \
+            --inlet-temperature-k 300 \
+            --fuel-solid-capacity-j-k 5000 \
+            --fuel-gas-capacity-j-k 500 \
+            --fuel-ua-w-k 100 \
+            --tie-solid-capacity-j-k 3000 \
+            --tie-supply-capacity-j-k 600 \
+            --tie-return-capacity-j-k 700 \
+            --tie-supply-ua-w-k 80 \
+            --tie-return-ua-w-k 90 \
+            --output build/nerva_synthetic/resolved_transient
           python -m ntr.nerva.make_synthetic_fields \
             --output build/nerva_synthetic/nerva_mesh_fields.npz
           python -m ntr.nerva.run_openmc_transient \
@@ -281,6 +305,8 @@ jobs:
 
       - name: Verify synthetic pipeline products
         run: |
+          test -s build/nerva_synthetic/resolved_transient/resolved_transient_summary.json
+          test -s build/nerva_synthetic/resolved_transient/resolved_transient_final_state.npz
           test -s build/nerva_synthetic/transient/openmc_transient_report.json
           test -s build/nerva_synthetic/transient/openmc_transient_history.csv
           test -s build/nerva_synthetic/fuel/thermal_summary.json
