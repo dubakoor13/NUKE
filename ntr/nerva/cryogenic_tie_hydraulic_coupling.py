@@ -273,14 +273,40 @@ def couple_cryogenic_tie_hydraulics(
             trial_heating.tie_flow_kg_s,
             step.state.return_enthalpy_j_kg[:,0]
         )/trial_flow)
-        h_error=mixture_h-ret.outlet_stagnation_enthalpy_j_kg
-        h_tol=1e-7*max(1.,abs(mixture_h),
-                      abs(ret.outlet_stagnation_enthalpy_j_kg))
-        if abs(h_error)>h_tol:
+        # Each trial uses the transient flow for the tie energy
+        # step and the newly solved hydraulic flow for its leg powers.
+        # The two outlet enthalpies CANNOT coincide before flow
+        # convergence; first independently verify the transient
+        # advected power at its OWN flow.
+        transient_h_expected=(coolant_inlet_enthalpy_j_kg+
+                              qadv/trial_flow)
+        local_h_tol=1e-8*max(1.,abs(mixture_h),
+                              abs(transient_h_expected))
+        if abs(mixture_h-transient_h_expected)>local_h_tol:
             raise RuntimeError(
-                "tie transient outlet enthalpy disagrees with hydraulic "
-                "energy-split boundary after fluid inventory correction"
+                "tie transient outlet enthalpy violates its own "
+                "advective source/inventory power ledger"
             )
+        hydraulic_h_expected=(coolant_inlet_enthalpy_j_kg+
+                              qadv/target_flow)
+        if abs(ret.outlet_stagnation_enthalpy_j_kg-
+               hydraulic_h_expected)>1e-8*max(
+                   1.,abs(hydraulic_h_expected)
+               ):
+            raise RuntimeError(
+                "hydraulic tie return enthalpy violates its own "
+                "stagnation-source conservation"
+            )
+        h_error=mixture_h-ret.outlet_stagnation_enthalpy_j_kg
+        # The exact mismatch identity at a finite outer iteration is
+        # Qadv*(1/m_thermal - 1/m_hydraulic). Require this as an
+        # independent residual check, not zero before convergence.
+        predicted_h_error=qadv*(1./trial_flow-1./target_flow)
+        if abs(h_error-predicted_h_error)>2e-8*max(
+            1.,abs(h_error),abs(predicted_h_error),
+            abs(mixture_h),abs(hydraulic_h_expected)
+        ):
+            raise RuntimeError("tie/hydraulic outlet mismatch is not explained by trial-flow residual")
         rec=TieHydraulicIteration(
             iteration=iteration,
             thermal_tie_flow_kg_s=trial_flow,
@@ -298,10 +324,20 @@ def couple_cryogenic_tie_hydraulics(
             outlet_enthalpy_difference_j_kg=h_error,
         )
         trace.append(rec)
+        # In the accepted state cross-model enthalpy mismatch is
+        # bounded by the specified FLOW tolerance times the actual
+        # hydraulic leg enthalpy rise, not by machine precision.
+        enthalpy_match=abs(h_error)<=(
+            relative_flow_tolerance*
+            max(1.,abs(ret.outlet_stagnation_enthalpy_j_kg-
+                       coolant_inlet_enthalpy_j_kg))*(1+1e-7)
+            + local_h_tol
+        )
         if (last_sources is not None
                 and flow_err<=relative_flow_tolerance
                 and pressure_err<=relative_pressure_tolerance
-                and source_change<=relative_source_tolerance):
+                and source_change<=relative_source_tolerance
+                and enthalpy_match):
             return TieHydraulicCoupledResult(
                 heating=trial_heating,
                 tie_step=step,cooling_point=point,
