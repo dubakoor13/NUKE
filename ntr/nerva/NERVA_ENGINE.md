@@ -741,6 +741,82 @@ python -m ntr.nerva.validate_geometry_regenerative
 
 
 
+## Reconstructed OpenMC fuel/tie heating to cooling-cycle power ledger
+
+The opt-in `openmc_cycle_coupling.py` takes the existing normalized
+mesh and element/tie NPZ power reconstructions through the strict
+`read_resolved_heating` integral-conservation reader. It maps axial
+fuel-matrix deposition to the hot-channel **wall power** and direct
+fuel-hydrogen deposition separately to the hot-channel **direct H2
+power**. It also places direct nuclear deposition into tie supply and
+return coolant into their corresponding regenerative legs. The tie
+solid's deposition is distributed to the two coolant legs ONLY through
+explicitly declared transfer and supply/return split fractions.
+
+- The model **does not** assign the unresolved OpenMC remainder to
+  nozzle-jacket or reflector cooling. The nozzle and reflector
+  wall-to-H2 heat rates are explicit **non-OpenMC-source prescribed
+  boundary inputs**, not measured nuclear deposition.
+- Nuclear power retained in untransferred fuel/tie solids and the
+  unresolved mesh compartment remains in a separate accounting ledger.
+- The aggregate reduced-order hot-core solver uses its existing user-
+  supplied effective channel count/geometry, so mapped total axial
+  powers do **not** establish a local 19-channel mass-flow distribution.
+- Both instance reconstructions must carry axial edges matching the
+  engine core axial grid; no unverified axial-bin resampling is used.
+- Real transport provenance is **not independently verified** by this
+  command. Run the repository transport/analysis QA before supplying
+  reconstructed files. A synthetic fixture can also exercise it, but
+  never qualifies as real neutronics validation.
+
+The energy-ledger identities are
+
+```text
+Q_OpenMC = Q_routed_nuclear_to_gas + Q_solid_retained + Q_unresolved
+Q_cycle = Q_routed_nuclear_to_gas + Q_prescribed_wall_to_gas
+Q_regen = Q_jacket_prescribed + Q_reflector_prescribed
+          + Q_tie_supply_direct + Q_tie_return_direct
+          + Q_tie_solid_transferred
+```
+
+The existing shaft-closed nonlinear engine cycle is then solved with
+these revised source powers. It retains its mass/momentum/energy
+residual gates. The mapping is **steady thermal-source bookkeeping**,
+not transient conjugate heat transfer or a claim of NASA hardware
+equivalence.
+
+To enable it with an existing `regenerative_cooling` JSON configuration
+and matching `run_analysis` output:
+
+```bash
+python -m ntr.nerva.run_turbine_bleed_cycle \\
+  --config build/regenerative_cooling_case.json \\
+  --openmc-mesh-fields build/nerva_analysis/power/nerva_mesh_fields.npz \\
+  --openmc-fuel-reconstruction build/nerva_analysis/element_channels/element_channel_power_reconstruction.npz \\
+  --openmc-tie-reconstruction build/nerva_analysis/tie_instances/tie_instance_reconstruction.npz \\
+  --fuel-solid-transfer-fraction 1.0 \\
+  --tie-solid-transfer-fraction 0.8 \\
+  --tie-solid-supply-fraction 0.5 \\
+  --nozzle-wall-heat-w 110000 \\
+  --reflector-wall-heat-w 90000 \\
+  --output build/nerva_mapped_cycle.json
+```
+
+The fractions, wall heat rates and example file paths above are
+**illustrative** and MUST be supplied from a separately justified
+thermal model/engineering study; they are not extracted NERVA values.
+Depending on reactor power, the example may not produce a feasible
+engine cycle. The supplied `LH2Cycle.preheater_thermal_power_w` and
+channel heat arrays are **replaced** by reconstructions, not added;
+the output reports both original and effective parameters. A failed
+CoolProp thermo/hydraulic/nozzle closure is an invalid operating point,
+not evidence that a particular historical engine would fail.
+
+Validation: `python -m ntr.nerva.validate_openmc_cycle_coupling`
+checks independent source heat ledgers, routing fractions, unchanged
+full-cycle solutions for equivalent input powers, failure modes and
+actual NPZ reconstruction shape/energy parsing.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
