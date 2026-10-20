@@ -89,7 +89,7 @@ class TieHydraulicIteration:
     representative_hydraulic_pressure_pa: float
     relative_flow_residual: float
     relative_pressure_residual: float
-    relative_heat_source_change: float
+    relative_heat_source_change: float | None
     tie_nuclear_deposition_w: float
     tie_advected_power_w: float
     hydrogen_storage_rate_w: float
@@ -264,7 +264,7 @@ def couple_cryogenic_tie_hydraulics(
                 abs(q_return_adv-last_sources[1]))/
             max(1.,abs(q_supply_adv),abs(q_return_adv),
                 abs(last_sources[0]),abs(last_sources[1]))
-            if last_sources is not None else math.inf
+            if last_sources is not None else None
         )
         # Unsteady H2 source with finite storage must match the
         # *advected* enthalpy entering the solved downstream mixer,
