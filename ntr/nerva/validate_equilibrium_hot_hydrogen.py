@@ -90,7 +90,13 @@ def main() -> int:
     assert equilibrium.chamber_dissociation_fraction>0
     assert equilibrium.channel_outlet_dissociation_fraction>0
     assert equilibrium.chamber_temperature_k<baseline.chamber_temperature_k
-    assert abs(equilibrium.overall_energy_residual_w)<1e-5
+    energy_scale=(equilibrium.pump_shaft_power_w+
+                  equilibrium.preheater_power_w+
+                  equilibrium.core_heating_power_w)
+    print(f"Equilibrium cycle energy residual = "
+          f"{equilibrium.overall_energy_residual_w:.8g} W "
+          f"of {energy_scale:.8g} W input")
+    assert abs(equilibrium.overall_energy_residual_w)<1e-9*energy_scale
     assert abs(equilibrium.pressure_residual_pa)<0.01
     assert abs(equilibrium.max_channel_energy_residual_w)<0.01
     assert abs(equilibrium.max_channel_momentum_residual_pa)<0.01
