@@ -23,6 +23,8 @@ from .resolved_transient import (
     ResolvedHeating, ResolvedParameters, ResolvedState, ResolvedStep,
     advance_resolved,
 )
+from .implicit_hydrogen import hydrogen_specific_enthalpy
+from .nasa_hydrogen import T_MIN, T_MAX
 
 
 @dataclass(frozen=True)
@@ -67,9 +69,13 @@ def reduce_openmc_material_state(
 ) -> tuple[float, float]:
     """Convert resolved thermal fields to UNIFORM fuel and H2 transport states.
 
-    Fuel-solid temperature is averaged over fuel solid nodes. For coolant,
-    weights are the fixed gas masses from each cell's reference gas
-    heat capacity (all share cp_reference), not the coolant flows.
+    Fuel-solid temperature is averaged over fuel solid nodes (uniform
+    solid heat capacity). For coolant, the *inventories* are weighted by
+    the fixed gas masses Cgas/cp_reference, not by coolant flow. For
+    NASA-7 hydrogen, invert the mass-weighted specific enthalpy to the
+    equivalent uniform temperature. An arithmetic temperature average
+    would not conserve the stored thermal energy when cp(T) varies.
+    Constant-cp mode retains the exact mass-weighted temperature mean.
     Tie solid is not treated as fuel in OpenMC: other solids remain at
     their existing transport-model material definitions.
     """
@@ -86,12 +92,48 @@ def reduce_openmc_material_state(
     fg = parameters.fuel_h2_capacity_j_k * fuel_gas.size
     ts = parameters.tie_supply_h2_capacity_j_k * tie_supply.size
     tr = parameters.tie_return_h2_capacity_j_k * tie_return.size
-    combined = (
-        parameters.fuel_h2_capacity_j_k * float(fuel_gas.sum())
-        + parameters.tie_supply_h2_capacity_j_k * float(tie_supply.sum())
-        + parameters.tie_return_h2_capacity_j_k * float(tie_return.sum())
-    ) / (fg+ts+tr)
-    return float(fuel.mean()), float(combined)
+    weight = fg + ts + tr
+    if not math.isfinite(weight) or weight <= 0:
+        raise ValueError("invalid hydrogen inventory for OpenMC projection")
+
+    if parameters.enthalpy_model == "constant":
+        # With constant cp, a mass-weighted enthalpy mean is exactly
+        # the capacity-weighted arithmetic temperature mean.
+        combined = (
+            parameters.fuel_h2_capacity_j_k * float(fuel_gas.sum())
+            + parameters.tie_supply_h2_capacity_j_k * float(tie_supply.sum())
+            + parameters.tie_return_h2_capacity_j_k * float(tie_return.sum())
+        ) / weight
+        return float(fuel.mean()), float(combined)
+
+    # The thermal solver stores m_g*h(T) for NASA-7 frozen H2, with
+    # m_g=Cgas/cp_reference per cell. Since cp_reference is shared,
+    # the reference heat capacities are proportional to fixed gas masses.
+    if any(np.any((a < T_MIN) | (a > T_MAX))
+           for a in (fuel_gas, tie_supply, tie_return)):
+        raise ValueError("gas feedback temperature outside NASA-7 domain")
+    h = lambda t: hydrogen_specific_enthalpy(
+        t, parameters.hydrogen_cp_reference_j_kg_k, "nasa7-h2"
+    )
+    target_enthalpy = math.fsum((
+        parameters.fuel_h2_capacity_j_k *
+        math.fsum(h(float(t)) for t in fuel_gas.flat),
+        parameters.tie_supply_h2_capacity_j_k *
+        math.fsum(h(float(t)) for t in tie_supply.flat),
+        parameters.tie_return_h2_capacity_j_k *
+        math.fsum(h(float(t)) for t in tie_return.flat),
+    )) / weight
+
+    # h(T) is strictly increasing for the valid NASA-7 pure-H2 range.
+    # Bisection cannot jump to a thermodynamically invalid branch.
+    lower, upper = T_MIN, T_MAX
+    for _ in range(55):
+        mid = 0.5*(lower + upper)
+        if h(mid) < target_enthalpy:
+            lower = mid
+        else:
+            upper = mid
+    return float(fuel.mean()), float(0.5*(lower + upper))
 
 
 def state_infinity_difference(a: ResolvedState, b: ResolvedState) -> float:
