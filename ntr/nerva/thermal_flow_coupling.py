@@ -8,11 +8,13 @@ projects solid wall heat / solid storage, and solves the full steady
 engine cycle. The retained nuclear source and first-law checks in both
 solvers remain active.
 
-Limit: the resolved model still accepts a SINGLE externally prescribed
-hydrogen inlet temperature, not the separate real cryogenic tie inlet and
-hot-core header inlet, and it does not solve distributed coolant momentum.
-Therefore convergence here is a mass-flow/thermal-source fixed point,
-NOT a fully consistent NERVA thermal-hydraulic or neutron kinetics model.
+The thermal solver accepts distinct fuel-header and tie-supply H2 inlet
+temperatures, and can optionally return the solved warm header to fuel.
+The tie supply is still restricted to a gas-phase NASA-7 H2 model: a
+cryogenic liquid boundary would require CoolProp/two-phase FV transport.
+Coolant pressure/density are NOT iterated with the engine. Converged
+mass and warm-header residuals therefore do NOT imply a fully closed
+thermal-hydraulic reactor/engine system or time-dependent neutron kinetics.
 """
 from __future__ import annotations
 
@@ -48,6 +50,9 @@ class FlowIteration:
     cycle_header_temperature_k: float
     nuclear_power_balance_error_w: float
     cycle_energy_balance_error_w: float
+    fuel_inlet_temperature_k: float = 0.
+    tie_supply_inlet_temperature_k: float = 0.
+    fuel_header_temperature_error_k: float = 0.
 
 
 @dataclass(frozen=True)
@@ -65,6 +70,9 @@ class FlowCouplingResult:
     thermal_inlet_temperature_k: float
     temperature_boundary_not_closed: bool = True
     transport_performed: bool = False
+    tie_supply_inlet_temperature_k: float | None = None
+    fuel_header_temperature_error_k: float = 0.
+    fuel_header_feedback_converged: bool = False
 
 
 def _max_profile_delta(a: ResolvedState, b: ResolvedState) -> float:
@@ -93,6 +101,10 @@ def couple_resolved_thermal_flows(
     relative_flow_tolerance: float = 0.002,
     profile_tolerance_k: float = 0.5,
     relaxation: float = 0.5,
+    tie_supply_inlet_temperature_k: float | None = None,
+    couple_fuel_header_temperature: bool = False,
+    header_temperature_tolerance_k: float = 0.5,
+    header_temperature_relaxation: float = 0.5,
     engine_solver: Callable | None = None,
 ) -> FlowCouplingResult:
     """Fail-closed flow fixed point with a conservation check per iterate.
@@ -115,13 +127,28 @@ def couple_resolved_thermal_flows(
             or not 0 < relaxation <= 1):
         raise ValueError("invalid flow fixed-point convergence parameters")
     if not math.isfinite(inlet_temperature_k) or inlet_temperature_k <= 0:
-        raise ValueError("invalid prescribed resolved hydrogen inlet")
+        raise ValueError("invalid initial resolved fuel H2 inlet")
+    tie_inlet=(inlet_temperature_k if tie_supply_inlet_temperature_k is None
+               else float(tie_supply_inlet_temperature_k))
+    if not math.isfinite(tie_inlet) or tie_inlet <= 0:
+        raise ValueError("invalid prescribed tie-supply H2 gas inlet")
+    if couple_fuel_header_temperature and tie_supply_inlet_temperature_k is None:
+        raise ValueError(
+            "solved fuel header coupling requires a separate explicit "
+            "tie-supply gas inlet boundary"
+        )
+    if (not math.isfinite(header_temperature_tolerance_k)
+            or header_temperature_tolerance_k <= 0
+            or not math.isfinite(header_temperature_relaxation)
+            or not 0 < header_temperature_relaxation <= 1):
+        raise ValueError("invalid header temperature feedback controls")
     if not math.isfinite(dt_s) or dt_s <= 0:
         raise ValueError("positive transient timestep required")
 
     base_fuel=heating.total_fuel_flow_kg_s
     base_tie=heating.total_tie_flow_kg_s
     gf,gt=base_fuel,base_tie
+    fuel_inlet=float(inlet_temperature_k)
     last_state=None
     trace=[]
     solver=engine_solver or solve_turbine_bleed
@@ -135,7 +162,8 @@ def couple_resolved_thermal_flows(
         trial_heating.validate()
         # ALWAYS advance the SAME old transient state, not previous iterate.
         thermal_step=advance_resolved(
-            trial_heating,old,parameters,inlet_temperature_k,dt_s,
+            trial_heating,old,parameters,fuel_inlet,dt_s,
+            tie_supply_inlet_t_k=tie_inlet,
         )
         mapped_core,mapped_network,ledger=project_resolved_wall_power(
             trial_heating,old,thermal_step,parameters,core,cooling,dt_s,
@@ -154,6 +182,11 @@ def couple_resolved_thermal_flows(
             raise RuntimeError("engine returned nonphysical coupled flow")
         flow_error=max(abs(gf-target_f)/target_f,
                        abs(gt-target_t)/target_t)
+        header_target=float(point.warm_header_temperature_k)
+        if not math.isfinite(header_target) or header_target <= 0:
+            raise RuntimeError("engine returned invalid warm gas header")
+        header_error=(abs(fuel_inlet-header_target)
+                      if couple_fuel_header_temperature else 0.)
         profile_error=(
             _max_profile_delta(thermal_step.state,last_state)
             if last_state is not None else math.inf
@@ -169,11 +202,16 @@ def couple_resolved_thermal_flows(
             cycle_header_temperature_k=point.warm_header_temperature_k,
             nuclear_power_balance_error_w=ledger.nuclear_power_balance_error_w,
             cycle_energy_balance_error_w=point.total_cycle_energy_residual_w,
+            fuel_inlet_temperature_k=fuel_inlet,
+            tie_supply_inlet_temperature_k=tie_inlet,
+            fuel_header_temperature_error_k=header_error,
         )
         trace.append(rec)
         if (last_state is not None
                 and flow_error<=relative_flow_tolerance
-                and profile_error<=profile_tolerance_k):
+                and profile_error<=profile_tolerance_k
+                and (not couple_fuel_header_temperature
+                     or header_error<=header_temperature_tolerance_k)):
             return FlowCouplingResult(
                 engine=point,thermal_step=thermal_step,
                 thermal_heating=trial_heating,mapped_core=mapped_core,
@@ -182,15 +220,25 @@ def couple_resolved_thermal_flows(
                 max_relative_flow_error=flow_error,
                 max_thermal_profile_update_k=profile_error,
                 diagnostics=tuple(trace),
-                thermal_inlet_temperature_k=inlet_temperature_k,
+                thermal_inlet_temperature_k=fuel_inlet,
+                tie_supply_inlet_temperature_k=tie_inlet,
+                fuel_header_temperature_error_k=header_error,
+                fuel_header_feedback_converged=couple_fuel_header_temperature,
             )
         gf += relaxation*(target_f-gf)
         gt += relaxation*(target_t-gt)
+        if couple_fuel_header_temperature:
+            # Never replace the cryogenic tie supply with the warm header.
+            # A real engine's tie inlet is a separate fluid stream.
+            fuel_inlet += header_temperature_relaxation*(
+                header_target-fuel_inlet
+            )
         last_state=thermal_step.state
 
     raise RuntimeError(
         "resolved NERVA thermal/cycle flow fixed point did not converge "
         f"within {max_iterations} iterations: "
         f"last relative flow error={trace[-1].max_relative_flow_error:.6g}, "
-        f"thermal profile change={trace[-1].max_thermal_profile_update_k:.6g} K"
+        f"thermal profile change={trace[-1].max_thermal_profile_update_k:.6g} K; "
+        f"fuel header mismatch={trace[-1].fuel_header_temperature_error_k:.6g} K"
     )
