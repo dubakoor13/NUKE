@@ -375,3 +375,67 @@ python -m ntr.nerva.run_resolved_openmc_feedback --help
 These additional integrity checks are necessary for a credible real
 OpenMC coupling run but they are not a substitute for historical
 experimental validation or a converged neutron-transport demonstration.
+
+
+## Time-discretization verification on channel-resolved thermal physics
+
+\`temporal_convergence.py\` now performs an independent numerical
+timestep-refinement audit using NUKE's existing channel-resolved
+solid/hydrogen solver:
+
+- Solve the **same fixed external OpenMC heating**, coolant mass
+  flows, heat capacities and solid/gas properties at exactly one common
+  end time with \`dt\`, \`dt/2\`, \`dt/4\`, etc.
+- Compare **every** solid/H2 state array (fuel solids, fuel H2,
+  tie solids, tie supply H2, tie return H2), using each array's
+  maximum absolute temperature difference in kelvin.
+- Record per-step and cumulative first-law residuals and apparent
+  observed temporal order. The scheme is backward Euler and therefore
+  first-order accurate in the time step for suitably smooth problems,
+  though observed order can vary outside the asymptotic regime.
+- Require that the last two solutions differ by no more than a
+  specified physical temperature tolerance. Reject nondecreasing
+  differences unless the numerical comparison is near roundoff.
+- Preserve the production run's original state and return an explicitly
+  \`PASS\`/\`FAIL\` report; no Richardson-extrapolated temperature is
+  ever inserted as a new thermodynamic state.
+
+The existing CLI accepts:
+
+\`\`\`shell
+python -m ntr.nerva.run_resolved_transient \
+  MESH_FIELDS.npz FUEL_RECONSTRUCTION.npz TIE_RECONSTRUCTION.npz \
+  --statepoint /PATH/TO/statepoint.h5 \
+  --transport-provenance /PATH/TO/transport_provenance.json \
+  --steps 8 --dt-s 0.1 \
+  --refine-levels 4 --refine-tolerance-k 0.25 \
+  --initial-solid-k 500 --initial-gas-k 300 \
+  --inlet-temperature-k 300 \
+  --fuel-solid-capacity-j-k 5000 --fuel-gas-capacity-j-k 500 \
+  --fuel-ua-w-k 100 \
+  --tie-solid-capacity-j-k 3000 \
+  --tie-supply-capacity-j-k 600 --tie-return-capacity-j-k 700 \
+  --tie-supply-ua-w-k 80 --tie-return-ua-w-k 90
+\`\`\`
+
+The capacities, UA, temperatures and flows are purely illustrative
+assumptions, not a validated historical NERVA operating point.
+\`--refine-levels 0\` (default) disables the additional computation;
+\`3..8\` enables refinement. Output is
+\`temporal_convergence_report.json\`, nested into the
+\`resolved_transient_summary.json\`. A failed convergence threshold
+causes a nonzero CLI exit status.
+
+For a mathematically generated test dataset:
+
+\`\`\`shell
+python -m ntr.nerva.validate_temporal_convergence
+\`\`\`
+
+**Scope warning:** This verifies the **thermal numerical time step with
+a frozen spatial heating field**. It is **not** an OpenMC neutron history
+convergence study, Monte Carlo sampling error estimate, 3-D fuel
+temperature validation, coupled temperature-feedback convergence
+test, or historical NERVA engine accuracy claim. The real OpenMC feedback
+driver remains a distinct tool, and coupling its temperature feedback
+to the timestep-refinement audit is further work.
