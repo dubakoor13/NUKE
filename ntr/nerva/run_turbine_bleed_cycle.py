@@ -27,6 +27,7 @@ from .resolved_transient import (
     ResolvedParameters, ResolvedState, read_resolved_heating, advance_resolved,
 )
 from .thermal_cycle_feedback import project_resolved_wall_power
+from .thermal_flow_coupling import couple_resolved_thermal_flows
 from .openmc_cycle_coupling import (
     check_reconstruction_axial_edges, map_openmc_heating_to_cycle,
 )
@@ -56,6 +57,12 @@ def main() -> int:
     parser.add_argument("--resolved-thermal-state", type=Path)
     parser.add_argument("--resolved-dt-s", type=float)
     parser.add_argument("--resolved-inlet-temperature-k", type=float)
+    parser.add_argument("--resolved-flow-feedback", action="store_true",
+                        help="Iterate thermal fuel/tie flows against shaft-cycle mass flows")
+    parser.add_argument("--flow-feedback-iterations", type=int, default=12)
+    parser.add_argument("--flow-feedback-tolerance", type=float, default=0.002)
+    parser.add_argument("--flow-feedback-profile-tol-k", type=float, default=0.5)
+    parser.add_argument("--flow-feedback-relaxation", type=float, default=0.5)
     args=parser.parse_args()
     raw=json.loads(args.config.read_text(encoding="utf-8"))
     if not isinstance(raw,dict) or not {"lh2_cycle","turbine"} <= set(raw) or set(raw)-{"lh2_cycle","turbine","regenerative_cooling"}:
@@ -96,6 +103,8 @@ def main() -> int:
     )
     requested=(args.openmc_transfer_mode=="resolved-implicit"
                or any(v is not None for v in (*sources,*fractions,*temporal)))
+    if args.resolved_flow_feedback and args.openmc_transfer_mode != "resolved-implicit":
+        raise ValueError("flow feedback requires resolved-implicit heat mapping")
     if requested:
         if cooling is None or not all(v is not None for v in sources):
             raise ValueError(
@@ -157,16 +166,35 @@ def main() -> int:
                       for key in required[:-1]),
                     unresolved_energy_j=float(stored.reshape(-1)[0]),
                 )
-            step=advance_resolved(
-                heating,old_state,parameters,
-                args.resolved_inlet_temperature_k,args.resolved_dt_s,
-            )
-            core,cooling,ledger=project_resolved_wall_power(
-                heating,old_state,step,parameters,core,cooling,
-                args.resolved_dt_s,
-                nozzle_wall_heat_w=args.nozzle_wall_heat_w,
-                reflector_wall_heat_w=args.reflector_wall_heat_w,
-            )
+            flow_solution=None
+            if args.resolved_flow_feedback:
+                flow_solution=couple_resolved_thermal_flows(
+                    heating,old_state,parameters,core,cooling,turbine,
+                    args.resolved_inlet_temperature_k,args.resolved_dt_s,
+                    nozzle_wall_heat_w=args.nozzle_wall_heat_w,
+                    reflector_wall_heat_w=args.reflector_wall_heat_w,
+                    chemistry_mode=args.chemistry_mode,
+                    max_iterations=args.flow_feedback_iterations,
+                    relative_flow_tolerance=args.flow_feedback_tolerance,
+                    profile_tolerance_k=args.flow_feedback_profile_tol_k,
+                    relaxation=args.flow_feedback_relaxation,
+                )
+                step=flow_solution.thermal_step
+                core=flow_solution.mapped_core
+                cooling=flow_solution.mapped_network
+                ledger=flow_solution.power_ledger
+                heating=flow_solution.thermal_heating
+            else:
+                step=advance_resolved(
+                    heating,old_state,parameters,
+                    args.resolved_inlet_temperature_k,args.resolved_dt_s,
+                )
+                core,cooling,ledger=project_resolved_wall_power(
+                    heating,old_state,step,parameters,core,cooling,
+                    args.resolved_dt_s,
+                    nozzle_wall_heat_w=args.nozzle_wall_heat_w,
+                    reflector_wall_heat_w=args.reflector_wall_heat_w,
+                )
             diagnostics={
                 "thermal_model":"one-way implicit finite-volume solid/H2 "
                                 "heat transfer, with assumed cell Cs and UA",
@@ -179,7 +207,17 @@ def main() -> int:
                 "thermal_reconstruction_tie_flow_kg_s":
                     heating.total_tie_flow_kg_s,
                 "thermal_step_energy_residual_j":step.energy_residual_j,
-                "thermal_flow_not_iterated_with_engine":True,
+                "thermal_flow_not_iterated_with_engine":flow_solution is None,
+                "flow_feedback_converged":flow_solution is not None,
+                "flow_feedback":{
+                    "iterations":flow_solution.iterations,
+                    "max_relative_flow_error":flow_solution.max_relative_flow_error,
+                    "max_profile_update_k":flow_solution.max_thermal_profile_update_k,
+                    "iteration_trace":[asdict(v) for v in flow_solution.diagnostics],
+                    "same_old_state_used_per_iteration":True,
+                } if flow_solution is not None else None,
+                "thermal_inlet_fixed_externally":True,
+                "fuel_and_tie_have_single_shared_inlet_temperature":True,
                 "full_conjugate_cycle_closed":False,
             }
         power_bridge={
@@ -199,8 +237,13 @@ def main() -> int:
                 "regenerative_cooling":asdict(cooling),
             },
         }
-    point=solve_turbine_bleed(core,turbine,chemistry_mode=args.chemistry_mode,
-                              cooling_network=cooling)
+    point=(flow_solution.engine
+           if requested and args.openmc_transfer_mode=="resolved-implicit"
+           and args.resolved_flow_feedback
+           else solve_turbine_bleed(
+               core,turbine,chemistry_mode=args.chemistry_mode,
+               cooling_network=cooling,
+           ))
     if (power_bridge is not None
             and power_bridge["resolved_transient"] is not None):
         diag=power_bridge["resolved_transient"]
@@ -216,6 +259,9 @@ def main() -> int:
             diag["thermal_reconstruction_tie_flow_kg_s"]-
             point.regenerative_cooling.tie_tube_mass_flow_kg_s
         )/point.regenerative_cooling.tie_tube_mass_flow_kg_s
+        diag["thermal_inlet_vs_solved_header_delta_k"]=(
+            args.resolved_inlet_temperature_k-point.warm_header_temperature_k
+        )
     data={
         "status":"PASS",
         "model":"single bleed turbine shaft drives cryogenic LH2 pump; "
