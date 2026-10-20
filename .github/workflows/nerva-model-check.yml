@@ -120,6 +120,9 @@ jobs:
       - name: Validate parallel regenerative nozzle/reflector and tie-tube cooling hydraulics
         run: python -m ntr.nerva.validate_regenerative_cooling
 
+      - name: Validate implicit fuel/tie wall heat flux and solid inventory power ledger
+        run: python -m ntr.nerva.validate_thermal_cycle_feedback
+
       - name: Validate reconstructed OpenMC heating to regenerative and full engine cycle
         run: python -m ntr.nerva.validate_openmc_cycle_coupling
 

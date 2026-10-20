@@ -17,7 +17,10 @@ import numpy as np
 from .openmc_cycle_coupling import (
     check_reconstruction_axial_edges, map_openmc_heating_to_cycle,
 )
-from .resolved_transient import ResolvedHeating, read_resolved_heating
+from .resolved_transient import (
+    ResolvedHeating, ResolvedParameters, read_resolved_heating,
+    initial_resolved_state,
+)
 from .turbine_bleed_cycle import solve_turbine_bleed
 from .validate_hot_lh2_cycle import hot_case
 from .validate_regenerative_cooling import network
@@ -247,6 +250,89 @@ def main() -> int:
             reference.chamber_pressure_pa,rel_tol=2e-8,
         )
         assert abs(doc["point"]["total_cycle_energy_residual_w"])<1e-3
+
+        # New resolved-implicit wall model: use the same OpenMC source
+        # partitions but compute coolant heat dynamically as UA*(Ts-Tg),
+        # preserving solid energy instead of prescribing transfer fractions.
+        # This fixture selects an initially warm fuel solid near the already
+        # admissible reference cycle, while no tie-solid heat is transferred:
+        # the 80 kW tie-solid deposition accumulates in solid inventory.
+        params=ResolvedParameters(
+            fuel_solid_capacity_j_k=5000.,
+            fuel_h2_capacity_j_k=500.,
+            fuel_ua_w_k=100.,
+            tie_solid_capacity_j_k=3000.,
+            tie_supply_h2_capacity_j_k=600.,
+            tie_return_h2_capacity_j_k=700.,
+            tie_supply_ua_w_k=0.,
+            tie_return_ua_w_k=0.,
+        )
+        parameter_file=root/"resolved_parameters.json"
+        parameter_file.write_text(json.dumps(asdict(params)),encoding="utf-8")
+        old=initial_resolved_state(
+            data,solid_temperature_k=600.,gas_temperature_k=300.,
+        )
+        initial_file=root/"resolved_initial.npz"
+        np.savez_compressed(
+            initial_file,
+            fuel_solid_t_k=old.fuel_solid_t_k,
+            fuel_h2_t_k=old.fuel_h2_t_k,
+            tie_solid_t_k=old.tie_solid_t_k,
+            tie_supply_t_k=old.tie_supply_t_k,
+            tie_return_t_k=old.tie_return_t_k,
+            unresolved_energy_j=np.array([old.unresolved_energy_j]),
+        )
+        derived_output=root/"implicit_output.json"
+        implicit_args=[
+            "run_turbine_bleed_cycle", "--config",str(config),
+            "--openmc-mesh-fields",str(mesh),
+            "--openmc-fuel-reconstruction",str(fuel_path),
+            "--openmc-tie-reconstruction",str(tie_path),
+            "--openmc-transfer-mode","resolved-implicit",
+            "--resolved-thermal-parameters",str(parameter_file),
+            "--resolved-thermal-state",str(initial_file),
+            "--resolved-dt-s","0.1",
+            "--resolved-inlet-temperature-k","300",
+            "--nozzle-wall-heat-w","110000",
+            "--reflector-wall-heat-w","90000",
+            "--output",str(derived_output),
+        ]
+        prior=sys.argv
+        try:
+            sys.argv=implicit_args
+            assert run_cycle_cli()==0
+        finally:
+            sys.argv=prior
+        derived=json.loads(derived_output.read_text(encoding="utf-8"))
+        assert derived["status"]=="PASS"
+        assert derived["power_bridge"]["transfer_mode"]=="resolved-implicit"
+        dynamic=derived["power_bridge"]["power_ledger"]
+        assert abs(dynamic["nuclear_power_balance_error_w"])<1e-6
+        assert dynamic["solid_energy_storage_rate_w"]!=0.
+        assert math.isclose(
+            dynamic["reactor_power_w"],
+            dynamic["nuclear_heat_to_coolant_w"]+
+            dynamic["solid_energy_storage_rate_w"]+
+            dynamic["unresolved_power_w"],rel_tol=1e-11,
+        )
+        report=derived["power_bridge"]["resolved_transient"]
+        assert report["full_conjugate_cycle_closed"] is False
+        assert report["thermal_flow_not_iterated_with_engine"] is True
+        assert report["fuel_mass_flow_relative_mismatch"]>=0.
+        assert report["tie_mass_flow_relative_mismatch"]>=0.
+        assert abs(derived["point"]["total_cycle_energy_residual_w"])<1e-3
+
+        # Supplying transient fields and old fractions simultaneously must
+        # be rejected before solving the engine, preventing a double source.
+        prior=sys.argv
+        try:
+            sys.argv=implicit_args[:-2]+[
+                "--fuel-solid-transfer-fraction","0.8",
+                "--output",str(root/"should_not_exist.json"),
+            ]
+            rejects(lambda:run_cycle_cli())
+        finally:
+            sys.argv=prior
 
     print("NERVA OpenMC reconstructed heating -> engine/cooling power closure: PASS")
     print(f"  reactor heating: {ledger.reactor_power_w:.8g} W")
