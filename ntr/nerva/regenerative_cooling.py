@@ -183,7 +183,7 @@ def _leg(
     # loss coefficients depend on outlet density, which itself changes
     # with pressure. Refuse divergence rather than invent a root.
     p=pin
-    for _ in range(28):
+    for _ in range(15):
         residual,out=f(p)
         _hout,_tout,_qout,irrev,acc=out
         estimated=pin-irrev-acc
@@ -193,7 +193,10 @@ def _leg(
             )
         if abs(residual)<1e-8*max(1.,pin):
             break
-        p=0.5*(p+estimated)
+        # For a subsonic channel the fixed-point derivative is well
+        # below unity; full updates converge faster than half-steps.
+        # If density/phase feedback prevents convergence, fail closed.
+        p=estimated
     else:
         raise CryogenicCycleError(
             "cooling leg momentum failed to converge; possible HEM choking"
