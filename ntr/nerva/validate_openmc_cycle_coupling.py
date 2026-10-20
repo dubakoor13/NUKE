@@ -322,6 +322,34 @@ def main() -> int:
         assert report["tie_mass_flow_relative_mismatch"]>=0.
         assert abs(derived["point"]["total_cycle_energy_residual_w"])<1e-3
 
+        # The real shaft-cycle CLI must never falsely declare an outer
+        # fixed point on one iteration: enforce strict two-iteration
+        # nonconvergence, or reject an infeasible hot-core solution.
+        previous=sys.argv
+        try:
+            sys.argv=implicit_args[:-2]+[
+                "--resolved-flow-feedback",
+                "--flow-feedback-iterations","2",
+                "--flow-feedback-tolerance","1e-10",
+                "--flow-feedback-profile-tol-k","1e-10",
+                "--output",str(root/"unconverged.json"),
+            ]
+            rejects(lambda:run_cycle_cli())
+        finally:
+            sys.argv=previous
+        assert not (root/"unconverged.json").exists()
+
+        # Feedback is forbidden in the fraction-mode source mapper.
+        previous=sys.argv
+        try:
+            sys.argv=args[:-2]+[
+                "--resolved-flow-feedback",
+                "--output",str(root/"illegal_mode.json"),
+            ]
+            rejects(lambda:run_cycle_cli())
+        finally:
+            sys.argv=previous
+
         # Supplying transient fields and old fractions simultaneously must
         # be rejected before solving the engine, preventing a double source.
         prior=sys.argv
