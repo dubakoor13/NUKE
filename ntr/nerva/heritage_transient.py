@@ -24,12 +24,13 @@ class ThermalCell:
     gas_heat_capacity_j_k: float
     conductance_w_k: float
     deposition_w: float
+    direct_gas_deposition_w: float = 0.0
 
     def validate(self) -> None:
         for name in ("solid_heat_capacity_j_k", "gas_heat_capacity_j_k"):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be finite and positive")
-        for name in ("conductance_w_k", "deposition_w"):
+        for name in ("conductance_w_k", "deposition_w", "direct_gas_deposition_w"):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise ValueError(f"{name} must be finite and nonnegative")
 
@@ -50,6 +51,7 @@ class ThermalStep:
     stored_energy_change_j: float
     energy_balance_error_j: float
     maximum_explicit_step_s: float
+    direct_gas_power_w: float = 0.0
 
 
 def _allfinite_positive(values: tuple[float, ...], name: str) -> None:
@@ -87,7 +89,7 @@ def advance_thermal(
 
     Cell i equations:
       Cs_i dTs_i/dt = Qi - Ui (Ts_i - Tg_i)
-      Cg_i dTg_i/dt = Ui (Ts_i - Tg_i)
+      Cg_i dTg_i/dt = Ui (Ts_i - Tg_i) + Qdirect_gas_i
                            + mdot * cp * (Tup_i - Tg_i)
       Tup_0 = inlet temperature; Tup_i = Tg_(i-1).
     The energy audit includes both solid and gas stored energy.
@@ -107,6 +109,7 @@ def advance_thermal(
     new_solid: list[float] = []
     new_gas: list[float] = []
     q_dep = 0.0
+    q_direct = 0.0
     q_transfer = 0.0
     stored = 0.0
     for i, cell in enumerate(cells):
@@ -114,14 +117,15 @@ def advance_thermal(
         t_up = inlet_t_k if i == 0 else state.gas_t_k[i-1]
         q_wall = cell.conductance_w_k*(ts-tg)
         qs = cell.deposition_w-q_wall
-        qg = q_wall+mdotcp*(t_up-tg)
+        qg = q_wall+cell.direct_gas_deposition_w+mdotcp*(t_up-tg)
         ts1 = ts+dt_s*qs/cell.solid_heat_capacity_j_k
         tg1 = tg+dt_s*qg/cell.gas_heat_capacity_j_k
         if ts1 <= 0 or tg1 <= 0:
             raise ValueError("nonphysical temperature update")
         new_solid.append(ts1)
         new_gas.append(tg1)
-        q_dep += cell.deposition_w
+        q_dep += cell.deposition_w+cell.direct_gas_deposition_w
+        q_direct += cell.direct_gas_deposition_w
         q_transfer += q_wall
         stored += cell.solid_heat_capacity_j_k*(ts1-ts)
         stored += cell.gas_heat_capacity_j_k*(tg1-tg)
@@ -136,6 +140,7 @@ def advance_thermal(
         stored_energy_change_j=stored,
         energy_balance_error_j=stored-expected,
         maximum_explicit_step_s=dt_max,
+        direct_gas_power_w=q_direct,
     )
 
 
