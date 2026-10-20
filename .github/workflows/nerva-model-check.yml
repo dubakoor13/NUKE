@@ -52,6 +52,12 @@ jobs:
       - name: Check resolved OpenMC feedback orchestrator CLI
         run: python -m ntr.nerva.run_resolved_openmc_feedback --help
 
+      - name: Validate four-plus OpenMC heating ensemble uncertainty and provenance
+        run: python -m ntr.nerva.validate_openmc_replica_ensemble
+
+      - name: Check multiseed OpenMC ensemble CLI
+        run: python -m ntr.nerva.run_openmc_replica_ensemble --help
+
       - name: Validate independent OpenMC heating replica statistics and thermal consequences
         run: python -m ntr.nerva.validate_openmc_replica_convergence
 
