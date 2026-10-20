@@ -481,3 +481,79 @@ hydraulics, turbine-drive dynamics, and validated high-temperature
 fuel thermal conduction are absent. Existing Dittus-Boelter and Darcy
 transport correlations still use screening-level fluid properties,
 and cannot be taken as NERVA qualification without external data.
+
+
+
+## Pump–turbine shaft closure using warm H2 bleed
+
+The \`turbine_bleed_cycle.py\` operating-point solver now represents
+the first closed pump drive balance in the NUKE reduced-order
+LH2 -> hot hydrogen -> nozzle cycle.
+
+**Flow path:** subcooled tank LH2 passes through the CoolProp pump
+and lumped preheater. Heated gas divides into a main reactor flow
+and a separate hydrogen turbine bleed. The turbine expands from
+the warm header to a prescribed exhaust pressure, and supplies
+the pump shaft demand after mechanical losses. Only the main
+flow enters the NASA-7 hot reactor-channel model and choked nozzle.
+The turbine exhaust is modeled as a **separate outlet**, not
+silently counted as main-nozzle propellant.
+
+At a proposed total tank feed \`m_tank\`, the solver evaluates:
+
+\`\`\`text
+delta_h_pump_actual = (h_2s - h_1) / eta_pump
+W_pump = m_tank * delta_h_pump_actual
+
+h_4s = h(P_turbine_exhaust,s_warm_header)
+w_turbine = eta_turbine*(h_warm_header - h_4s)
+
+m_bleed = W_pump / (eta_mechanical*w_turbine)
+m_core  = m_tank - m_bleed
+
+m_core = throat_area*choked_mass_flux(P_chamber,T_chamber)
+W_turbine*eta_mechanical = W_pump
+
+m_core*h_chamber + m_bleed*h_turb_exhaust + W_mechanical_loss
+    = m_tank*h_tank + Q_preheater + Q_core
+\`\`\`
+
+\`h_chamber\` is in the same energy-reference convention as the
+CoolProp tank and warm header, using the matched NASA-7 enthalpy
+shift from the previous upgrade. The hot channel and nozzle accept
+either frozen molecular H2 or equilibrated H2/H thermochemistry;
+the **turbine branch** uses CoolProp at valid, warm temperatures.
+
+The root solver varies **total tank mass flow** while analytically
+solving the required turbine bleed fraction at each trial. The
+nozzle closure uses **core mass flow only**. It rejects flow rates
+which would exhaust pump head, exceed specified allowable turbine
+bleed, leave the gaseous domain, exceed channel Mach limits, or
+fail to produce an admissible source/nozzle operating point.
+
+### Example (assumed parameters, not historical NERVA data)
+
+\`\`\`bash
+python -m pip install CoolProp
+python -m ntr.nerva.validate_turbine_bleed_cycle \
+  --write-example build/turbine_bleed_case.json
+
+python -m ntr.nerva.run_turbine_bleed_cycle \
+  --config build/turbine_bleed_case.json \
+  --chemistry-mode frozen \
+  --output build/turbine_bleed_result.json
+\`\`\`
+
+The report distinguishes **main-nozzle Isp** based on
+\`m_core\` from **effective Isp using total tank flow**:
+\`Isp_effective_no_bleed_thrust = thrust_main/(g0*m_tank)\`.
+This is a partial-cycle performance estimate; the turbine exhaust
+might contribute propulsion, but *its thrust is not calculated* here.
+
+**Remaining physics:** no real turbine speed/torque/blade/efficiency
+map, dynamic shaft inertia, pressure/temperature-dependent turbine
+efficiency curve, nozzle-jacket/reflector/tie coolant branches,
+cryogenic chilldown/startup, bleed exhaust expansion/thrust,
+or OpenMC-derived hot-core nuclear heat in this example. The
+preheater heat source is externally specified rather than obtained
+from a routed regenerative cooling jacket or reflector.
