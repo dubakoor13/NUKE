@@ -106,6 +106,37 @@ def main() -> int:
         assert np.all(step.tie_outlet_t_k>300.)
         assert np.all(np.isfinite(step.state.tie_return_t_k))
         assert step.state.tie_return_t_k.min()>0.
+        # Distinct, physical gas temperature boundary conditions.
+        # The fuel entrance is unchanged; only the tie supply is warmer.
+        # This must hold for every fuel and tie instance, including the
+        # counterflow return, and for the GLOBAL inflow enthalpy ledger.
+        split=advance_resolved(
+            r,original,p,300.,0.1,tie_supply_inlet_t_k=330.,
+        )
+        assert math.isclose(split.fuel_inlet_t_k,300.)
+        assert math.isclose(split.tie_supply_inlet_t_k,330.)
+        assert np.allclose(split.state.fuel_h2_t_k,
+                           step.state.fuel_h2_t_k,rtol=0.,atol=1e-10)
+        assert np.allclose(split.state.fuel_solid_t_k,
+                           step.state.fuel_solid_t_k,rtol=0.,atol=1e-10)
+        assert np.mean(split.state.tie_supply_t_k)>np.mean(step.state.tie_supply_t_k)
+        assert np.mean(split.tie_outlet_t_k)>np.mean(step.tie_outlet_t_k)
+        from .implicit_hydrogen import hydrogen_specific_enthalpy
+        h=lambda t: hydrogen_specific_enthalpy(
+            t,p.hydrogen_cp_reference_j_kg_k,p.enthalpy_model
+        )
+        expected_increase=r.total_tie_flow_kg_s*(h(330.)-h(300.))
+        assert math.isclose(split.inflow_enthalpy_w-step.inflow_enthalpy_w,
+                            expected_increase,rel_tol=1e-10,abs_tol=1e-5)
+        assert abs(split.energy_residual_j)<1e-4
+        same=advance_resolved(
+            r,original,p,300.,0.1,tie_supply_inlet_t_k=300.,
+        )
+        assert np.array_equal(same.state.tie_return_t_k,
+                              step.state.tie_return_t_k)
+        check_error(lambda:advance_resolved(
+            r,original,p,300.,0.1,tie_supply_inlet_t_k=20.,
+        ))
         step2=advance_resolved(r,step.state,p,300.,0.1)
         assert abs(step2.energy_residual_j)<1e-4
         assert math.isclose(step2.state.unresolved_energy_j,52.8)
