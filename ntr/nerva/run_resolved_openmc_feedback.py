@@ -35,6 +35,7 @@ from .resolved_transient import (
 from .resolved_openmc_feedback import (
     TransportSnapshot, advance_resolved_with_openmc
 )
+from .statepoint_quality import audit_fresh_transport
 
 
 R_H2 = 4124.0  # nominal pure-H2 gas constant J/(kg K), uniform proxy only
@@ -80,6 +81,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--feedback-tol-k", type=float, default=0.5)
     p.add_argument("--feedback-relaxation", type=float, default=1.0)
     p.add_argument("--max-unresolved-fraction", type=float, default=0.6)
+    p.add_argument("--max-heating-p95-rel-error", type=float, default=0.5,
+                   help="Fail if 95th-percentile OpenMC mesh heating relative "
+                        "Monte Carlo uncertainty exceeds this fraction.")
     p.add_argument("--assembly",
                    choices=("core", "cluster", "mixed-core", "reactor"),
                    default="reactor")
@@ -187,6 +191,19 @@ def main() -> int:
         qa = json.loads(qa_path.read_text(encoding="utf-8"))
         if qa.get("status") != "PASS":
             raise RuntimeError("OpenMC power/reconstruction QA did not pass")
+        audited = audit_fresh_transport(
+            statepoint=sp_path,
+            cross_sections_xml=a.cross_sections,
+            transport_provenance=transport_dir/"transport_provenance.json",
+            analysis_root=analysis_dir,
+            requested_power_w=a.power_mw*1e6,
+            fuel_temperature_k=fuel_t,
+            hydrogen_temperature_k=hydrogen_t,
+            hydrogen_density_g_cm3=density,
+            max_heating_p95_relative_error=a.max_heating_p95_rel_error,
+        )
+        if audited.statepoint_sha256 != sp_hash or audited.nuclear_data_sha256 != cross_sections_sha:
+            raise RuntimeError("post-analysis statepoint/nuclear-data audit disagrees with transport")
         source_paths = {
             "power": analysis_dir/"power"/"nerva_mesh_fields.npz",
             "fuel": (analysis_dir/"element_channels"/
@@ -208,7 +225,9 @@ def main() -> int:
             "statepoint": str(sp_path),
             "statepoint_sha256": sp_hash,
             "nuclear_data_sha256": cross_sections_sha,
-            "analysis_qa_passed": True,
+            "analysis_qa_passed": audited.analysis_qa_passed,
+            "mesh_heating_p95_relative_error": audited.heating_p95_relative_error,
+            "source_rate_per_s": audited.source_rate_per_s,
             "power_w": heating.total_openmc_power_w,
             "unresolved_power_w": heating.unresolved_power_w,
             "reconstruction_sha256": {
@@ -305,6 +324,8 @@ def main() -> int:
         "nuclear_data_sha256": seed.nuclear_data_sha256,
         "temperature_feedback_tolerance_k": a.feedback_tol_k,
         "max_feedback_iterations": a.feedback_max_iterations,
+        "max_heating_p95_relative_error": a.max_heating_p95_rel_error,
+        "power_metadata_verified_against_statepoint": True,
         "reconstruction_qa": "run_analysis and independent channel/tie "
                               "partition-integral checks per iteration",
         "thermal_parameters_are_user_assumptions": True,
