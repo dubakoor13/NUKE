@@ -898,6 +898,67 @@ sensitivity to `UA`, direct-H2 power and unsupported reverse heating.
 against a synthetic, conservative full-cycle example. Neither is a
 real OpenMC transport run or NASA experimental qualification.
 
+## Outer thermal-to-engine fuel/tie mass-flow fixed point (opt-in)
+
+The `thermal_flow_coupling.py` driver now closes the two **mass-flow**
+degrees of freedom in the channel-resolved transient source projection.
+This extends the previous one-way `resolved-implicit` model, retaining
+the same reactor source-power, solid storage, coolant heat-transfer and
+shaft-cycle first-law audits.
+
+For iteration k:
+
+```text
+(m_fuel,k, m_tie,k) -> distribute proportionally across resolved channels
+    -> BE solid/H2 + tie counterflow solution from original state(t_n)
+    -> wall fluxes + explicit solid storage -> cooling & hot-core powers
+    -> nonlinear pump/turbine/parallel coolant/engine/nozzle solution
+    -> (m_fuel,engine, m_tie,engine)
+    -> relaxed next flow guesses
+```
+
+The iteration accepts a solution only after **both** fuel and tie mass
+flows meet the relative tolerance and the full resolved solid/gas
+temperature profiles meet their update tolerance. Every trial returns
+to the **same original state** rather than advancing one timestep per
+outer iteration. Invalid engine-cycle roots and unconverged fixed points
+raise an error; there is no success report and no output JSON if this
+fails. Relative flow weighting among fuel element/channels and among
+tie tubes is preserved from the source reconstruction. This is a
+screening assumption, not channelwise hydraulic balancing.
+
+In addition to the `resolved-implicit` arguments documented above,
+pass:
+
+```bash
+  --resolved-flow-feedback \
+  --flow-feedback-iterations 12 \
+  --flow-feedback-tolerance 0.002 \
+  --flow-feedback-profile-tol-k 0.5 \
+  --flow-feedback-relaxation 0.5
+```
+
+The output records per-iteration thermal/engine mass flows, flow
+mismatch, full-field thermal update, OpenMC nuclear-power residual,
+engine energy residual, and solved header temperature. The production
+engine solver is unmodified; the isolated numerical regression uses an
+**explicit synthetic** mass-flow response to verify convergence and
+failure behavior. Real engine-cycle convergence depends on physically
+consistent boundary conditions and is not guaranteed.
+
+**Crucial remaining gap:** the resolved transient still has a *single*
+externally prescribed hydrogen inlet temperature shared by the fuel
+channels and tie supply. A real engine has a warm common header
+feeding the fuel core after the cryogenic nozzle/reflector/tie circuit,
+while the tie supply originates upstream in the cryogenic circuit.
+The current model **does not yet update these distinct thermal
+boundaries from the engine hydraulic solution**, and does not impose
+the engine's axially resolved coolant pressure/density on the
+hydrogen finite volumes. Therefore `--resolved-flow-feedback` is
+a verified *mass-flow and source-power* fixed point, **not** a
+fully closed or NASA-validated conjugate thermal-hydraulic system.
+Do not use it to claim historical thrust, Isp or temperatures.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit

@@ -123,6 +123,9 @@ jobs:
       - name: Validate implicit fuel/tie wall heat flux and solid inventory power ledger
         run: python -m ntr.nerva.validate_thermal_cycle_feedback
 
+      - name: Validate resolved thermal fuel and tie flow fixed point and convergence guards
+        run: python -m ntr.nerva.validate_thermal_flow_coupling
+
       - name: Validate reconstructed OpenMC heating to regenerative and full engine cycle
         run: python -m ntr.nerva.validate_openmc_cycle_coupling
 
