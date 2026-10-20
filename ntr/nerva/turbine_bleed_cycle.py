@@ -287,6 +287,11 @@ def solve_turbine_bleed(
     eos=eos or HydrogenEOS()
     if not 16<=bracket_samples<=500:
         raise ValueError("invalid sample count")
+    if cooling_network is not None:
+        # EOS flash and hydraulic branch balancing are expensive.
+        # Keep a logarithmic pre-scan sufficient to bracket typical
+        # subsonic network roots, and use bisection thereafter.
+        bracket_samples=min(bracket_samples,20)
     if not 0<mass_relative_tolerance<1e-3:
         raise ValueError("invalid mass convergence threshold")
     limit=config.maximum_mass_flow_kg_s
