@@ -108,3 +108,91 @@ This is a first-order hot-hydrogen nozzle/system solver. The constant
 effective `gamma` and `cp` should eventually be replaced by equilibrium /
 frozen high-temperature hydrogen chemistry. The module does not perform
 criticality or fissile-loading calculations.
+
+
+## Gas-phase pressure-source / core / nozzle network (new)
+
+The physics implementation in \`gas_feed_network.py\` joins the
+**existing compressible fuel-channel H2 solver** to the **existing
+choked NERVA nozzle solver** and determines **total H2 flow and
+chamber pressure together**. It is a reduced-order, *single-phase
+gaseous-hydrogen* feed-network demonstration, NOT a cryogenic
+NERVA LH2 turbopump or complete fuel/tie/periphery cycle.
+
+For a prescribed pressure-source head curve (a USER-SUPPLIED
+surrogate, not a recovered pump map), feed/exit resistance, channel
+geometry, reactor heating, chamber nozzle throat and expansion
+ratio, it solves the operating-point mass-flow residual:
+
+\`\`\`text
+p_discharge = p_supply + head0 - k_source * mdot^2
+p_core_in = p_discharge - k_feed * mdot^2
+p_chamber = p_core_out - k_exit * mdot^2
+mdot - At * G_choked(p_chamber,T_chamber) = 0
+\`\`\`
+
+The gas compressor uses ideal-gas frozen molecular H2 NASA-7
+enthalpy and entropy, with a prescribed isentropic efficiency:
+
+\`\`\`text
+s(T_2s,p_discharge) = s(T_supply,p_supply)
+h_2 = h_supply + [h(T_2s)-h_supply]/eta
+shaft_power = mdot*(h_2-h_supply)
+\`\`\`
+
+The channel solver includes local gas acceleration and friction
+pressure losses, and conserves total energy \`h + v²/2\`.
+Adiabatic acceleration from the compressor discharge plenum into
+the channel conserves stagnation enthalpy. The channel-exit kinetic
+energy is recovered as chamber stagnation enthalpy, with an
+externally assumed exit pressure loss. The nozzle is evaluated with
+its existing constant-\`gamma\`, choked ideal-gas model using
+the **chamber-local** frozen H2 \`cp(T)\` and corresponding
+\`gamma = cp/(cp-R)\`. This remains an effective-gamma nozzle
+approximation, not a full variable-chemistry nozzle solution.
+
+### Run example
+
+\`\`\`bash
+python -m ntr.nerva.validate_gas_feed_network \
+  --write-example build/gas_feed_case.json
+
+python -m ntr.nerva.run_gas_feed_network \
+  --config build/gas_feed_case.json \
+  --output build/gas_feed_result.json
+\`\`\`
+
+Inputs are explicitly hypothetical engineering test values, not
+NERVA engine performance measurements. The numerical validation
+checks pump-compressor isentropic efficiency, channel stagnation
+energy and momentum, total mass/pressure/energy closure,
+source-head sensitivity, heat-input sensitivity, source-exhaustion
+and thermo-range failure handling.
+
+### Physical fidelity boundary
+
+- Supports **only single-phase gaseous pure molecular H2 in the
+  200–3500 K NASA-7 domain**. A gas compressor is **NOT a physical
+  substitute for the NERVA liquid hydrogen turbopump**. The model
+  MUST NOT be used to predict cryogenic pump work, two-phase
+  startup behavior, cavitation, NPSH, chilldown or pump cavitation.
+- No tie-tube, reflector, cooling-jacket, valve or bypass circuit
+  is included in this one-family reduced-order operating point.
+  The supplied reactor heating is only that deposited in modeled
+  fuel channels; the total reactor thermal power can be larger.
+- Pressure-source head vs mass flow, pipeline loss constants,
+  channel diameter and reactor heat distribution are prescribed.
+  The solver does not infer pump geometry, RPM, shaft torque,
+  turbine power extraction or material stress.
+- Chamber/nozzle is a quasi-steady constant-gamma effective model;
+  the expansion remains approximate for high-temperature
+  dissociation or changing thermodynamic properties.
+- The operating point is NOT linked to actual OpenMC statepoint
+  deposition without a separately extracted matching input array.
+  Reactor kinetics, fuel temperatures and experiment-based
+  NERVA calibration remain future work.
+
+This milestone is designed to prove that nozzle flow, chamber
+pressure, compressor work and fuel-channel hydrogen heating do
+not vary independently, while keeping unimplemented cycle physics
+explicit instead of inventing LH2 turbopump behavior.
