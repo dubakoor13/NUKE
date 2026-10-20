@@ -302,3 +302,95 @@ Background:
   https://ntrs.nasa.gov/citations/19730062635
 - NERVA startup includes liquid / two-phase / gas zones:
   https://www.nasa.gov/wp-content/uploads/2025/06/b1-nerva-start-up-dynamics-and-control-1966.pdf
+
+
+
+## Cryogenic LH2 to >1000 K hot reactor: matched enthalpy bridge
+
+\`hot_lh2_cycle.py\` and \`run_hot_lh2_cycle.py\` link two
+previously isolated physical regimes in NUKE:
+
+1. **CoolProp HEOS::Hydrogen**: tank subcooled LH2, isentropic
+   pump efficiency and shaft work, and lumped vaporization/heating
+   up to a *single-phase warm gaseous* header, above 200 K and below
+   900 K.
+2. **NASA-7 frozen molecular H2**: subsonic compressible heated fuel
+   channel (mass, stagnation enthalpy and momentum with wall friction
+   and acceleration) through the 200–3500 K thermochemistry window.
+3. **Frozen pure H2 nozzle**: determine choked mass flux from the
+   full temperature-dependent NASA-7 enthalpy and entropy, then solve
+   the expansion; no longer force a constant-gamma hot nozzle.
+
+### Energy reference matching
+
+CoolProp and NASA-7 enthalpy zeros are *not the same*. The two
+numbers must **never** be subtracted as if they were:
+
+\`\`\`text
+h_reference_shift =
+    h_CoolProp(T_bridge,P_bridge) - h_NASA7(T_bridge)
+
+h_engine(T) = h_NASA7(T) + h_reference_shift
+
+h_engine(T_bridge) = h_CoolProp(T_bridge,P_bridge)
+
+pump_shaft_power + Q_preheater + Q_core
+    = mdot * (h_engine(T_chamber) - h_CoolProp(T_tank,P_tank))
+\`\`\`
+
+The bridge uses a common *enthalpy reference* and thus maintains
+the first law, but it does **not** make the two EOS identical.
+The output explicitly reports the relative jump in \`cp\` and
+density at the warm-gas reference temperature; neither is hidden.
+
+### Coupled nozzle / pump / reactor channel mass flow
+
+The pump pressure-source and hydraulic loss equations from the
+preceding cryogenic model are retained. Fuel channel entry
+acceleration is treated as adiabatic (stagnation enthalpy conserved).
+The wall and directly deposited hydrogen nuclear power are counted
+once each. The chamber recovers modeled channel exit kinetic energy
+into stagnation enthalpy, and nozzle mass flow closes the system:
+
+\`\`\`text
+mdot = throat_area *
+       choked_H2_NASA7_flux(P_chamber,T_chamber)
+\`\`\`
+
+The frozen-H2 nozzle is solved separately at the converged
+operating point. A bounded flow root and explicit channel-Mach,
+200–3500 K, pump-state and nozzle-domain checks cause hard
+failure if no physically admissible solution exists.
+
+Run an assumed design-case demonstration:
+
+\`\`\`bash
+python -m pip install CoolProp
+
+python -m ntr.nerva.validate_hot_lh2_cycle \
+  --write-example build/hot_lh2_case.json
+
+python -m ntr.nerva.run_hot_lh2_cycle \
+  --config build/hot_lh2_case.json \
+  --output build/hot_lh2_result.json
+\`\`\`
+
+### Not yet a complete NERVA physical engine
+
+- Nuclear energy deposition, pump curve, line losses, geometry and
+  flow distribution are assumed, NOT computed from OpenMC or NERVA
+  operating data in this example.
+- The NASA-7 hot model assumes *pure frozen molecular H2* and ideal-gas
+  behavior; high-temperature dissociation, non-equilibrium reactions
+  and real-gas effects require additional physics.
+- The real-fluid pump and the hot ideal-gas core are matched in
+  **energy only**, not the full thermodynamic derivatives. A
+  measured/validated EOS matching scheme remains future work.
+- No nozzle jacket, reflector, tie-tube and turbine-bleed network
+  yet shares this single reduced-order feed path. Pump hydraulic
+  work is an externally supplied shaft input; turbine power,
+  rotor speed and losses are not modeled.
+- Core gas viscosity and conductivity remain screening approximations
+  rather than high-temperature property fits.
+- No neutron kinetics, detailed solid thermal conduction, full
+  OpenMC feedback or experimental XE/NRX/NERVA validation in this CLI.
