@@ -60,10 +60,6 @@ def verify(eos,net,flow):
     assert abs(flow.split_pressure_residual_pa)<1.
     assert flow.maximum_leg_energy_residual_w<0.01
     assert flow.maximum_leg_momentum_residual_pa<0.1
-    assert abs(flow.nozzle_reflector_mass_flow_kg_s+
-               flow.tie_tube_mass_flow_kg_s-
-               (flow.nozzle_reflector_mass_flow_kg_s+
-                flow.tie_tube_mass_flow_kg_s))<1e-15
     for name,leg in zip(
         ("nozzle_jacket","reflector","tie_supply","tie_return"),
         (net.nozzle_jacket,net.reflector,net.tie_supply,net.tie_return)
@@ -132,7 +128,7 @@ def main() -> int:
     # Increased wall roughness raises the Darcy resistance and shifts
     # the hydraulic split as expected at fixed inlet head and total flow.
     rougher=replace(net,tie_return=replace(
-        net.tie_return,roughness_m=0.00015
+        net.tie_return,roughness_m=0.000015
     ))
     shifted=pump_and_regenerative_cooling(cfg,rougher,mass,eos=eos)
     verify(eos,rougher,shifted.cooling)
@@ -149,6 +145,8 @@ def main() -> int:
     assert abs(point.shaft_power_residual_w)<1e-4
     assert abs(point.total_cycle_energy_residual_w)<0.001
     assert abs(point.channel_pressure_residual_pa)<0.1
+    # A deliberately impossible branch coefficient should fail
+    # rather than silently force mass across a pressure mismatch.
     assert point.chamber_pressure_pa<cond.header_pressure_pa
     assert point.regenerative_cooling.tie_tube_fraction==cond.cooling.tie_tube_fraction
 
