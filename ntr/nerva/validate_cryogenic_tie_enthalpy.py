@@ -6,7 +6,9 @@ coexistence at 0.55 MPa. These tests do NOT run OpenMC nor calibrate NERVA.
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 import math
+import sys
 from pathlib import Path
 import tempfile
 
@@ -17,6 +19,7 @@ from .cryogenic_tie_enthalpy import (
 )
 from .lh2_feed_cycle import HydrogenEOS
 from .resolved_transient import read_resolved_heating
+from .run_cryogenic_tie_enthalpy import main as run_realfluid_cli
 from .validate_resolved_transient import write_synthetic_reconstructions
 
 
@@ -134,6 +137,68 @@ def main() -> int:
         assert np.allclose(unchanged.state.supply_enthalpy_j_kg,hin,atol=1e-6)
         assert np.allclose(unchanged.state.return_enthalpy_j_kg,hin,atol=1e-6)
         assert abs(unchanged.energy_residual_j)<1e-5
+
+        # Exercise the user CLI with real CoolProp two-phase H2, actual
+        # synthetic NPZ files, two transients and persisted enthalpy.
+        reportdir=Path(temp)/"cryogenic_report"
+        old_args=sys.argv
+        try:
+            sys.argv=[
+                "run_cryogenic_tie_enthalpy",
+                str(mesh),str(fuel),str(tie),
+                "--pressure-pa",str(p),
+                "--inlet-quality","0.3",
+                "--initial-fluid-quality","0.3",
+                "--initial-solid-temperature-k","400",
+                "--solid-capacity-j-k","3000",
+                "--supply-inventory-kg","0.005",
+                "--return-inventory-kg","0.005",
+                "--supply-ua-w-k","0.8",
+                "--return-ua-w-k","0.8",
+                "--dt-s","0.1","--steps","2",
+                "--output",str(reportdir),
+            ]
+            assert run_realfluid_cli()==0
+        finally:
+            sys.argv=old_args
+        report=json.loads(
+            (reportdir/"cryogenic_tie_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["status"]=="PASS"
+        assert report["real_openmc_transport_executed"] is False
+        assert report["momentum_pressure_drop_solved"] is False
+        assert report["volume_mass_pressure_continuity_solved"] is False
+        assert len(report["history"])==2
+        assert all(abs(row["energy_residual_j"])<1e-5
+                   for row in report["history"])
+        with np.load(reportdir/"cryogenic_tie_final_state.npz",
+                     allow_pickle=False) as state_npz:
+            assert state_npz["supply_enthalpy_j_kg"].shape==shape
+            assert state_npz["return_enthalpy_j_kg"].shape==shape
+            assert np.all((state_npz["return_quality"]>0.)&
+                          (state_npz["return_quality"]<1.))
+        old_args=sys.argv
+        try:
+            sys.argv=[
+                "run_cryogenic_tie_enthalpy",
+                str(mesh),str(fuel),str(tie),
+                "--pressure-pa",str(p),
+                "--inlet-quality","1.5",
+                "--initial-solid-temperature-k","400",
+                "--solid-capacity-j-k","3000",
+                "--supply-inventory-kg","0.005",
+                "--return-inventory-kg","0.005",
+                "--supply-ua-w-k","0.8",
+                "--return-ua-w-k","0.8",
+                "--dt-s","0.1",
+                "--output",str(Path(temp)/"invalid_report"),
+            ]
+            rejects(run_realfluid_cli)
+        finally:
+            sys.argv=old_args
+        assert not (Path(temp)/"invalid_report").exists()
 
         # The old/new fluid H2 inventories and pressure must be
         # checked, not guessed from a nominal constant heat capacity.
