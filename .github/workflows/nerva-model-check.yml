@@ -52,6 +52,9 @@ jobs:
       - name: Check resolved OpenMC feedback orchestrator CLI
         run: python -m ntr.nerva.run_resolved_openmc_feedback --help
 
+      - name: Validate resolved thermal timestep convergence and conservation
+        run: python -m ntr.nerva.validate_temporal_convergence
+
       - name: Validate channel-resolved fuel and tie-counterflow transients
         run: python -m ntr.nerva.validate_resolved_transient
 
@@ -257,6 +260,7 @@ jobs:
             build/nerva_synthetic/resolved_inputs/fuel_reconstruction.npz \
             build/nerva_synthetic/resolved_inputs/tie_reconstruction.npz \
             --allow-synthetic --steps 3 --dt-s 0.1 \
+            --refine-levels 4 --refine-tolerance-k 0.5 \
             --initial-solid-k 500 --initial-gas-k 300 \
             --inlet-temperature-k 300 \
             --fuel-solid-capacity-j-k 5000 \
@@ -315,6 +319,8 @@ jobs:
       - name: Verify synthetic pipeline products
         run: |
           test -s build/nerva_synthetic/resolved_transient/resolved_transient_summary.json
+          test -s build/nerva_synthetic/resolved_transient/temporal_convergence_report.json
+          python -c "import json; p=json.load(open('build/nerva_synthetic/resolved_transient/temporal_convergence_report.json')); assert p['status']=='PASS'; assert p['energy_residual_passed']; print('Thermal timestep refinement PASS: ',p['difference_infinity_k'])"
           test -s build/nerva_synthetic/resolved_transient/resolved_transient_final_state.npz
           test -s build/nerva_synthetic/transient/openmc_transient_report.json
           test -s build/nerva_synthetic/transient/openmc_transient_history.csv
