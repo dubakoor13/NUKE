@@ -959,6 +959,62 @@ a verified *mass-flow and source-power* fixed point, **not** a
 fully closed or NASA-validated conjugate thermal-hydraulic system.
 Do not use it to claim historical thrust, Isp or temperatures.
 
+## Distinct resolved H2 gas inlet temperatures and warm-header feedback
+
+The resolved backward-Euler solver now supports TWO inlet enthalpy
+boundaries: `inlet_t_k` at the fuel-channel entrance and an optional
+`tie_supply_inlet_t_k` at the tie counterflow supply entrance. The
+return stream at the far end inherits its supply-stream outlet
+enthalpy; no extra return heat-source or artificial enthalpy offset is
+introduced. In the full transient control-volume first law:
+
+```text
+P_H2_in = m_fuel * h_H2(T_fuel_in) + m_tie * h_H2(T_tie_in)
+P_H2_out = sum_channels(m_channel * h_H2(T_fuel_out))
+           + sum_ties(m_tie_instance * h_H2(T_tie_return_out))
+dE_total/dt = P_OpenMC + P_H2_in - P_H2_out
+```
+
+The standalone resolved transient runner accepts the optional
+`--tie-supply-inlet-temperature-k`; its temporal-refinement
+verification uses the SAME two inlet temperatures at every refined
+timestep.
+
+For the engine-cycle driver in `resolved-implicit` mode, use
+`--resolved-tie-inlet-temperature-k` to supply a separate gas
+temperature. With `--resolved-flow-feedback` enabled, add
+`--couple-fuel-header-temperature` to return the shaft-cycle
+solver's warm header temperature to the fuel thermal inlet. The outer
+Picard solve checks fuel mass flow, tie mass flow, full thermal
+temperature-profile update, **and** the absolute difference between
+fuel thermal inlet and the solved warm header. Optional controls:
+`--header-temperature-tolerance-k 0.5` and
+`--header-temperature-relaxation 0.5`. It fails closed when the warm
+header or thermal profiles do not converge. The tie supply remains an
+independently prescribed gas temperature and does NOT inherit the warm
+header. Legacy shared-temperature runs remain backward compatible.
+
+**Limits of validity:** frozen NASA-7 molecular H2 enthalpy only covers
+**200-3500 K**. Actual NERVA tie supply receives cryogenic hydrogen
+from upstream regenerative cooling; its liquid/vapor state cannot be
+modeled by substituting 20-30 K into NASA-7, nor can a solved
+cryogenic pressure be directly injected into this temperature-only
+transport model. The new split boundary therefore allows meaningful
+gas-temperature sensitivity and testing, but is **not** a
+phase-consistent tie-circuit closure. We still need CoolProp/two-phase
+enthalpy transport, separate initial gas inventories/density and
+pressure-boundary coupling before claiming a true integrated system.
+The mass-flow and header fixed point does not establish NASA-grade
+hardware parameters, neutron kinetics, or independent OpenMC transport.
+
+Regression coverage:
+`validate_resolved_transient` checks changing ONLY the tie inlet
+does not alter fuel channels and balances independent inflow enthalpy;
+`validate_thermal_flow_coupling` checks the warm-header fixed point
+and convergence failure; and `validate_openmc_cycle_coupling` checks
+the public engine CLI, status fields, and incompatible flags. All
+transport-coupling fixtures in CI are synthetic, not NERVA test data.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
