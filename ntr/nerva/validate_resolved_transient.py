@@ -157,7 +157,17 @@ def main() -> int:
         assert abs(both.energy_residual_j)<1e-4
         assert both.state.tie_supply_t_k[0,-1]>300.
         assert both.state.tie_return_t_k[0,0]>300.
-        assert both.state.tie_solid_t_k[0,0]>400.
+        # A thermally hot solid may still cool while delivering heat to
+        # both gas passages. Compare its final state with a zero-source
+        # baseline, not with its initial 400 K.
+        cold_source=replace(solid_input,
+            tie_solid_w=np.zeros((1,3)),
+            tie_return_h2_w=np.full((1,3),1.),
+            total_openmc_power_w=3.)
+        cold_source.validate()
+        baseline=advance_resolved(cold_source,z,p,300.,2.)
+        assert both.state.tie_solid_t_k[0,0]>baseline.state.tie_solid_t_k[0,0]
+        assert both.tie_outlet_t_k[0]>baseline.tie_outlet_t_k[0]
 
         check_error(lambda:read_resolved_heating(tiefile,fuelfile,mesh),
                     (KeyError,ValueError))
