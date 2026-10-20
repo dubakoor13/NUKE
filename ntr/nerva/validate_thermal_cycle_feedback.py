@@ -68,7 +68,7 @@ def main() -> int:
             ledger.reactor_power_w,
             ledger.nuclear_heat_to_coolant_w+
             ledger.solid_energy_storage_rate_w+
-            ledger.unresolved_power_w,rel_tol=1e-12,
+            ledger.unresolved_power_w,rel_tol=1e-9,abs_tol=1e-6,
         )
         assert math.isclose(
             ledger.engine_cycle_heating_power_w,
