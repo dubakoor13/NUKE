@@ -121,6 +121,7 @@ class NetworkOperatingPoint:
     chamber_pressure_pa: float
     supply_temperature_k: float
     compressor_outlet_temperature_k: float
+    channel_inlet_temperature_k: float
     chamber_temperature_k: float
     pressure_source_rise_pa: float
     feed_loss_pa: float
@@ -170,6 +171,34 @@ def _temperature_at_enthalpy(h_j_kg: float, p: float) -> float:
     return (lo+hi)/2.
 
 
+
+def _static_channel_inlet_temperature(
+    h_stagnation_j_kg: float, inlet_pressure_pa: float,
+    channel_mass_flux_kg_m2_s: float,
+) -> float:
+    """Accelerate gas from plenum to channel without creating energy.
+
+    Adiabatic inlet contraction gives h0 = h(T_static)+v²/2, with
+    ideal-gas density at static channel pressure. Entrance pressure loss
+    is separately included in the prescribed feed resistance coefficient.
+    """
+    def stagnation_h(t: float) -> float:
+        g=hydrogen_state(t,inlet_pressure_pa,mode="frozen")
+        v=channel_mass_flux_kg_m2_s/g.density_kg_m3
+        return g.enthalpy_j_kg+0.5*v*v
+    if not stagnation_h(T_MIN)<=h_stagnation_j_kg<=stagnation_h(T_MAX):
+        raise NoSubsonicNetworkSolution(
+            "channel entry stagnation energy outside NASA7 gas domain"
+        )
+    lo,hi=T_MIN,T_MAX
+    for _ in range(58):
+        mid=(lo+hi)/2
+        if stagnation_h(mid)<h_stagnation_j_kg:
+            lo=mid
+        else:
+            hi=mid
+    return (lo+hi)/2.
+
 def evaluate_gas_network(
     config: GasFeedNetwork, total_mass_flow_kg_s: float,
     *, hydrogen_transport: HydrogenProperties | None = None,
@@ -203,13 +232,15 @@ def evaluate_gas_network(
         h_ideal-inlet.enthalpy_j_kg
     )/config.isentropic_compression_efficiency
     t_comp=_temperature_at_enthalpy(h2,p_dis)
+    channel_flux=(m/config.channel_count)/(math.pi*config.channel_diameter_m**2/4)
+    channel_t=_static_channel_inlet_temperature(h2,core_p,channel_flux)
     q=sum(config.wall_heating_w)+sum(config.direct_hydrogen_heating_w)
     core=solve_fuel_channel_compressible(
         np.asarray(config.wall_heating_w,dtype=float),
         np.asarray(config.z_edges_m,dtype=float),
         config.channel_count,
         m/config.channel_count,
-        t_comp,core_p,config.channel_diameter_m,
+        channel_t,core_p,config.channel_diameter_m,
         properties=hydrogen_transport or HydrogenProperties(),
         axial_direct_coolant_power_w=np.asarray(
             config.direct_hydrogen_heating_w,dtype=float
@@ -245,9 +276,10 @@ def evaluate_gas_network(
     )
     # Energy equation for entire network: compressor shaft work and
     # reactor deposition equal stagnation enthalpy delivered downstream.
+    # Static channel entry is reduced by kinetic energy of contraction
+    # from the upstream gas-compressor stagnation state.
     compression_power=m*(h2-inlet.enthalpy_j_kg)
     balance=m*(h_stag-inlet.enthalpy_j_kg)-(compression_power+q)
-    dp_core=p_exit-core_p
     pressure_balance=(
         (config.supply_pressure_pa+head)-(feed+(core_p-p_exit)+exit_loss+pc)
     )
@@ -260,6 +292,7 @@ def evaluate_gas_network(
         chamber_pressure_pa=pc,
         supply_temperature_k=config.supply_temperature_k,
         compressor_outlet_temperature_k=t_comp,
+        channel_inlet_temperature_k=channel_t,
         chamber_temperature_k=tc,
         pressure_source_rise_pa=head,
         feed_loss_pa=feed,exit_loss_pa=exit_loss,
