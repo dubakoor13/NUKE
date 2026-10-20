@@ -789,16 +789,16 @@ To enable it with an existing `regenerative_cooling` JSON configuration
 and matching `run_analysis` output:
 
 ```bash
-python -m ntr.nerva.run_turbine_bleed_cycle \\
-  --config build/regenerative_cooling_case.json \\
-  --openmc-mesh-fields build/nerva_analysis/power/nerva_mesh_fields.npz \\
-  --openmc-fuel-reconstruction build/nerva_analysis/element_channels/element_channel_power_reconstruction.npz \\
-  --openmc-tie-reconstruction build/nerva_analysis/tie_instances/tie_instance_reconstruction.npz \\
-  --fuel-solid-transfer-fraction 1.0 \\
-  --tie-solid-transfer-fraction 0.8 \\
-  --tie-solid-supply-fraction 0.5 \\
-  --nozzle-wall-heat-w 110000 \\
-  --reflector-wall-heat-w 90000 \\
+python -m ntr.nerva.run_turbine_bleed_cycle \
+  --config build/regenerative_cooling_case.json \
+  --openmc-mesh-fields build/nerva_analysis/power/nerva_mesh_fields.npz \
+  --openmc-fuel-reconstruction build/nerva_analysis/element_channels/element_channel_power_reconstruction.npz \
+  --openmc-tie-reconstruction build/nerva_analysis/tie_instances/tie_instance_reconstruction.npz \
+  --fuel-solid-transfer-fraction 1.0 \
+  --tie-solid-transfer-fraction 0.8 \
+  --tie-solid-supply-fraction 0.5 \
+  --nozzle-wall-heat-w 110000 \
+  --reflector-wall-heat-w 90000 \
   --output build/nerva_mapped_cycle.json
 ```
 
