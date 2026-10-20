@@ -1193,6 +1193,69 @@ hydraulic certification, or NASA NERVA hardware validation.
 Test using:
 `python -m ntr.nerva.validate_cryogenic_tie_hydraulic_coupling`
 
+## Rigid-volume tie hydrogen EOS pressure and internal-energy solver
+
+The new `isochoric_tie.py` provides an alternative **rigid-cell** finite-
+volume model for the cryogenic tie supply and counterflow return. Unlike
+the earlier isobaric enthalpy-storage screening approximation, a rigid
+control volume must store **internal energy**, not enthalpy, and must
+satisfy the equation of state at the actually held mass and volume.
+
+For every cell with fixed volume `V` and H2 mass `m`:
+
+```text
+rho_new = m_new / V
+p_new, T_new, h_new, Q_new = CoolProp_H2(rho_new, u_new)
+h_new = u_new + p_new/rho_new
+
+m_new - m_old = dt * (mdot_in - mdot_out)
+
+(m_new*u_new - m_old*u_old)/dt
+   = mdot_in*h_in_new - mdot_out*h_out_new
+     + UA * (T_solid_new - T_H2_new) + Q_H2_nuclear
+
+Cs*(T_solid_new - T_solid_old)/dt
+   = Q_solid_nuclear - Q_wall_supply - Q_wall_return
+```
+
+The current initial implementation explicitly imposes
+`mdot_in == mdot_out == mdot_tie` at every axial cell and both ducts.
+Thus cell mass and density remain fixed, while **pressure changes**
+through the real-fluid H2 EOS as internal energy changes; every
+property can be computed from the same thermodynamic state.
+The tie return receives the NEW-time supply outlet enthalpy at
+z=L. No direct H2 nuclear deposition is double-counted as solid heat.
+
+An independent total first-law audit uses
+
+```text
+d/dt (E_tie_solid + sum[m_H2*u_H2])
+  = Q_nuclear_solid + Q_nuclear_H2
+    + mdot_tie*h_supply_external_in
+    - mdot_tie*h_return_external_out
+```
+
+The solver rejects impossible pressure, temperature, volume or
+source-energy states and checks each implicit local energy balance.
+Use `python -m ntr.nerva.validate_isochoric_tie` for CoolProp
+two-phase H2, pressure evolution, rigid mass/volume closure and
+internal/advective energy identities. All test maps are synthetic;
+there are no experimental NERVA measurements or OpenMC transport
+histories in this regression.
+
+**Distinguish the two available models:** The existing
+`cryogenic_tie_enthalpy.py` assumes imposed pressure and finite
+`m*h` storage, serving as an isobaric screening approximation.
+The new rigid-volume model replaces that inconsistent inventory
+interpretation with `m*u` and `p(rho,u)`, but does not yet couple
+those per-cell EOS pressures to axial hydraulic pressure-drop and
+mass-flux equations. The imposed equal inlet/outlet flow per cell
+enforces continuity only for that special boundary condition; it is
+not an independently solved compressible mass-flow field. Neither
+model yet supplies NASA-qualified conjugate/boiling/CHF or
+neutronic-feedback predictions. Do not interpret the EOS pressure
+profile as one calculated from Darcy friction or two-phase momentum.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
