@@ -39,6 +39,7 @@ from .compressible_channel import (
 )
 from .hot_lh2_cycle import _pump_and_preheater
 from .lh2_feed_cycle import CryogenicCycleError, HydrogenEOS, LH2Cycle
+from .regenerative_cooling import (CoolingNetwork, CoolingNetworkPoint, pump_and_regenerative_cooling)
 from .nasa_hydrogen import (
     G0, HydrogenNozzle, hydrogen_state, hydrogen_nozzle,
     choked_hydrogen_mass_flux
@@ -103,12 +104,14 @@ class ShaftClosedPoint:
     chemistry_mode: str
     chamber_dissociation_fraction: float
     nozzle: HydrogenNozzle
+    regenerative_cooling: CoolingNetworkPoint | None = None
 
 
 def evaluate_turbine_bleed(
     config: LH2Cycle, bleed: TurbineBleed, tank_flow_kg_s: float,
     *, eos: HydrogenEOS | None = None, chemistry_mode: str = "frozen",
     full_nozzle: bool = False,
+    cooling_network: CoolingNetwork | None = None,
 ) -> tuple[ShaftClosedPoint | None, float]:
     """Solve shaft bleed analytically at prescribed total mass, close nozzle.
 
@@ -124,7 +127,26 @@ def evaluate_turbine_bleed(
     m=float(tank_flow_kg_s)
     if not math.isfinite(m) or not 0<m<=config.maximum_mass_flow_kg_s:
         raise ValueError("invalid trial mass flow")
-    p2,t2,wp,p3,t3,h3,h1,npsha=_pump_and_preheater(config,m,eos)
+    cooling_result = None
+    if cooling_network is None:
+        p2,t2,wp,p3,t3,h3,h1,npsha=_pump_and_preheater(config,m,eos)
+        cooling_pressure_drop = 0.
+    else:
+        conditioned=pump_and_regenerative_cooling(
+            config,cooling_network,m,eos=eos
+        )
+        p2=conditioned.pump_pressure_pa
+        t2=conditioned.pump_temperature_k
+        wp=conditioned.pump_shaft_power_w
+        p3=conditioned.header_pressure_pa
+        t3=conditioned.header_temperature_k
+        h3=conditioned.header_stagnation_enthalpy_j_kg
+        h1=conditioned.tank_enthalpy_j_kg
+        npsha=conditioned.inlet_npsh_available_m
+        cooling_result=conditioned.cooling
+        cooling_pressure_drop=(
+            p2-config.feed_loss_quadratic_pa_s2_kg2*m*m-p3
+        )
 
     if bleed.exhaust_pressure_pa >= p3:
         raise CryogenicCycleError("turbine exhaust pressure must be below gas header")
@@ -210,7 +232,7 @@ def evaluate_turbine_bleed(
     acceleration=float(np.sum(ch.acceleration_pressure_loss_pa))
     dp_check=p2-pc-(
         config.feed_loss_quadratic_pa_s2_kg2*m*m+
-        friction+acceleration+chamber_loss
+        cooling_pressure_drop+friction+acceleration+chamber_loss
     )
     pt=ShaftClosedPoint(
         tank_mass_flow_kg_s=m,
@@ -248,6 +270,7 @@ def evaluate_turbine_bleed(
         chemistry_mode=chemistry_mode,
         chamber_dissociation_fraction=nozzle.chamber.dissociation_fraction,
         nozzle=nozzle,
+        regenerative_cooling=cooling_result,
     )
     return pt,pt.nozzle_mass_flow_residual_kg_s
 
@@ -256,6 +279,7 @@ def solve_turbine_bleed(
     config: LH2Cycle, bleed: TurbineBleed, *,
     eos: HydrogenEOS | None = None, chemistry_mode: str = "frozen",
     bracket_samples: int = 45, mass_relative_tolerance: float = 2e-6,
+    cooling_network: CoolingNetwork | None = None,
 ) -> ShaftClosedPoint:
     """Find joint shaft-drive bleed fraction and core/nozzle mass flow."""
     config.validate()
@@ -263,6 +287,11 @@ def solve_turbine_bleed(
     eos=eos or HydrogenEOS()
     if not 16<=bracket_samples<=500:
         raise ValueError("invalid sample count")
+    if cooling_network is not None:
+        # EOS flash and hydraulic branch balancing are expensive.
+        # Keep a logarithmic pre-scan sufficient to bracket typical
+        # subsonic network roots, and use bisection thereafter.
+        bracket_samples=min(bracket_samples,20)
     if not 0<mass_relative_tolerance<1e-3:
         raise ValueError("invalid mass convergence threshold")
     limit=config.maximum_mass_flow_kg_s
@@ -276,7 +305,8 @@ def solve_turbine_bleed(
     for mass in np.geomspace(max(limit*0.02,1e-6),limit,bracket_samples):
         try:
             _,f=evaluate_turbine_bleed(
-                config,bleed,float(mass),eos=eos,chemistry_mode=chemistry_mode
+                config,bleed,float(mass),eos=eos,chemistry_mode=chemistry_mode,
+                cooling_network=cooling_network
             )
         except (ValueError,RuntimeError,OverflowError):
             continue
@@ -294,7 +324,8 @@ def solve_turbine_bleed(
     for _ in range(62):
         mid=(lo+hi)/2
         _,f=evaluate_turbine_bleed(
-            config,bleed,mid,eos=eos,chemistry_mode=chemistry_mode
+            config,bleed,mid,eos=eos,chemistry_mode=chemistry_mode,
+            cooling_network=cooling_network
         )
         if abs(f)<=mass_relative_tolerance*mid*0.10:
             break
@@ -303,7 +334,8 @@ def solve_turbine_bleed(
         else:
             hi=mid
     pt,error=evaluate_turbine_bleed(
-        config,bleed,mid,eos=eos,chemistry_mode=chemistry_mode,full_nozzle=True
+        config,bleed,mid,eos=eos,chemistry_mode=chemistry_mode,full_nozzle=True,
+        cooling_network=cooling_network
     )
     if pt is None or abs(error)>mass_relative_tolerance*pt.core_mass_flow_kg_s:
         raise CryogenicCycleError("shaft/nozzle mass closure did not converge")
