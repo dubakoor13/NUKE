@@ -20,6 +20,7 @@ from pathlib import Path
 
 from .lh2_feed_cycle import LH2Cycle
 from .turbine_bleed_cycle import TurbineBleed, solve_turbine_bleed
+from .regenerative_cooling import CoolingLeg, CoolingNetwork
 
 
 def main() -> int:
@@ -31,7 +32,7 @@ def main() -> int:
                         default=Path("build/nerva_shaft_closed_cycle.json"))
     args=parser.parse_args()
     raw=json.loads(args.config.read_text(encoding="utf-8"))
-    if not isinstance(raw,dict) or set(raw)!={"lh2_cycle","turbine"}:
+    if not isinstance(raw,dict) or not {"lh2_cycle","turbine"} <= set(raw) or set(raw)-{"lh2_cycle","turbine","regenerative_cooling"}:
         raise ValueError("JSON must contain lh2_cycle and turbine objects")
     def build(cls,item):
         valid={f.name for f in fields(cls)}
@@ -40,7 +41,20 @@ def main() -> int:
         return cls(**item)
     core=build(LH2Cycle,raw["lh2_cycle"])
     turbine=build(TurbineBleed,raw["turbine"])
-    point=solve_turbine_bleed(core,turbine,chemistry_mode=args.chemistry_mode)
+    cooling=None
+    if "regenerative_cooling" in raw:
+        config=raw["regenerative_cooling"]
+        expected={"nozzle_jacket","reflector","tie_supply","tie_return"}
+        if not isinstance(config,dict) or set(config)-expected:
+            raise ValueError("unknown regenerative cooling fields")
+        sections={}
+        for name in expected:
+            if name not in config or not isinstance(config[name],dict):
+                raise ValueError(f"cooling leg missing: {name}")
+            sections[name]=CoolingLeg(**config[name])
+        cooling=CoolingNetwork(**sections)
+    point=solve_turbine_bleed(core,turbine,chemistry_mode=args.chemistry_mode,
+                             cooling_network=cooling)
     data={
         "status":"PASS",
         "model":"single bleed turbine shaft drives cryogenic LH2 pump; "
@@ -49,6 +63,7 @@ def main() -> int:
         "historical_nerva_validation":False,
         "turbine_exhaust_thrust_included":False,
         "complete_turbomachinery_map":False,
+        "parallel_cooling_branches_solved": cooling is not None,
         "inputs":raw,
         "point":{k:v for k,v in asdict(point).items() if k!="nozzle"},
         "nozzle":{
@@ -68,6 +83,9 @@ def main() -> int:
     print(f"  total flow: {point.tank_mass_flow_kg_s:.7g} kg/s")
     print(f"  hot-core flow: {point.core_mass_flow_kg_s:.7g} kg/s")
     print(f"  bleed fraction: {point.turbine_bleed_fraction:.6g}")
+    if point.regenerative_cooling is not None:
+        print(f"  tie-branch fraction: {point.regenerative_cooling.tie_tube_fraction:.6g}")
+        print(f"  coolant mixed header T: {point.regenerative_cooling.common_header_temperature_k:.6g} K")
     print(f"  pump shaft: {point.pump_required_power_w:.6g} W; "
           f"turbine delivered: {point.turbine_shaft_delivered_power_w:.6g} W")
     print(f"  chamber: {point.chamber_pressure_pa/1e6:.6g} MPa, "
