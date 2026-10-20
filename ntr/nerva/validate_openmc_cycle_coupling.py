@@ -254,6 +254,9 @@ def main() -> int:
         # New resolved-implicit wall model: use the same OpenMC source
         # partitions but compute coolant heat dynamically as UA*(Ts-Tg),
         # preserving solid energy instead of prescribing transfer fractions.
+        # This fixture selects an initially warm fuel solid near the already
+        # admissible reference cycle, while no tie-solid heat is transferred:
+        # the 80 kW tie-solid deposition accumulates in solid inventory.
         params=ResolvedParameters(
             fuel_solid_capacity_j_k=5000.,
             fuel_h2_capacity_j_k=500.,
@@ -261,13 +264,13 @@ def main() -> int:
             tie_solid_capacity_j_k=3000.,
             tie_supply_h2_capacity_j_k=600.,
             tie_return_h2_capacity_j_k=700.,
-            tie_supply_ua_w_k=80.,
-            tie_return_ua_w_k=90.,
+            tie_supply_ua_w_k=0.,
+            tie_return_ua_w_k=0.,
         )
         parameter_file=root/"resolved_parameters.json"
         parameter_file.write_text(json.dumps(asdict(params)),encoding="utf-8")
         old=initial_resolved_state(
-            data,solid_temperature_k=500.,gas_temperature_k=300.,
+            data,solid_temperature_k=600.,gas_temperature_k=300.,
         )
         initial_file=root/"resolved_initial.npz"
         np.savez_compressed(
