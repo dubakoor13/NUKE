@@ -557,3 +557,98 @@ cryogenic chilldown/startup, bleed exhaust expansion/thrust,
 or OpenMC-derived hot-core nuclear heat in this example. The
 preheater heat source is externally specified rather than obtained
 from a routed regenerative cooling jacket or reflector.
+
+
+
+## Parallel nozzle jacket / reflector / tie-tube regenerative cooling (new)
+
+\`regenerative_cooling.py\` implements **explicit** first-order
+coolant heat balances and pressure-matched flow splitting rather
+than the previous single abstract preheater. The modeled topology
+is derived from NASA/TM-2013-216553, *Nuclear Thermal Rocket Simulation
+in NPSS* (Belair et al., July 2013), "Engine Flow Path", p. 6:
+https://ntrs.nasa.gov/api/citations/20140006199/downloads/20140006199.pdf
+
+\`\`\`text
+tank LH2 -> pump -> feed valve ->+-> nozzle cooling -> reflector -----+
+                               |                                     |
+                               +-> tie-tube supply -> tie return -----+--> hot gas header
+                                                                           |
+                                                               turbine bleed / core
+\`\`\`
+
+The tie supply flows in the axial direction opposite the return, but
+the **thermal wall-to-gas power split is prescribed**; this is not a
+conjugate zirconium-hydride solid conduction solver. This branch model
+does not yet implement NASA's expander-cycle downstream turbine
+bypass/flow recombination: it retains the existing separately
+exhausted turbine-bleed simplification. This distinction matters
+when comparing against specific historical NERVA engines; classical
+NERVA hot-bleed engine routing differs from later small NERVA-derived
+expander cycles.
+
+For four user-specified cooling legs, the finite-volume physics is:
+
+\`\`\`text
+m_path*(h0_out-h0_in) = Q_leg
+h0 = h(P,h_static)+v^2/2,    v=G/rho(P,h_static)
+P_in-P_out = G*(v_out-v_in)+K*G*(v_in+v_out)/4
+G = m_path / flow_area
+
+m_reflector + m_tie = m_total
+P_reflector_out = P_tie_return_out
+h0_header = (m_reflector*h0_reflector +
+             m_tie*h0_tie_return) / m_total
+\`\`\`
+
+\`K\` combines Darcy path friction and fitting/local losses; it is
+**an assumed hydraulic loss coefficient**, not yet calculated from
+a validated two-phase friction, wall boiling, or temperature-dependent
+flow correlation. CoolProp supplies homogeneous-equilibrium H2
+density/enthalpy (including phase change) to make these equations
+self-consistent at **fluid-bulk screening level**. No separate
+liquid/vapor velocities, slip, critical heat flux, film boiling,
+or flow-instability criterion is yet implemented. The solver
+refuses nonphysical temperatures, failed hydraulic balance,
+and bad heat/mass/enthalpy input.
+
+The pump compresses TOTAL tank hydrogen, with the same temperature-
+dependent CoolProp isentropic-efficiency model from earlier work.
+The downstream turbine and hot-channel/nozzle follow the already
+implemented shaft-closed operating-point equations. Crucially,
+preheater heat is NOT added twice: the sum of the four independent
+cooling-leg powers must equal the \`LH2Cycle.preheater_thermal_power_w\`
+bookkeeping field.
+
+### Example run
+
+\`\`\`bash
+python -m ntr.nerva.validate_regenerative_cooling \
+  --write-example build/regenerative_cooling_case.json
+
+python -m ntr.nerva.run_turbine_bleed_cycle \
+  --config build/regenerative_cooling_case.json \
+  --chemistry-mode frozen \
+  --output build/regenerative_cooling_result.json
+\`\`\`
+
+The JSON adds a \`regenerative_cooling\` object with \`nozzle_jacket\`,
+\`reflector\`, \`tie_supply\`, and \`tie_return\` entries. Each entry
+contains \`heat_power_w\`, \`flow_area_m2\`, and
+\`pressure_loss_coefficient\`. Leaving the object out runs the
+previous lumped-preheater model unchanged. Reports record all
+per-leg states, two-phase endpoint quality diagnostic, pressure
+and energy residuals, tie-vs-reflector mass-flow split, mixed
+header enthalpy, turbine drive and nozzle performance.
+
+The program performs synthetic regressions for branch pressure
+equality, exact mass split, enthalpy mixing, total energy,
+shaft power and nozzle flow; sensitivity to tie pressure loss;
+and rejection of double-counted heat. Numeric example constants
+are NOT NASA calibration values.
+
+**Next engineering tasks:** use actual nozzle/jacket and reflector
+cooling geometry, individual tie-tube supply/return cross sections,
+realistic two-phase friction and acceleration constitutive laws;
+advance thermal wall dynamics, couple nuclear deposition from
+OpenMC, and implement full NASA-derived expander turbine recombination.
