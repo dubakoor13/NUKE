@@ -652,3 +652,89 @@ cooling geometry, individual tie-tube supply/return cross sections,
 realistic two-phase friction and acceleration constitutive laws;
 advance thermal wall dynamics, couple nuclear deposition from
 OpenMC, and implement full NASA-derived expander turbine recombination.
+
+
+
+## Geometry-dependent coolant hydraulic resistance (new)
+
+Cooling legs in \`regenerative_cooling.py\` now support a
+**geometry-derived Darcy pressure-loss mode** in place of a
+fixed, guessed \`pressure_loss_coefficient\`.
+
+For a parallel bank of coolant passages, enter the **total open
+flow area** (sum of all passages), each individual passage's
+hydraulic diameter \`D_h\`, effective flow length \`L\`,
+absolute wall roughness \`epsilon\`, and dimensionless fitting-loss
+coefficient \`K_minor\`. With the local hydrogen viscosity
+\`mu(P,h)\` obtained from CoolProp, each cooling control volume solves:
+
+\`\`\`text
+G       = mdot_branch / total_flow_area
+Re      = G * D_h / mu_mid
+f_D     = 64/Re                    for Re < 2300
+f_D     = Haaland(Re,epsilon/D_h)  for Re >= 2300
+K_total = f_D*L/D_h + K_minor
+
+deltaP_wall_and_minor = K_total * G*(v_in+v_out)/4
+deltaP_acceleration   = G*(v_out-v_in)
+
+P_in-P_out = deltaP_wall_and_minor + deltaP_acceleration
+
+mdot*(h0_out-h0_in) = Q_leg
+\`\`\`
+
+This scheme retains the existing enthalpy-conservative, two-parallel
+branch pressure solve and common-header enthalpy mixing, followed by
+the pump/turbine/hot-core/nozzle mass and power closure. As fluid
+heating, viscosity, mass flow or roughness change, the computed
+Reynolds, Darcy factor, effective K and hydraulic split update.
+Independent components of pressure loss, outlet Mach, and Reynolds
+are included in each \`CoolingLegState\` record.
+
+### Input format (per leg)
+
+\`\`\`json
+{
+  "heat_power_w": 110000.0,
+  "flow_area_m2": 0.0008,
+  "pressure_loss_coefficient": 0.0,
+  "length_m": 2.0,
+  "hydraulic_diameter_m": 0.008,
+  "roughness_m": 0.000003,
+  "minor_loss_coefficient": 0.4
+}
+\`\`\`
+
+Enter each of these inside the existing \`regenerative_cooling\` JSON
+object, with one entry each for \`nozzle_jacket\`, \`reflector\`,
+\`tie_supply\` and \`tie_return\`. The original aggregate-K
+mode is still supported, with \`pressure_loss_coefficient\` set
+and \`length_m\`/\`hydraulic_diameter_m\` omitted. **Combining an
+aggregate legacy K with geometry-based Darcy friction is prohibited**
+to prevent double-counting.
+
+Run the regression:
+
+\`\`\`shell
+python -m ntr.nerva.validate_geometry_regenerative
+\`\`\`
+
+### Physical applicability limits
+
+- The Haaland wall-friction closure is **single-phase / supercritical
+  screening physics only**. It is explicitly rejected for a
+  two-phase H2 midpoint. Two-phase slip, pressure-drop multipliers,
+  critical heat flux, flow instability and hot wall heat transfer
+  remain unresolved. The older aggregate-K mode is a surrogate and
+  does not validate two-phase hydraulics.
+- Length, area, hydraulic diameter, roughness and local loss
+  coefficients are still assumed inputs. Actual NERVA nozzle jacket,
+  reflector and tie geometry has not been dimensioned from drawings.
+- The turbulent Haaland transition at Re=2300 is a simplified
+  correlation, not a validated transitional-flow friction model.
+- Heat transferred from nozzle wall, tie solids and reflector is
+  STILL supplied externally as total watts in each passage; no
+  conjugate solid wall-to-coolant heat-transfer closure or spatial
+  OpenMC power map feeds this reduced-order cycle yet.
+- The existing separate turbine bleed remains; expander turbine
+  exhaust recombination and turbine map/dynamics are pending.
