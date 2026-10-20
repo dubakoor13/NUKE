@@ -175,6 +175,41 @@ def _minimum_pressure(
     return math.exp(shi) * (1 + 2e-12)
 
 
+def choked_hydrogen_mass_flux(
+    chamber_pressure_pa: float, chamber_temperature_k: float,
+    mode: str = "equilibrium"
+) -> float:
+    """Isentropic maximum mass flux without requiring a sub-200 K nozzle exit.
+
+    Use this as the inner residual for thermal-power closure. The complete
+    nozzle expansion should be evaluated only after the chamber T is solved.
+    """
+    chamber = hydrogen_state(chamber_temperature_k, chamber_pressure_pa, mode)
+    frozen_alpha = chamber.dissociation_fraction if mode == "frozen" else None
+    pmin = _minimum_pressure(chamber, mode, frozen_alpha)
+    lower, upper = math.log(pmin), math.log(chamber_pressure_pa)
+    golden = (math.sqrt(5.0)-1.0)/2.0
+
+    def flux(lp: float) -> float:
+        s = _isentrope(math.exp(lp), chamber, mode, frozen_alpha)
+        return s.density_kg_m3*math.sqrt(
+            max(0.0, 2.0*(chamber.enthalpy_j_kg - s.enthalpy_j_kg))
+        )
+
+    a, b = upper-golden*(upper-lower), lower+golden*(upper-lower)
+    fa, fb = flux(a), flux(b)
+    for _ in range(52):
+        if fa < fb:
+            lower, a, fa = a, b, fb
+            b = lower+golden*(upper-lower)
+            fb = flux(b)
+        else:
+            upper, b, fb = b, a, fa
+            a = upper-golden*(upper-lower)
+            fa = flux(a)
+    return flux(0.5*(lower+upper))
+
+
 def hydrogen_nozzle(
     chamber_pressure_pa: float, chamber_temperature_k: float,
     throat_area_m2: float, expansion_ratio: float,
@@ -282,11 +317,12 @@ def power_coupled_hydrogen_nozzle(
     available = reactor_thermal_power_w*heating_efficiency
 
     def residual(T: float) -> float:
-        result = hydrogen_nozzle(
-            chamber_pressure_pa, T, throat_area_m2, expansion_ratio, mode
-        )
-        return (result.mass_flow_kg_s
-                *(result.chamber.enthalpy_j_kg-inlet.enthalpy_j_kg) - available)
+        chamber = hydrogen_state(T, chamber_pressure_pa, mode)
+        mass_flow = choked_hydrogen_mass_flux(
+            chamber_pressure_pa, T, mode
+        )*throat_area_m2
+        return (mass_flow*(chamber.enthalpy_j_kg-inlet.enthalpy_j_kg)
+                - available)
 
     upper = T_MAX
     if residual(upper) < 0:
