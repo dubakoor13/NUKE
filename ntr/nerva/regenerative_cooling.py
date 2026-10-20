@@ -135,7 +135,7 @@ def _static_state(
     if p<=0 or not math.isfinite(p):
         raise CryogenicCycleError("coolant pressure must remain positive")
     h=h0
-    for _ in range(35):
+    for _ in range(12):
         rho=eos.hp("Dmass",h,p)
         if rho<=0:
             raise CryogenicCycleError("invalid coolant mixture density")
@@ -146,7 +146,10 @@ def _static_state(
         if abs(updated-h)<=1e-10*max(1.,abs(h0)):
             h=updated
             break
-        h=0.5*(h+updated)
+        # Kinetic correction is small on the model's admissible
+        # subsonic branch. A full thermodynamic fixed-point update
+        # converges much faster than artificial 50% damping.
+        h=updated
     else:
         raise CryogenicCycleError("coolant stagnation/static enthalpy iteration diverged")
     rho=eos.hp("Dmass",h,p)
