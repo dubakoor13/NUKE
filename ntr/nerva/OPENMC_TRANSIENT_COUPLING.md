@@ -157,3 +157,93 @@ The checks include energy conservation, exact zero-flow heat balance,
 a timestep far larger than the explicit stability threshold,
 causal upwind enthalpy transport, nonconstant cp, failure outside
 the thermo range, and an iterative feedback accounting regression.
+
+
+## Channel-resolved transient fuel and tie-tube solver
+
+The optional resolved solver now consumes **existing** power reconstruction
+NPZs from two standard workflows:
+
+- fuel: \`solve_element_channels\` output
+  \`element_channel_power_reconstruction.npz\`, preserving each of the 19
+  fuel coolant-channel axial solid and direct-H2 nuclear heating arrays
+  plus each branch's flow;
+- tie tube: \`solve_tie_instances\` output
+  \`tie_instance_reconstruction.npz\`, preserving each tie's axial solid,
+  supply direct-H2 and return direct-H2 nuclear heating arrays plus flow;
+- reference: normalized OpenMC \`nerva_mesh_fields.npz\`, against which
+  **every independent reconstructed energy partition is verified**. Total
+  deposition not represented by these branches remains in an explicit
+  unresolved-energy reservoir, instead of artificially heating fuel/H2.
+
+The implementation is in \`resolved_transient.py\`. Every fuel channel is
+integrated independently with the conservative NASA-7-H2 variable-enthalpy
+backward Euler solver. Each tie-tube receives a **shared solid thermal
+node per axial bin**, exchanging energy with BOTH H2 passages. The supply
+flows from z=0 to z=L, and the return flows from z=L back to z=0; the
+far-end supply outlet is the return inlet. Tie coupling iterates to a
+specified temperature tolerance and aborts if it fails to converge.
+The global first-law check combines all fuel/tie solids, gas storage,
+fluid inlet and outlet enthalpy, direct nuclear H2 heat, and unresolved
+heat.
+
+The resulting model now has **distinct repeated elements, 19 individual
+coolant channels per element, per-tie supply and return paths, and
+opposing hydrogen flow directions**. It is still an assumed-UA,
+assumed-capacity, fixed-flow/pressure model. It has no transient pump
+network, channel pressure loss, 3-D thermal conduction or time-dependent
+neutronics. The heating maps are frozen over time: the earlier
+\`run_openmc_transient\` option with quasi-static OpenMC temperature
+feedback is a **separate aggregate-branch solver**, not yet connected
+to this resolved solver. Do not claim this is a fully coupled
+statepoint-rerun resolved-feedback NERVA simulation.
+
+**Run on a real OpenMC reconstruction** (obtained by the full OpenMC
+pipeline and accompanied by the transport provenance file):
+
+\`\`\`bash
+python -m ntr.nerva.run_resolved_transient \
+  build/nerva_power/nerva_mesh_fields.npz \
+  build/nerva_element_channels/element_channel_power_reconstruction.npz \
+  build/nerva_tie_instances/tie_instance_reconstruction.npz \
+  --statepoint PATH/TO/statepoint.h5 \
+  --transport-provenance PATH/TO/transport_provenance.json \
+  --steps 10 --dt-s 0.1 --initial-solid-k 500 \
+  --initial-gas-k 300 --inlet-temperature-k 300 \
+  --fuel-solid-capacity-j-k 5000 --fuel-gas-capacity-j-k 500 \
+  --fuel-ua-w-k 100 \
+  --tie-solid-capacity-j-k 3000 \
+  --tie-supply-capacity-j-k 600 \
+  --tie-return-capacity-j-k 700 \
+  --tie-supply-ua-w-k 80 --tie-return-ua-w-k 90
+\`\`\`
+
+All capacities (J/K per thermal node), UA (W/K per node), temperatures,
+flows and power above are **illustrative user inputs**, not NASA-derived
+engine conditions. The real-data flag validates the supplied statepoint's
+SHA-256 against transport provenance; it does **not** cryptographically
+link arbitrary reconstruction NPZ files to that statepoint. The latter
+require their generation in the same analysis run, and the independent
+mesh/reconstruction power checks catch mismatches in total energy.
+
+Synthetic numerical test and CLI smoke run:
+
+\`\`\`bash
+python -m ntr.nerva.validate_resolved_transient
+python -m ntr.nerva.validate_resolved_transient --write-fixture build/resolved_fixture
+python -m ntr.nerva.run_resolved_transient \
+  build/resolved_fixture/mesh_fields.npz \
+  build/resolved_fixture/fuel_reconstruction.npz \
+  build/resolved_fixture/tie_reconstruction.npz \
+  --allow-synthetic --steps 3 --dt-s 0.1 \
+  --initial-solid-k 500 --initial-gas-k 300 --inlet-temperature-k 300 \
+  --fuel-solid-capacity-j-k 5000 --fuel-gas-capacity-j-k 500 \
+  --fuel-ua-w-k 100 --tie-solid-capacity-j-k 3000 \
+  --tie-supply-capacity-j-k 600 --tie-return-capacity-j-k 700 \
+  --tie-supply-ua-w-k 80 --tie-return-ua-w-k 90
+\`\`\`
+
+Outputs: \`resolved_transient_summary.json\`,
+\`resolved_transient_history.csv\`,
+\`resolved_transient_final_state.npz\`. Synthetic output is explicitly
+labeled unverified and cannot substitute for OpenMC validation.
