@@ -21,6 +21,7 @@ from typing import Callable
 import numpy as np
 
 from .heritage_transient import ThermalCell, ThermalState, advance_thermal
+from .implicit_hydrogen import advance_thermal_implicit
 
 _FIELDS = (
     "power_density_w_cm3",
@@ -199,7 +200,9 @@ def initial_state(n: int, solid_temp_k: float, gas_temp_k: float) -> TransientSt
 
 def advance_openmc_transient(
     pm: OpenMCPowerMap, state: TransientState,
-    fuel: Branch, tie: Branch, inlet_t_k: float, dt_s: float
+    fuel: Branch, tie: Branch, inlet_t_k: float, dt_s: float,
+    *, integrator: str = "explicit",
+    enthalpy_model: str = "constant",
 ) -> TransientStep:
     """One conservative timestep using old-state, power-normalized OpenMC heat.
 
@@ -207,6 +210,12 @@ def advance_openmc_transient(
     enabled, a caller re-runs OpenMC at new material conditions and repeats
     this step from the SAME old transient state (Picard iteration).
     """
+    if integrator not in ("explicit", "implicit"):
+        raise ValueError("integrator must be explicit or implicit")
+    if enthalpy_model not in ("constant", "nasa7-h2"):
+        raise ValueError("enthalpy model must be constant or nasa7-h2")
+    if integrator == "explicit" and enthalpy_model != "constant":
+        raise ValueError("explicit Euler only supports constant cp; use implicit for nasa7-h2")
     pm.validate()
     fuel.validate()
     tie.validate()
@@ -225,6 +234,12 @@ def advance_openmc_transient(
             direct_gas_deposition_w=direct[i],
         ) for i in range(n))
         previous = getattr(state, name)
+        if integrator == "implicit":
+            return advance_thermal_implicit(
+                cells, previous, inlet_t_k,
+                branch.mass_flow_kg_s, branch.cp_j_kg_k, dt_s,
+                enthalpy_model=enthalpy_model,
+            )
         return advance_thermal(cells, previous, inlet_t_k,
                                branch.mass_flow_kg_s, branch.cp_j_kg_k, dt_s)
 
@@ -269,6 +284,8 @@ def advance_with_transport_feedback(
     state: TransientState, fuel: Branch, tie: Branch, inlet_t_k: float,
     dt_s: float, *, max_iterations: int = 4,
     temperature_tolerance_k: float = 0.5,
+    integrator: str = "explicit",
+    enthalpy_model: str = "constant",
 ) -> FeedbackStatus:
     """Quasi-static OpenMC/thermal fixed-point iteration.
 
@@ -289,7 +306,8 @@ def advance_with_transport_feedback(
         if power.source_kind != "openmc-statepoint":
             raise ValueError("feedback requires actual OpenMC statepoint snapshots")
         step = advance_openmc_transient(
-            power, state, fuel, tie, inlet_t_k, dt_s
+            power, state, fuel, tie, inlet_t_k, dt_s,
+            integrator=integrator, enthalpy_model=enthalpy_model,
         )
         # Uniform-material feedback is a reduced-order proxy, not a full
         # axial/material-instance OpenMC temperature field.

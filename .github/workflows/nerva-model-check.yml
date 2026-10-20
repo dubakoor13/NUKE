@@ -43,6 +43,9 @@ jobs:
       - name: Check statepoint postprocessor CLI
         run: python -m ntr.nerva.postprocess_statepoint --help
 
+      - name: Validate implicit hydrogen thermochemistry and energy integration
+        run: python -m ntr.nerva.validate_implicit_hydrogen
+
       - name: Validate OpenMC heating to transient power/energy coupling
         run: python -m ntr.nerva.validate_openmc_transient
 
@@ -237,6 +240,7 @@ jobs:
           python -m ntr.nerva.run_openmc_transient \
             --fields build/nerva_synthetic/nerva_mesh_fields.npz \
             --allow-synthetic \
+            --integrator implicit --gas-enthalpy-model nasa7-h2 \
             --power-mw 1 --steps 5 --dt-s 0.01 \
             --inlet-temperature-k 500 \
             --initial-solid-k 650 --initial-gas-k 500 \

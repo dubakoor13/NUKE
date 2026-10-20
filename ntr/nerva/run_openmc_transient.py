@@ -59,7 +59,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tie-gas-capacity-j-k", type=float, required=True)
     p.add_argument("--fuel-ua-w-k", type=float, required=True)
     p.add_argument("--tie-ua-w-k", type=float, required=True)
-    p.add_argument("--hydrogen-cp-j-kg-k", type=float, default=14300.0)
+    p.add_argument("--hydrogen-cp-j-kg-k", type=float, default=14300.0,
+                   help="Reference Cp: gas inventory Cgas/Cp_ref, constant-model Cp.")
+    p.add_argument("--integrator", choices=("implicit", "explicit"),
+                   default="implicit",
+                   help="Implicit finite-volume enthalpy integration is recommended.")
+    p.add_argument("--gas-enthalpy-model", choices=("nasa7-h2", "constant"),
+                   default="nasa7-h2",
+                   help="Pure H2 NASA-7 variable enthalpy or legacy constant Cp.")
     p.add_argument("--feedback-max-iterations", type=int, default=4)
     p.add_argument("--feedback-temperature-tolerance-k", type=float, default=0.5)
     p.add_argument("--max-unresolved-fraction", type=float, default=0.50)
@@ -111,6 +118,8 @@ def main() -> int:
                          "For CI/demo fixture provide --allow-synthetic.")
     if args.allow_synthetic and not args.fields:
         raise ValueError("--allow-synthetic only valid with --fields")
+    if args.integrator == "explicit" and args.gas_enthalpy_model != "constant":
+        raise ValueError("explicit mode requires --gas-enthalpy-model constant")
     if args.steps <= 0 or not 0 < args.max_unresolved_fraction <= 1:
         raise ValueError("steps must be positive and unresolved limit in (0,1]")
     if args.dt_s <= 0 or not math.isfinite(args.dt_s):
@@ -229,6 +238,8 @@ def main() -> int:
                 state, fuel, tie, args.inlet_temperature_k, args.dt_s,
                 max_iterations=args.feedback_max_iterations,
                 temperature_tolerance_k=args.feedback_temperature_tolerance_k,
+                integrator=args.integrator,
+                enthalpy_model=args.gas_enthalpy_model,
             )
             trial = result.step
             power = result.last_map
@@ -240,7 +251,9 @@ def main() -> int:
             power = fixture
             trial = advance_openmc_transient(
                 power, state, fuel, tie,
-                args.inlet_temperature_k, args.dt_s
+                args.inlet_temperature_k, args.dt_s,
+                integrator=args.integrator,
+                enthalpy_model=args.gas_enthalpy_model,
             )
             converged, iterations, feedback_delta = None, 0, None
         frac = power.unresolved_w / power.prescribed_power_w
@@ -285,7 +298,14 @@ def main() -> int:
             "openmc_statepoint_frozen" if args.statepoint else "synthetic_unverified"
         ),
         "power_control": "EXTERNALLY PRESCRIBED constant thermal power; no reactor kinetics",
-        "thermal_model": "aggregate fuel and tie axial solid/gas; constant cp, UA; co-current",
+        "thermal_model": (
+            "aggregate fuel and tie axial solid/gas; fixed gas inventory, "
+            "constant solid heat capacity and UA, co-current; "
+            + args.integrator + " / " + args.gas_enthalpy_model
+        ),
+        "integrator": args.integrator,
+        "gas_enthalpy_model": args.gas_enthalpy_model,
+        "gas_inventory_definition": "gas mass per axial bin = gas_capacity_J_K / reference_cp_J_kg_K",
         "feedback_model": "uniform fuel and H2 material-state OpenMC Picard iteration"
            if args.cross_sections else "NONE; frozen power distribution",
         "historical_model_validated": False,
