@@ -80,8 +80,11 @@ def check(point,core,turbine,eos):
     assert point.main_nozzle_isp_s>point.effective_isp_excluding_bleed_thrust_s
     assert math.isclose(point.effective_isp_excluding_bleed_thrust_s,
                         point.main_nozzle_thrust_n/(G0*mt),rel_tol=1e-12)
+    # The nozzle reports Isp against its own choked mass flow.
+    # Core-nozzle flow closure is a separate finite-tolerance condition.
     assert math.isclose(point.main_nozzle_isp_s,
-                        point.main_nozzle_thrust_n/(G0*mc),rel_tol=1e-10)
+                        point.main_nozzle_thrust_n/
+                        (G0*point.nozzle.mass_flow_kg_s),rel_tol=1e-10)
 
     # Independent system-boundary energy verification using CoolProp
     # absolute enthalpies and the shifted NASA7 hot-core enthalpy.
