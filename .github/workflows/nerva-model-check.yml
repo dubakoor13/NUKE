@@ -111,6 +111,15 @@ jobs:
       - name: Install optional analysis dependencies
         run: python -m pip install CoolProp matplotlib
 
+      - name: Validate equilibrium H2 dissociation and hot-core/nozzle energy physics
+        run: python -m ntr.nerva.validate_equilibrium_hot_hydrogen
+
+      - name: Run frozen and equilibrium H2 hot-core scenarios
+        run: |
+          python -m ntr.nerva.validate_equilibrium_hot_hydrogen --write-example build/equilibrium_h2_example.json
+          test -s build/hot_frozen.json
+          test -s build/hot_equilibrium.json
+
       - name: Validate cryogenic LH2 to hot NASA7 core and nozzle enthalpy bridge
         run: python -m ntr.nerva.validate_hot_lh2_cycle
 
