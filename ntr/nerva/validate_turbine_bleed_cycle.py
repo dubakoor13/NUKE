@@ -127,8 +127,11 @@ def main() -> int:
     candidate, _ = evaluate_turbine_bleed(
         core,good,point.tank_mass_flow_kg_s,eos=eos,full_nozzle=True
     )
-    check(candidate,core,good,eos)
+    # A trial at the previous mass is not a new nozzle-closed operating
+    # point; compare bleed directly, without mislabeling it a solved root.
     assert candidate.turbine_bleed_fraction < point.turbine_bleed_fraction
+    improved=solve_turbine_bleed(core,good,eos=eos)
+    check(improved,core,good,eos)
 
     # More turbine pressure expansion extracts more specific work and
     # therefore reduces bleed at the SAME proposed tank mass flow.
@@ -136,8 +139,9 @@ def main() -> int:
     deeper,_=evaluate_turbine_bleed(
         core,expanded,point.tank_mass_flow_kg_s,eos=eos,full_nozzle=True
     )
-    check(deeper,core,expanded,eos)
     assert deeper.turbine_bleed_fraction < point.turbine_bleed_fraction
+    expanded_point=solve_turbine_bleed(core,expanded,eos=eos)
+    check(expanded_point,core,expanded,eos)
 
     # The chemistry option stays consistent through hot channels/nozzle.
     eq=solve_turbine_bleed(core,turbine,eos=eos,chemistry_mode="equilibrium")
