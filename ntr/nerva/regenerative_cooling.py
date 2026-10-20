@@ -46,6 +46,7 @@ class CoolingLeg:
     hydraulic_diameter_m: float | None = None
     roughness_m: float = 0.
     minor_loss_coefficient: float = 0.
+    two_phase_friction_model: str = "reject"
 
     @property
     def geometry_based(self) -> bool:
@@ -61,6 +62,10 @@ class CoolingLeg:
                 raise ValueError(f"invalid cooling leg {name}")
         if self.flow_area_m2<=0:
             raise ValueError("cooling leg flow area must be positive")
+        if self.two_phase_friction_model not in ("reject","homogeneous-mcadams"):
+            raise ValueError("unsupported two-phase friction model")
+        if self.two_phase_friction_model!="reject" and not self.geometry_based:
+            raise ValueError("two-phase model requires geometric hydraulic data")
         if (self.length_m is None) != (self.hydraulic_diameter_m is None):
             raise ValueError("length and hydraulic diameter must both be specified")
         if self.geometry_based:
@@ -127,6 +132,9 @@ class CoolingLegState:
     darcy_pressure_drop_pa: float | None = None
     minor_pressure_drop_pa: float | None = None
     outlet_mach: float | None = None
+    midpoint_quality: float | None = None
+    two_phase_friction_model: str = "reject"
+    midpoint_dynamic_viscosity_pa_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -209,9 +217,11 @@ def _geometry_resistance(
     For parallel channels, area is the total open flow area and D_h
     is the hydraulic diameter of an individual passage.
 
-    The fluid property closure is SINGLE PHASE or SUPERCRITICAL only.
-    Two-phase friction needs a separate validated multiplier/slip
-    model and cannot be inferred from a one-phase Haaland relation.
+    The original single-phase friction law is unchanged by default.
+    Optional homogeneous-mcadams mode assumes equal liquid/vapor velocity
+    (zero interfacial slip) and uses the McAdams inverse-viscosity rule
+    for equilibrium quality at the midpoint. It is a screening model,
+    NOT a validated two-phase wall friction / boiling correlation.
     """
     if not leg.geometry_based:
         raise ValueError("geometry resistance requested on aggregate-K leg")
@@ -219,11 +229,22 @@ def _geometry_resistance(
     h_mid=0.5*(hin+hout)
     quality=eos.hp("Q",h_mid,p_mid)
     if 0. <= quality <= 1.:
-        raise CryogenicCycleError(
-            "two-phase midpoint cannot use single-phase Darcy geometry; "
-            "requires validated two-phase friction model"
-        )
-    viscosity=eos.hp("VISCOSITY",h_mid,p_mid)
+        if leg.two_phase_friction_model=="reject":
+            raise CryogenicCycleError(
+                "two-phase midpoint cannot use single-phase Darcy geometry; "
+                "set homogeneous-mcadams explicitly for screening"
+            )
+        # Homogeneous-equilibrium quality is a MASS fraction, not void
+        # fraction. Mixing saturated phasic viscosities by inverse
+        # mass fraction is McAdams; using a single-phase viscosity here
+        # is not thermodynamically defined.
+        mu_l=eos.get("VISCOSITY","P",p_mid,"Q",0.)
+        mu_v=eos.get("VISCOSITY","P",p_mid,"Q",1.)
+        if min(mu_l,mu_v)<=0:
+            raise CryogenicCycleError("nonpositive saturated phase viscosity")
+        viscosity=1./((1.-quality)/mu_l+quality/mu_v)
+    else:
+        viscosity=eos.hp("VISCOSITY",h_mid,p_mid)
     if viscosity<=0 or not math.isfinite(viscosity):
         raise CryogenicCycleError("nonphysical hydrogen viscosity")
     re=abs(mass_flux)*leg.hydraulic_diameter_m/viscosity
@@ -232,6 +253,33 @@ def _geometry_resistance(
     f=friction_factor(re,leg.roughness_m/leg.hydraulic_diameter_m)
     kd=float(f)*leg.length_m/leg.hydraulic_diameter_m
     return kd+leg.minor_loss_coefficient,kd,re,float(f)
+
+
+
+def _equilibrium_two_phase_sound_speed(
+    eos: HydrogenEOS, pressure_pa: float, static_enthalpy_j_kg: float,
+) -> float:
+    """Estimate a=(dP/dRho)_s^1/2 from the full H2 equilibrium EOS.
+
+    CoolProp's usual single-phase partial derivatives do not define
+    two-phase sound speed. Evaluate density on an isentrope at nearby
+    pressures instead, allowing quality to re-equilibrate. Reject
+    nonpositive or ill-conditioned derivatives rather than assume
+    gas-phase gamma. No validation for relaxation/acoustic dispersion.
+    """
+    s=eos.hp("Smass",static_enthalpy_j_kg,pressure_pa)
+    dp=max(20.,pressure_pa*2.e-4)
+    if dp>=pressure_pa*0.25:
+        raise CryogenicCycleError("cannot perturb subcritical H2 pressure")
+    rho_hi=eos.get("Dmass","P",pressure_pa+dp,"Smass",s)
+    rho_lo=eos.get("Dmass","P",pressure_pa-dp,"Smass",s)
+    derivative=(rho_hi-rho_lo)/(2.*dp)
+    if not math.isfinite(derivative) or derivative<=0:
+        raise CryogenicCycleError("two-phase isentropic sound speed undefined")
+    speed=math.sqrt(1./derivative)
+    if not math.isfinite(speed) or speed<=0:
+        raise CryogenicCycleError("two-phase sound speed nonphysical")
+    return speed
 
 
 def _leg(
@@ -254,7 +302,14 @@ def _leg(
             ktot,kdarcy,reynolds,darcy_f=_geometry_resistance(
                 eos,leg,G,pin,p,hin,hout
             )
-            sound=eos.hp("A",hout,p)
+            if 0. <= qout <= 1.:
+                if leg.two_phase_friction_model=="reject":
+                    raise CryogenicCycleError(
+                        "two-phase outlet needs explicit homogeneous friction model"
+                    )
+                sound=_equilibrium_two_phase_sound_speed(eos,p,hout)
+            else:
+                sound=eos.hp("A",hout,p)
             mach=vout/sound
             if not math.isfinite(mach) or mach>=0.85:
                 raise CryogenicCycleError(
@@ -299,6 +354,17 @@ def _leg(
     residual,out=f(pout)
     (hout,tout,qout,irrev,acc,ktot,reynolds,darcy_f,
      darcy_loss,minor_loss,mach)=out
+    p_mid=0.5*(pin+pout)
+    h_mid=0.5*(hin+hout)
+    x_mid=eos.hp("Q",h_mid,p_mid) if leg.geometry_based else -1.
+    mu_mid=None
+    if leg.geometry_based:
+        if 0.<=x_mid<=1.:
+            mu_l=eos.get("VISCOSITY","P",p_mid,"Q",0.)
+            mu_v=eos.get("VISCOSITY","P",p_mid,"Q",1.)
+            mu_mid=1./((1.-x_mid)/mu_l+x_mid/mu_v)
+        else:
+            mu_mid=eos.hp("VISCOSITY",h_mid,p_mid)
     energy=mdot*((hout+0.5*(G/eos.hp("Dmass",hout,pout))**2)-
                  (hin+0.5*vin**2))-leg.heat_power_w
     if abs(residual)>1e-7*pin:
@@ -322,6 +388,9 @@ def _leg(
         darcy_pressure_drop_pa=darcy_loss,
         minor_pressure_drop_pa=minor_loss,
         outlet_mach=mach,
+        midpoint_quality=x_mid if 0.<=x_mid<=1. else None,
+        two_phase_friction_model=leg.two_phase_friction_model,
+        midpoint_dynamic_viscosity_pa_s=mu_mid,
     )
 
 

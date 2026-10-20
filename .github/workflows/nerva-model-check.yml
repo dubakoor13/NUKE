@@ -111,6 +111,9 @@ jobs:
       - name: Install optional analysis dependencies
         run: python -m pip install CoolProp matplotlib
 
+      - name: Validate subcritical two-phase hydrogen coolant HEM friction physics
+        run: python -m ntr.nerva.validate_two_phase_cooling
+
       - name: Validate geometry-based Darcy cooling path pressure/energy physics
         run: python -m ntr.nerva.validate_geometry_regenerative
 
