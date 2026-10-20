@@ -85,7 +85,7 @@ def main() -> int:
         assert result.iterations==len(calls)
         assert len(set(x.snapshot_sha256 for x in result.diagnostics))==len(calls)
         assert abs(result.result.energy_residual_j)<1e-5
-        assert result.result.state.unresolved_energy_j==26.4
+        assert math.isclose(result.result.state.unresolved_energy_j,26.4, rel_tol=1e-12)
         assert result.temperature_error_k<=0.5
         assert result.profile_error_k<=0.5
         # The FINAL converged solution is one single 0.1 s step from
