@@ -817,6 +817,87 @@ checks independent source heat ledgers, routing fractions, unchanged
 full-cycle solutions for equivalent input powers, failure modes and
 actual NPZ reconstruction shape/energy parsing.
 
+## Solved wall-to-hydrogen heat flux from channel-resolved thermal states
+
+The alternative `--openmc-transfer-mode resolved-implicit` uses NUKE's
+existing channel-by-channel backward-Euler thermal solver, including
+counterflow tie-tube hydrogen streams, instead of prescribing fixed
+fuel/tie solid heat-transfer *fractions*. At each axial cell the coolant
+wall flux is evaluated at the new timestep:
+
+```text
+Q_fuel_wall = UA_fuel * (T_fuel_solid_new - T_fuel_H2_new)
+Q_tie_supply_wall = UA_tie_supply * (T_tie_solid_new - T_supply_H2_new)
+Q_tie_return_wall = UA_tie_return * (T_tie_solid_new - T_return_H2_new)
+
+Q_fuel_deposition = Q_fuel_wall + C_fuel_solid * (Tsolid_new-Tsolid_old)/dt
+Q_tie_deposition = Q_supply_wall + Q_return_wall
+                   + C_tie_solid * (Tsolid_new-Tsolid_old)/dt
+```
+
+The code sends **wall flux**, not the entire nuclear solid deposition,
+to coolant thermal powers. Direct H2 nuclear deposition remains a
+separate gas source. Retained or released solid energy is explicit and
+signed. Unresolved reactor heating remains outside the modeled flows.
+
+This removes prescribed source-transfer fractions but **does not yet
+derive thermal capacitances or conductances from validated NERVA
+dimensions/material properties**: `ResolvedParameters` contains
+user-supplied cell heat capacities and `UA` values. Nor is this a
+fully iterated conjugate engine solution: the resolved thermal step uses
+the reconstructed file's fuel/tie flows, while the downstream steady
+pump/turbine/core/nozzle independently closes new flows. The output
+reports both fuel and tie mass-flow *relative mismatches* and marks the
+whole-engine conjugate solution as **not closed**. A positive outlet
+heat assumption is used; reverse gas-to-wall heat is rejected.
+
+For example, using a `regenerative_cooling` engine JSON configuration
+and a matching OpenMC analysis reconstruction:
+
+```bash
+python -m ntr.nerva.run_turbine_bleed_cycle \
+  --config build/regenerative_cooling_case.json \
+  --openmc-mesh-fields build/nerva_analysis/power/nerva_mesh_fields.npz \
+  --openmc-fuel-reconstruction build/nerva_analysis/element_channels/element_channel_power_reconstruction.npz \
+  --openmc-tie-reconstruction build/nerva_analysis/tie_instances/tie_instance_reconstruction.npz \
+  --openmc-transfer-mode resolved-implicit \
+  --resolved-thermal-parameters build/resolved_parameters.json \
+  --resolved-thermal-state build/resolved_transient/resolved_transient_final_state.npz \
+  --resolved-dt-s 0.1 \
+  --resolved-inlet-temperature-k 300 \
+  --nozzle-wall-heat-w 110000 \
+  --reflector-wall-heat-w 90000 \
+  --output build/nerva_implicit_wall_cycle.json
+```
+
+In this *illustrative* command the `--resolved-thermal-state` file
+supplies the **old** (pre-step) temperature/inventory state and must
+match the full fuel/tie reconstruction topology. The thermal parameter
+JSON contains `ResolvedParameters`' field names, including
+`fuel_solid_capacity_j_k`, `fuel_h2_capacity_j_k`,
+`fuel_ua_w_k`, `tie_solid_capacity_j_k`, both tie-H2 capacities,
+both tie-`UA` values, and optional enthalpy/iteration settings. The
+coolant fluxes are computed for **one new time interval** from that
+old state. Nuclear statepoint provenance must be verified separately.
+
+The original `fractions` option remains the default, and mixing its
+three fractions with `resolved-implicit` is rejected. The
+independent source ledger checks
+
+```text
+Q_reactor_nuclear = Q_direct_H2 + Q_solid_to_H2
+                   + dE_solid/dt + Q_unresolved
+Q_cycle_heating = Q_direct_H2 + Q_solid_to_H2
+                  + Q_external_jacket_and_reflector
+```
+
+The new `python -m ntr.nerva.validate_thermal_cycle_feedback`
+checks the local per-cell energy equations, integrated reactor ledger,
+sensitivity to `UA`, direct-H2 power and unsupported reverse heating.
+`validate_openmc_cycle_coupling` additionally tests the public CLI
+against a synthetic, conservative full-cycle example. Neither is a
+real OpenMC transport run or NASA experimental qualification.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
