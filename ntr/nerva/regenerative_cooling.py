@@ -179,38 +179,26 @@ def _leg(
         acc=G*(vout-vin)
         return p+irrev+acc-pin,(hout,tout,qout,irrev,acc)
 
-    # Pressure residual can lose a subsonic root near choking. Search
-    # physically admissible pressures and bisect a sign-changing root
-    # closest to pin; do not assume arbitrary constant density.
-    rhi,_=f(pin)
-    if rhi<=0:
-        # Heating usually accelerates; cooling would need a pressure
-        # recovery/diffuser not specified in this loss-only section.
-        raise CryogenicCycleError("cooling leg has no positive loss root at inlet pressure")
-    trial_lo=None
-    trial_hi=pin
-    # 1%, 2%, ... 70% reductions to find a bracket.
-    for frac in np.linspace(0.001,0.7,80):
-        trial=pin*(1.-float(frac))
-        try:
-            rlo,_=f(trial)
-        except (CryogenicCycleError,ValueError):
-            continue
-        if rlo<=0:
-            trial_lo=trial
+    # Fixed-point momentum solve with damping. In the subsonic regime,
+    # loss coefficients depend on outlet density, which itself changes
+    # with pressure. Refuse divergence rather than invent a root.
+    p=pin
+    for _ in range(28):
+        residual,out=f(p)
+        _hout,_tout,_qout,irrev,acc=out
+        estimated=pin-irrev-acc
+        if estimated<=0 or estimated>pin:
+            raise CryogenicCycleError(
+                "cooling leg has no admissible positive-pressure loss root"
+            )
+        if abs(residual)<1e-8*max(1.,pin):
             break
-        trial_hi=trial
-    if trial_lo is None:
-        raise CryogenicCycleError("cooling leg cannot support a subsonic positive-pressure root")
-    lo,hi=trial_lo,trial_hi
-    for _ in range(42):
-        mid=(lo+hi)/2
-        value,_=f(mid)
-        if value>0:
-            hi=mid
-        else:
-            lo=mid
-    pout=(lo+hi)/2
+        p=0.5*(p+estimated)
+    else:
+        raise CryogenicCycleError(
+            "cooling leg momentum failed to converge; possible HEM choking"
+        )
+    pout=p
     residual,out=f(pout)
     hout,tout,qout,irrev,acc=out
     energy=mdot*((hout+0.5*(G/eos.hp("Dmass",hout,pout))**2)-
@@ -265,7 +253,7 @@ def solve_cooling_network(
     last=None
     bracket=None
     lo_lim=network.min_branch_fraction
-    for beta in np.linspace(lo_lim,1.-lo_lim,31):
+    for beta in np.linspace(lo_lim,1.-lo_lim,17):
         try:
             residual, legs=trial(float(beta))
         except (CryogenicCycleError,RuntimeError):
@@ -280,7 +268,7 @@ def solve_cooling_network(
             "return pressures for supplied resistances, heat and total flow"
         )
     lo,hi,flow_lo=bracket
-    for _ in range(38):
+    for _ in range(23):
         mid=(lo+hi)/2
         difference,_=trial(mid)
         if (difference>0)==(flow_lo>0):
