@@ -140,8 +140,10 @@ def main() -> int:
                                  gas_temperature_k=300.)
         reverse=advance_resolved(isolated,z,onlygas,300.,1.)
         assert abs(reverse.energy_residual_j)<1e-4
-        assert np.all(reverse.state.tie_solid_t_k==400.)
-        assert reverse.state.tie_return_t_k[0,0]>reverse.state.tie_return_t_k[0,-1]
+        assert np.allclose(reverse.state.tie_solid_t_k,400.,atol=1e-9)
+        # With transient storage in each cell, the directly heated far-end
+        # cell is hottest; the near-end return outlet responds downstream.
+        assert reverse.state.tie_return_t_k[0,-1]>reverse.state.tie_return_t_k[0,0]>300.
         assert reverse.tie_outlet_t_k[0]>300.
         assert np.allclose(reverse.state.tie_supply_t_k,300.,atol=1e-9)
         # Heat solid only: BOTH coolant paths gain heat from the SAME
