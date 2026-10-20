@@ -95,3 +95,37 @@ The comparison does NOT turn our custom NASA-7 solver into official NASA CEA,
 nor does it validate reactor neutronics or historical flight performance.
 For NASA-exact thermo comparison at more demanding tolerances, replace
 the GRI-Mech NASA-7 data by NASA Glenn NASA-9 and extend the species set.
+
+
+## Direct NASA CEA rocket/nozzle solver (new)
+
+The optional \`ntr/nerva/nasa_cea_rocket.py\` calls the **official NASA CEA**
+\`RocketSolver\` with a chamber at prescribed pressure and temperature.
+Unlike \`nasa_hydrogen.py\`, this is not a custom thermochemistry integrator.
+It uses the NASA Glenn CEA database and supports:
+
+- pure H2 feed with H2/H species in chamber and nozzle;
+- IAC equilibrium expansion, and frozen composition from the throat
+  (\`n_frz=2\`, *not* chamber-frozen);
+- fixed Ae/At, CEA choked mass flux and c*, exit state and Mach;
+- explicit SI pressure conversion (CEA API takes bar);
+- vacuum thrust, delivered thrust, mass flow and Isp with separate
+  nozzle-kinetic efficiency and ambient pressure assumptions.
+
+Usage:
+
+\`\`\`shell
+python -m pip install cea==3.3.4 numpy
+python -m ntr.nerva.nasa_cea_rocket --pc-mpa 3.10264 --tc-k 2425 \
+  --at-m2 0.02 --area-ratio 100 --mode equilibrium
+python -m ntr.nerva.validate_nasa_cea_rocket
+\`\`\`
+
+\`validate_nasa_cea_rocket\` compares public NERVA design reference conditions
+with the independent CEA solver and NUKE's reduced NASA-7 approximation.
+**Throat area 0.02 m² is an arbitrary comparison input**, not an extracted
+historical part dimension. Neither a match to thrust nor a complete NASA
+NERVA reproduction is claimed from these idealized tests.
+
+This is still IAC/1-D and does not replace NESS 2.0, feed machinery, radiator,
+reactor neutronics, or experimentally constrained transport/heat transfer.

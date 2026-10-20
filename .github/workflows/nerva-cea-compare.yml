@@ -4,6 +4,8 @@ on:
     paths:
       - 'ntr/nerva/nasa_hydrogen.py'
       - 'ntr/nerva/compare_nasa_cea.py'
+      - 'ntr/nerva/nasa_cea_rocket.py'
+      - 'ntr/nerva/validate_nasa_cea_rocket.py'
       - '.github/workflows/nerva-cea-compare.yml'
   push:
     branches: [main]
@@ -30,7 +32,11 @@ jobs:
             --pc-mpa 3.10264 \
             --temperatures-k 2350 2500 2700 2900 \
             --output build/nerva_nasa_cea_comparison.json
+      - name: Validate NASA CEA IAC rocket nozzle and custom NASA-7 cross-check
+        run: python -m ntr.nerva.validate_nasa_cea_rocket
       - uses: actions/upload-artifact@v4
         with:
           name: nerva-nasa-cea-comparison
-          path: build/nerva_nasa_cea_comparison.json
+          path: |
+            build/nerva_nasa_cea_comparison.json
+            build/nerva/cea_rocket_reference_comparison.json
