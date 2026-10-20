@@ -256,7 +256,7 @@ def solve_cooling_network(
     last=None
     bracket=None
     lo_lim=network.min_branch_fraction
-    for beta in np.linspace(lo_lim,1.-lo_lim,17):
+    for beta in np.linspace(lo_lim,1.-lo_lim,9):
         try:
             residual, legs=trial(float(beta))
         except (CryogenicCycleError,RuntimeError):
@@ -271,9 +271,12 @@ def solve_cooling_network(
             "return pressures for supplied resistances, heat and total flow"
         )
     lo,hi,flow_lo=bracket
-    for _ in range(23):
+    for _ in range(22):
         mid=(lo+hi)/2
         difference,_=trial(mid)
+        if abs(difference)<1e-7*pin:
+            lo=hi=mid
+            break
         if (difference>0)==(flow_lo>0):
             lo,flow_lo=mid,difference
         else:
