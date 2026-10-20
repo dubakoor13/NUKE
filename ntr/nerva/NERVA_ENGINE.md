@@ -1102,6 +1102,97 @@ direct-H2 heat response, local and global conservation, EOS
 bounds, and end-to-end CLI file outputs. Synthetic source files
 are clearly labeled and **no actual OpenMC transport is run**.
 
+## Coupled cryogenic tie energy + regenerative branch hydraulics
+
+`cryogenic_tie_hydraulic_coupling.py` extends the phase-aware CoolProp
+tie solver with a **two-way source/flow/representative-pressure fixed
+point** to the existing parallel nozzle/reflector and tie-supply/return
+hydraulic network. `run_cryogenic_tie_hydraulic_coupling.py` evaluates
+the inlet cryogenic pressure/enthalpy from the **same pump head curve,
+feed loss and isentropic efficiency** used by the standalone LH2 cycle,
+then holds total pumped mass flow fixed and iterates the tie-branch flow.
+
+At every Picard trial, the existing real-fluid tie solver advances
+**one timestep from the SAME original state**; this is not accidentally
+multiple successive transient timesteps. The source accounting is:
+
+```text
+Q_wall_to_H2,supply  = sum(UA_s * (T_solid_new - T_supply_new))
+Q_wall_to_H2,return  = sum(UA_r * (T_solid_new - T_return_new))
+
+Q_effective_hydraulic_supply =
+    Q_wall_to_H2,supply + Q_direct_H2,supply
+    - dE_supply_hydrogen/dt
+Q_effective_hydraulic_return =
+    Q_wall_to_H2,return + Q_direct_H2,return
+    - dE_return_hydrogen/dt
+
+Q_tie_nuclear = Q_effective_hydraulic_supply
+              + Q_effective_hydraulic_return
+              + dE_H2_tie/dt + dE_solid_tie/dt
+```
+
+The hydrogen-storage subtraction is crucial. The old steady
+regenerative-network leg assumes that **heat equals advective
+enthalpy rise**. In a transient control volume, the same relation
+is incorrect unless the hydrogen inventory energy is stationary.
+Using the effective advected power prevents nuclear energy being
+counted as both stored in LH2 and already delivered to the mixed
+header. The iteration rejects negative effective heating, a
+configuration that the existing positive-only hydraulic legs cannot
+represent. It checks the branch-split pressure residual, per-cell
+thermal first-law residual, tie-specific nuclear power ledger,
+transient return-outlet versus hydraulic leg outlet enthalpy, and
+mass-flow, representative pressure and source-change convergence.
+
+To run the available **synthetic conservation example** with an
+existing engine JSON containing `lh2_cycle` and
+`regenerative_cooling` plus normalized OpenMC-format reconstructions:
+
+```bash
+python -m ntr.nerva.run_cryogenic_tie_hydraulic_coupling \
+  build/nerva_analysis/power/nerva_mesh_fields.npz \
+  build/nerva_analysis/element_channels/element_channel_power_reconstruction.npz \
+  build/nerva_analysis/tie_instances/tie_instance_reconstruction.npz \
+  --cycle-config build/regenerative_cooling_case.json \
+  --total-mass-flow-kg-s 0.051885 \
+  --initial-fluid-temperature-k 24 \
+  --initial-solid-temperature-k 150 \
+  --solid-capacity-j-k 3000 \
+  --supply-inventory-kg 0.0004 \
+  --return-inventory-kg 0.0004 \
+  --supply-ua-w-k 0.8 \
+  --return-ua-w-k 0.8 \
+  --nozzle-wall-heat-w 110000 \
+  --reflector-wall-heat-w 90000 \
+  --dt-s 0.1 \
+  --output build/nerva_cryogenic_tie_hydraulic
+```
+
+Numbers and paths are **illustrative**, not historical NERVA
+measurements. Their feasibility depends on the actual mass
+distribution and heat loads; the code is designed to reject
+incompatible inputs rather than manufacture an operating point.
+Outputs include iteration history, final H2 temperature/quality/
+density/enthalpy arrays, mapped effective tie leg heating and
+energy/momentum residuals.
+
+**Major remaining limits:** The hydraulic solver gives a two-leg
+pressure drop and branch split, but only a **representative uniform
+pressure** is fed to the thermal cells; a spatial pressure gradient
+is not solved. The thermal solver still assumes fixed inventory
+per cell despite changes in CoolProp density and does not enforce
+rigid-volume mass continuity. It has no slip/CHF/boiling heat
+transfer correlation. The total pump mass flow is **prescribed**
+here; full turbine/shaft/nozzle system operating-point convergence
+remains separate. The static H2 enthalpy and network total enthalpy
+are matched at the inlet; fluid kinetic-energy storage is neglected
+in the transient model. This is NOT an OpenMC run, a phase-resolved
+hydraulic certification, or NASA NERVA hardware validation.
+
+Test using:
+`python -m ntr.nerva.validate_cryogenic_tie_hydraulic_coupling`
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit

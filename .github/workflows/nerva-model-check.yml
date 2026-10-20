@@ -123,6 +123,9 @@ jobs:
       - name: Validate real-fluid cryogenic H2 tie tube boiling/counterflow energy conservation
         run: python -m ntr.nerva.validate_cryogenic_tie_enthalpy
 
+      - name: Validate real-fluid tie heating and regenerative branch hydraulic fixed point
+        run: python -m ntr.nerva.validate_cryogenic_tie_hydraulic_coupling
+
       - name: Validate implicit fuel/tie wall heat flux and solid inventory power ledger
         run: python -m ntr.nerva.validate_thermal_cycle_feedback
 
