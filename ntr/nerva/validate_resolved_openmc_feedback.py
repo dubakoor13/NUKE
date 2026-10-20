@@ -22,6 +22,7 @@ from .resolved_transient import (
     initial_resolved_state, advance_resolved
 )
 from .validate_resolved_transient import write_synthetic_reconstructions
+from .implicit_hydrogen import hydrogen_specific_enthalpy
 
 
 def expect(error, callable_):
@@ -166,30 +167,50 @@ def main() -> int:
             state,params,300.,-1,mock,
             allow_synthetic_test_provider=True
         ))
-        # Test the actual equilibrium H2 mass-weighting rule:
-        fstate=replace(state,
-            tie_supply_t_k=np.full_like(state.tie_supply_t_k,350),
-            tie_return_t_k=np.full_like(state.tie_return_t_k,400))
-        f2,g2=reduce_openmc_material_state(fstate,params)
-        expected=(
-            500*params.fuel_h2_capacity_j_k*state.fuel_h2_t_k.size
-            + 350*params.tie_supply_h2_capacity_j_k*state.tie_supply_t_k.size
-            + 400*params.tie_return_h2_capacity_j_k*state.tie_return_t_k.size
-        )/(
-            params.fuel_h2_capacity_j_k*state.fuel_h2_t_k.size
-            +params.tie_supply_h2_capacity_j_k*state.tie_supply_t_k.size
-            +params.tie_return_h2_capacity_j_k*state.tie_return_t_k.size
+        # Project a spatially nonuniform resolved hydrogen inventory.
+        # NASA-7 is a FROZEN pure-H2 thermodynamic model here, not
+        # chemical equilibrium: the projected uniform temperature
+        # must preserve mass-weighted specific enthalpy, NOT mean T.
+        varying = replace(
+            state,
+            fuel_h2_t_k=np.full_like(state.fuel_h2_t_k, 250.),
+            tie_supply_t_k=np.full_like(state.tie_supply_t_k, 1100.),
+            tie_return_t_k=np.full_like(state.tie_return_t_k, 2500.),
         )
-        # Fuel gas stays at 300 K; use corrected reference in expected.
-        correct=expected-(
-            200*params.fuel_h2_capacity_j_k*state.fuel_h2_t_k.size
-        )/(
-            params.fuel_h2_capacity_j_k*state.fuel_h2_t_k.size
-            +params.tie_supply_h2_capacity_j_k*state.tie_supply_t_k.size
-            +params.tie_return_h2_capacity_j_k*state.tie_return_t_k.size
+        f2, g2 = reduce_openmc_material_state(varying, params)
+        h = lambda t: hydrogen_specific_enthalpy(
+            t, params.hydrogen_cp_reference_j_kg_k, "nasa7-h2"
         )
-        assert math.isclose(f2,500)
-        assert math.isclose(g2,correct,rel_tol=1e-12)
+        wc = params.fuel_h2_capacity_j_k * varying.fuel_h2_t_k.size
+        ws = params.tie_supply_h2_capacity_j_k * varying.tie_supply_t_k.size
+        wr = params.tie_return_h2_capacity_j_k * varying.tie_return_t_k.size
+        total_weight = wc + ws + wr
+        expected_h = (wc*h(250.) + ws*h(1100.) + wr*h(2500.))/total_weight
+        arithmetic_t = (wc*250. + ws*1100. + wr*2500.)/total_weight
+        assert math.isclose(f2, 500.)
+        assert 250. < g2 < 2500.
+        assert math.isclose(h(g2), expected_h, rel_tol=1e-12, abs_tol=1e-6)
+        # A constant-cp run must reproduce the historical arithmetic
+        # mean; it is wrong for a highly nonuniform NASA-7 case.
+        constant_params = replace(params, enthalpy_model="constant")
+        _, g_constant = reduce_openmc_material_state(varying, constant_params)
+        assert math.isclose(g_constant, arithmetic_t, rel_tol=1e-12)
+        assert abs(h(g_constant)-expected_h) > 1e-4*abs(expected_h)
+
+        # Uniform states must remain invariant under enthalpy reduction.
+        uniform = replace(
+            state,
+            fuel_h2_t_k=np.full_like(state.fuel_h2_t_k, 850.),
+            tie_supply_t_k=np.full_like(state.tie_supply_t_k, 850.),
+            tie_return_t_k=np.full_like(state.tie_return_t_k, 850.),
+        )
+        _, uniform_t = reduce_openmc_material_state(uniform, params)
+        assert math.isclose(uniform_t, 850., rel_tol=1e-12)
+        # The NASA-7 gas state must be bounded even if called directly
+        # before the transient integration's own thermo-domain checks.
+        bad = replace(varying, tie_return_t_k=np.full_like(
+            varying.tie_return_t_k, 3500.01))
+        expect(ValueError, lambda: reduce_openmc_material_state(bad, params))
     print("Resolved OpenMC multi-iteration feedback and QA gates: PASS")
     return 0
 
