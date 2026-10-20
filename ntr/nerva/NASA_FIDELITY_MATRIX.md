@@ -71,3 +71,27 @@ report the resulting thrust as an independent historical validation.
 No output from this module should be labelled a NASA-exact flight-engine
 prediction. Published NESS, CEA, MSFC thermo-fluids analyses, and individual
 historic NERVA records form distinct verification levels.
+
+## Independent NASA CEA thermodynamics regression
+
+The optional module ntr/nerva/compare_nasa_cea.py uses NASA's maintained
+CEA package (https://github.com/nasa/cea) and the NASA Glenn thermo database
+to independently compare hot-hydrogen properties against the in-house
+two-species NASA-7 model.
+
+Run on Python >= 3.11:
+
+    python -m pip install cea numpy
+    python -m ntr.nerva.compare_nasa_cea \
+        --output build/nerva_nasa_cea_comparison.json
+
+The official NASA CEA Python EqSolver TP interface is used with pressure
+in **bar** and temperature in **K**. The restricted species set is H2 and H;
+this is essential for a like-for-like comparison with the reduced solver.
+Exported diagnostics contain equilibrium dissociation fraction, density,
+and frozen heat capacity, together with relative errors.
+
+The comparison does NOT turn our custom NASA-7 solver into official NASA CEA,
+nor does it validate reactor neutronics or historical flight performance.
+For NASA-exact thermo comparison at more demanding tolerances, replace
+the GRI-Mech NASA-7 data by NASA Glenn NASA-9 and extend the species set.

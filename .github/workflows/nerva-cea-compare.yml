@@ -1,0 +1,36 @@
+name: NERVA independent NASA CEA comparison
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/nasa_hydrogen.py'
+      - 'ntr/nerva/compare_nasa_cea.py'
+      - '.github/workflows/nerva-cea-compare.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'ntr/nerva/nasa_hydrogen.py'
+      - 'ntr/nerva/compare_nasa_cea.py'
+      - '.github/workflows/nerva-cea-compare.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  independent-thermodynamics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install official NASA CEA Python package
+        run: python -m pip install numpy cea
+      - name: Compare hydrogen thermodynamic properties to NASA CEA
+        run: |
+          python -m ntr.nerva.compare_nasa_cea \
+            --pc-mpa 3.10264 \
+            --temperatures-k 2350 2500 2700 2900 \
+            --output build/nerva_nasa_cea_comparison.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nerva-nasa-cea-comparison
+          path: build/nerva_nasa_cea_comparison.json
