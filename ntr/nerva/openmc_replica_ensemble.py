@@ -112,7 +112,8 @@ def assess_replica_ensemble(
             seeds.add(rep.openmc_seed)
             if rep.nuclear_data_sha256 != first.nuclear_data_sha256:
                 raise ValueError("nuclear data changed between replicas")
-            _check_transport_identity(provenance[0],provenance[i])
+            if i > 0:
+                _check_transport_identity(provenance[0],provenance[i])
         v=rep.power_density_w_cm3*rep.voxel_volume_cm3/rep.reactor_power_w
         if not np.isclose(v.sum(),1.0,rtol=1e-7,atol=1e-9):
             raise ValueError("normalized heating fractions do not sum to unity")
