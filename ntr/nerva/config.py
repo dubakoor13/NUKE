@@ -41,6 +41,7 @@ class NervaConfig:
     fuel_matrix_density_g_cm3: float = 1.85
     hydrogen_density_g_cm3: float = 0.0030
     hydrogen_temperature_k: float = 600.0
+    fuel_temperature_k: float | None = None  # None retains legacy default OpenMC behavior
     reflector_density_g_cm3: float = 1.85
     zrc_density_g_cm3: float = 6.5
     graphite_density_g_cm3: float = 1.70
@@ -158,6 +159,14 @@ class NervaConfig:
         return self.reflector_outer_radius_cm + self.pressure_vessel_thickness_cm
 
     def validate(self) -> None:
+        if self.fuel_temperature_k is not None and (
+            not math.isfinite(self.fuel_temperature_k) or self.fuel_temperature_k <= 0
+        ):
+            raise ValueError("fuel temperature must be positive and finite")
+        if not math.isfinite(self.hydrogen_temperature_k) or self.hydrogen_temperature_k <= 0:
+            raise ValueError("hydrogen temperature must be positive and finite")
+        if not math.isfinite(self.hydrogen_density_g_cm3) or self.hydrogen_density_g_cm3 <= 0:
+            raise ValueError("hydrogen density must be positive and finite")
         if self.core_rings < 1:
             raise ValueError("core_rings must be >= 1")
         if self.active_length_cm <= 0.0:
