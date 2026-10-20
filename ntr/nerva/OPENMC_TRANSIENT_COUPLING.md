@@ -247,3 +247,92 @@ Outputs: \`resolved_transient_summary.json\`,
 \`resolved_transient_history.csv\`,
 \`resolved_transient_final_state.npz\`. Synthetic output is explicitly
 labeled unverified and cannot substitute for OpenMC validation.
+
+
+## Channel-resolved quasi-static OpenMC re-transport feedback (new)
+
+The \`resolved_openmc_feedback.py\` time integrator joins the previously
+separate capabilities:
+
+1. **New OpenMC transport snapshot for each feedback iterate**, with
+   uniform fuel and H2 temperature and a *fixed-pressure ideal-gas*
+   hydrogen density proxy. Fuel elemental composition/geometry remain
+   unchanged.
+2. \`run_analysis --no-plots\` on that exact statepoint, with the
+   repository's existing \`heating-local\` normalization, repeated-cell
+   element/channel heating reconstruction and per-tie counterflow
+   heating reconstruction.
+3. Re-check all material power partitions against the normalized mesh,
+   preserve direct hydrogen nuclear heating distinct from solid heat,
+   and retain nonmodeled deposition in an energy reservoir.
+4. Advance individually resolved 19-channel fuel elements and both
+   opposite-flow tie passages with implicit pure-H2 enthalpy conservation.
+5. Repeat **from the same pre-timestep thermal state** until both the
+   uniform OpenMC material-state reduction and all resolved solid/gas
+   temperature profiles satisfy the user-specified Picard tolerance.
+6. Refuse stale statepoints, changing flow/topology, changed nuclear-data
+   library hashes, missing QA, excess unmodeled power and nonconvergence.
+
+**This implementation is a real runnable orchestration path**, but was
+validated in CI using synthetic providers; the pipeline has not yet been
+executed with an installed OpenMC transport binary, compatible HDF5
+neutron data and historical NERVA test datasets in CI.
+
+### Run a real-data feedback study
+
+\`\`\`bash
+python -m ntr.nerva.run_resolved_openmc_feedback \
+  --cross-sections /PATH/TO/cross_sections.xml \
+  --power-mw 1 --steps 2 --dt-s 0.1 \
+  --assembly reactor --rings 5 --particles 4000 \
+  --batches 80 --inactive 20 \
+  --inlet-pressure-mpa 5 \
+  --initial-fuel-solid-k 650 --initial-hydrogen-k 500 \
+  --inlet-temperature-k 500 \
+  --fuel-mass-flow-kg-s 2 --tie-mass-flow-kg-s 0.4 \
+  --fuel-solid-capacity-j-k 5000 \
+  --fuel-h2-capacity-j-k 500 --fuel-ua-w-k 100 \
+  --tie-solid-capacity-j-k 3000 \
+  --tie-supply-h2-capacity-j-k 600 \
+  --tie-return-h2-capacity-j-k 700 \
+  --tie-supply-ua-w-k 80 --tie-return-ua-w-k 90 \
+  --feedback-max-iterations 5 --feedback-tol-k 0.5
+\`\`\`
+
+**All thermal capacities, UA and flow values in this example are
+illustrative assumptions, not recovered NASA NERVA parameters.** The
+\`--power-mw\` is EXTERNALLY IMPOSED, not a computed neutronic power
+transient. Real OpenMC execution requires matching temperature-dependent
+nuclear data with valid material temperatures and adequate statistical
+uncertainty; the driver aborts on XS coverage/transport/QA failure.
+
+Each snapshot is saved alongside the NERVA OpenMC transport provenance
+(including statepoint SHA-256 and neutron-data SHA-256), the analyzed mesh
+power fields, and individual channel/tie reconstructed powers. Final
+summary and checkpoint artifacts are placed under the output root.
+
+### Remaining physics and validation gaps
+
+- Spatial OpenMC material state is still **uniform per material** (one
+  fuel-solid and one coolant H2 temperature plus uniform hydrogen density);
+  it is NOT an element-/channel-/axial-material-instance update.
+- OpenMC eigenvalue transport produces a power **shape** at the imposed
+  reactor power. It does not supply point kinetics, delayed-neutron
+  response, reactor control or a transient reactor power solution.
+- Turbopump and pressure-network dynamics, mass inventory, thermal
+  expansion, variable UA and solid thermophysical parameters remain
+  prescribed or absent.
+- Monte Carlo statistical noise can prevent Picard convergence: the
+  driver fails instead of silently accepting a thermal step.
+- Physical benchmark to RN-S-0114, XE-Prime, NESS and NERVA source
+  measurements requires source data, real runs and uncertainty evaluation.
+
+CI numerical validation:
+
+\`\`\`bash
+python -m ntr.nerva.validate_resolved_openmc_feedback
+python -m ntr.nerva.run_resolved_openmc_feedback --help
+\`\`\`
+
+The test callback is explicitly marked \`synthetic-test\`, never a
+transport-equivalent demonstration.

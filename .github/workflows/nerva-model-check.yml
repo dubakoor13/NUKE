@@ -43,6 +43,12 @@ jobs:
       - name: Check statepoint postprocessor CLI
         run: python -m ntr.nerva.postprocess_statepoint --help
 
+      - name: Validate resolved OpenMC transport feedback Picard and QA gates
+        run: python -m ntr.nerva.validate_resolved_openmc_feedback
+
+      - name: Check resolved OpenMC feedback orchestrator CLI
+        run: python -m ntr.nerva.run_resolved_openmc_feedback --help
+
       - name: Validate channel-resolved fuel and tie-counterflow transients
         run: python -m ntr.nerva.validate_resolved_transient
 
