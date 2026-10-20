@@ -541,3 +541,76 @@ qualification requires repeated runs, particles/batches refinement,
 source convergence diagnostics, subchannel hydraulic model sensitivity,
 real cross-sections, and historical data comparison. There is no
 neutronic power/kinetics coupling in this test.
+
+
+## Four-plus independent OpenMC heating-replica convergence
+
+A new \`openmc_replica_ensemble.py\` analyzer and CLI
+\`run_openmc_replica_ensemble.py\` extend the two-seed comparison to
+**four or more separately seeded normalized OpenMC statepoints**.
+
+Given a common external thermal power, mesh and transport model, the
+analyzer uses each voxel's fraction of total deposited reactor power.
+Across \`n\` independent seeded runs, it calculates the unbiased sample
+standard deviation (divisor \`n-1\`) and standard error (divisor
+\`sqrt(n)\`) of each voxel power fraction. It reports:
+
+- the 95th percentile of \`SEM / mean\` among active voxels;
+- the maximum sample-SEM of the axially integrated power *fraction*;
+- total-variation distance between the average heating fields of the
+  first and second groups (input ordering MATTERS);
+- mean/max all-pair power-shape total variation and the largest
+  leave-one-out difference;
+- mean, sample standard deviation and SEM power-fraction arrays,
+  exported to \`ensemble_heating_statistics.npz\`.
+
+The CLI refuses fewer than four runs, different meshes/power,
+mismatched nuclear data, repeated OpenMC random seeds/statepoints,
+changed transport input parameters and mixed synthetic/real sources.
+Threshold failures are explicitly reported as \`FAIL\` and exit
+nonzero. Defaults of 10% p95 relative SEM, 1% maximum axial SEM and
+5% half-split total variation are **software QA starting points,
+NOT published NASA NERVA limits**. Statistical power and multiple-run
+power refinement should drive final thresholds.
+
+Run separately seeded OpenMC transport/analysis four or more times,
+then compare the existing normalized power directories:
+
+\`\`\`bash
+python -m ntr.nerva.run_openmc_replica_ensemble \
+  --power-dirs run1/analysis/power run2/analysis/power \
+               run3/analysis/power run4/analysis/power \
+  --provenance-files \
+               run1/transport/transport_provenance.json \
+               run2/transport/transport_provenance.json \
+               run3/transport/transport_provenance.json \
+               run4/transport/transport_provenance.json \
+  --max-p95-relative-sem 0.10 \
+  --max-axial-fraction-sem 0.01 \
+  --max-half-split-total-variation 0.05 \
+  --output build/nerva_openmc_replica_ensemble
+\`\`\`
+
+This command **analyzes** completed real statepoints; it does not
+invoke an OpenMC executable or infer transient reactor power.
+A compatible cross-section library and installed OpenMC transport
+engine remain prerequisites for producing those statepoints.
+
+The numerical-only CI test is:
+
+\`\`\`bash
+python -m ntr.nerva.validate_openmc_replica_ensemble
+\`\`\`
+
+It fabricates four nearby spatial-power maps to test exact sample
+standard-error and split-sample calculations, rejects duplicate or
+mismatched provenance, and checks the JSON and NPZ products. No
+reactor physics is solved in this synthetic regression.
+
+**Statistical limitation:** the usual \`sd/sqrt(n)\` estimate requires
+approximately independent realizations of the same stationary
+distribution. Different OpenMC seeds alone do NOT guarantee fission
+source convergence or absence of source bias. The ensemble SEM
+also does not include systematic cross-section uncertainties,
+spatial-model error, normalization covariance, or historical
+NERVA qualification. Additional benchmark experiments remain pending.
