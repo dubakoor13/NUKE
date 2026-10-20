@@ -322,6 +322,41 @@ def main() -> int:
         assert report["tie_mass_flow_relative_mismatch"]>=0.
         assert abs(derived["point"]["total_cycle_energy_residual_w"])<1e-3
 
+        # Distinct tie-supply gas inlet must appear in reported thermal
+        # boundary metadata and preserve the full engine first-law closure.
+        distinct_output=root/"distinct_inlet.json"
+        previous=sys.argv
+        try:
+            sys.argv=implicit_args[:-2]+[
+                "--resolved-tie-inlet-temperature-k","301",
+                "--output",str(distinct_output),
+            ]
+            assert run_cycle_cli()==0
+        finally:
+            sys.argv=previous
+        distinct=json.loads(distinct_output.read_text(encoding="utf-8"))
+        boundary=distinct["power_bridge"]["resolved_transient"]
+        assert boundary["tie_supply_gas_inlet_temperature_k"]==301.
+        assert boundary["thermal_inlet_temperature_k"]==300.
+        assert boundary["fuel_and_tie_have_single_shared_inlet_temperature"] is False
+        assert boundary["tie_supply_cryogenic_phase_model_present"] is False
+        assert boundary["fuel_header_temperature_feedback_enabled"] is False
+        assert abs(distinct["point"]["total_cycle_energy_residual_w"])<1e-3
+
+        # Warm-header feedback requires the outer flow fixed point, which
+        # must have its own independent tie inlet; no fake convergence.
+        previous=sys.argv
+        try:
+            sys.argv=implicit_args[:-2]+[
+                "--couple-fuel-header-temperature",
+                "--resolved-tie-inlet-temperature-k","330",
+                "--output",str(root/"invalid_no_outer.json"),
+            ]
+            rejects(lambda:run_cycle_cli())
+        finally:
+            sys.argv=previous
+        assert not (root/"invalid_no_outer.json").exists()
+
         # The real shaft-cycle CLI must never falsely declare an outer
         # fixed point on one iteration: enforce strict two-iteration
         # nonconvergence, or reject an infeasible hot-core solution.
