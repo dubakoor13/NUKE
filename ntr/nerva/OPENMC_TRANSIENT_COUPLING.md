@@ -439,3 +439,105 @@ temperature validation, coupled temperature-feedback convergence
 test, or historical NERVA engine accuracy claim. The real OpenMC feedback
 driver remains a distinct tool, and coupling its temperature feedback
 to the timestep-refinement audit is further work.
+
+
+## Independent OpenMC spatial-heating replica convergence
+
+The new two-run comparison verifies that apparent temperature-feedback
+convergence is not merely *sampling noise* in OpenMC tallies. The
+\`run_openmc_transport\` command now accepts an explicit \`--seed\` and
+records it in transport provenance. Two real runs should use different
+seeds and otherwise IDENTICAL neutron transport configuration,
+geometry, materials, tallies and cross-section XML checksum.
+
+At the SAME imposed reactor thermal power, \`openmc_replica_convergence.py\`
+and \`run_openmc_replica_convergence.py\` compare:
+
+1. Total variation of normalized three-dimensional energy deposition
+   (half the integrated absolute difference in per-voxel power fractions).
+2. The largest difference between the two normalized AXIAL power
+   distributions, calculated by summing over x and y.
+3. The fraction of active bins with a heating difference above three
+   nominal combined standard errors. Reported \`std_dev\` is the
+   **raw Monte Carlo tally diagnostic after power normalization**:
+   dividing through the same noisy total-power estimate introduces
+   correlations, so treating these z-scores as independent significance
+   tests or confidence intervals would be INCORRECT.
+4. Optionally compare the complete fuel-solid/H2 and tie-solid/H2
+   temperature fields after applying each heating realization to
+   an IDENTICAL, user-specified channel-resolved transient thermal
+   problem. This isolates the thermal consequence of the two
+   spatial heating shapes.
+
+The result is marked PASS only when all configured heating and,
+if supplied, thermal tolerances are satisfied. A missing uncertainty
+array, changed mesh, inconsistent power, reused statepoint, reused
+random seed, changed transport settings, changed nuclear XS data,
+or a missing provenance file causes a HARD ERROR.
+
+### Prepare two independently seeded transport runs
+
+\`\`\`shell
+python -m ntr.nerva.run_openmc_transport \
+  --cross-sections /PATH/cross_sections.xml \
+  --seed 1729 --assembly reactor --rings 5 \
+  --particles 4000 --batches 80 --inactive 20 \
+  --output build/nerva_replica_a/transport
+
+python -m ntr.nerva.run_openmc_transport \
+  --cross-sections /PATH/cross_sections.xml \
+  --seed 2027 --assembly reactor --rings 5 \
+  --particles 4000 --batches 80 --inactive 20 \
+  --output build/nerva_replica_b/transport
+\`\`\`
+
+After both complete, process the individual statepoints using the
+existing \`postprocess_statepoint\` on each file at the **same MW**
+(e.g. replace STATEPOINT_A and STATEPOINT_B below with the actual
+statepoint paths recorded in each transport provenance):
+
+\`\`\`shell
+python -m ntr.nerva.postprocess_statepoint STATEPOINT_A \
+  --power-mw 1 --output build/nerva_replica_a/power
+
+python -m ntr.nerva.postprocess_statepoint STATEPOINT_B \
+  --power-mw 1 --output build/nerva_replica_b/power
+
+python -m ntr.nerva.run_openmc_replica_convergence \
+  --power-a build/nerva_replica_a/power \
+  --power-b build/nerva_replica_b/power \
+  --provenance-a build/nerva_replica_a/transport/transport_provenance.json \
+  --provenance-b build/nerva_replica_b/transport/transport_provenance.json \
+  --maximum-total-variation 0.05 \
+  --maximum-axial-difference 0.05 \
+  --maximum-significant-voxel-fraction 0.10 \
+  --output build/nerva_replica_convergence.json
+\`\`\`
+
+The 0.05 / 0.05 / 0.10 limits shown above are **example
+engineering acceptance criteria**, NOT NASA NERVA validated tolerances.
+
+For optional channel-resolved thermal impact, also independently run
+NUKE's standard \`run_analysis\` pipeline on each statepoint to obtain
+the fuel-element and tie-instance reconstruction NPZs. Provide them as
+\`--fuel-a\`, \`--tie-a\`, \`--fuel-b\`, \`--tie-b\` and supply a
+\`--thermal-case\` JSON with the \`ResolvedParameters\` fields and
+\`steps\`, \`dt_s\`, \`initial_solid_k\`, \`initial_gas_k\`,
+\`inlet_temperature_k\`, and \`max_temperature_difference_k\`.
+The thermal case is intentionally **externally prescribed** and is
+not fitted to any historical NERVA data.
+
+Regression test without neutron transport:
+
+\`\`\`shell
+python -m ntr.nerva.validate_openmc_replica_convergence
+\`\`\`
+
+Limitations: different seeds do not guarantee statistical independence
+of the stationary fission source, and the coefficient of variation of
+a normalized tally lacks full covariance. Two runs also do not establish
+a rigorous reactor heating confidence interval. Actual engineering
+qualification requires repeated runs, particles/batches refinement,
+source convergence diagnostics, subchannel hydraulic model sensitivity,
+real cross-sections, and historical data comparison. There is no
+neutronic power/kinetics coupling in this test.

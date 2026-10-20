@@ -52,6 +52,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batches", type=int, default=80)
     parser.add_argument("--inactive", type=int, default=20)
     parser.add_argument("--drum-angle", type=float, default=0.0)
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Explicit independent OpenMC random seed for statistical replicas.")
     parser.add_argument("--fuel-temperature-k", type=float,
                         help="Uniform OpenMC fuel surrogate temperature for snapshot feedback.")
     parser.add_argument("--hydrogen-temperature-k", type=float,
@@ -198,7 +200,11 @@ def main() -> int:
     ]:
         raise RuntimeError("OpenMC temperature feedback outside available neutron XS temperature range")
 
+    if args.seed is not None and not 1 <= args.seed < 2**63:
+        raise ValueError("OpenMC seed must be a positive 63-bit integer")
     model = build_model(config, assembly=args.assembly)
+    if args.seed is not None:
+        model.settings.seed = args.seed
     model.export_to_xml(directory=args.output)
 
     provenance = {
@@ -213,6 +219,7 @@ def main() -> int:
         "config": {
             "core_rings": config.core_rings,
             "particles": config.particles,
+            "seed": args.seed,
             "batches": config.batches,
             "inactive": config.inactive,
             "control_drum_angle_deg": config.control_drum_angle_deg,
