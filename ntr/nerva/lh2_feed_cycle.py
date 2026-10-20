@@ -342,7 +342,7 @@ def evaluate_lh2_cycle(
         ambient_pressure_pa=config.ambient_pressure_pa,
         nozzle_efficiency=config.nozzle_efficiency,gas=gas
     )
-    h4=eos.hp("Hmass",h0,pc)
+    h4=h0  # chamber stagnation enthalpy conserved through diffuser
     energy=mdot*(h4-h1)-(shaft+config.preheater_thermal_power_w+q_core)
     p_error=(p1+head)-(feed_loss+friction+acceleration+
                         config.chamber_loss_quadratic_pa_s2_kg2*mdot**2+pc)
