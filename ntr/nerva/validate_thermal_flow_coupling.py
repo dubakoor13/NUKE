@@ -151,6 +151,86 @@ def main() -> int:
             rel_tol=1e-12,
         )
 
+        # Distinct gas inlet temperatures with CLOSED warm-header
+        # feedback: fuel inlet now approaches engine warm header (350 K),
+        # while the tie supply remains independently at 330 K.
+        def header_engine(mapped_core,bleed,*,cooling_network,chemistry_mode):
+            x=synthetic_engine(
+                mapped_core,bleed,cooling_network=cooling_network,
+                chemistry_mode=chemistry_mode,
+            )
+            return SimpleNamespace(
+                core_mass_flow_kg_s=x.core_mass_flow_kg_s,
+                regenerative_cooling=x.regenerative_cooling,
+                warm_header_temperature_k=350.,
+                total_cycle_energy_residual_w=0.,
+            )
+        header_result=couple_resolved_thermal_flows(
+            heating,old,params,core,cooling,turbine,300.,0.1,
+            nozzle_wall_heat_w=110000.,reflector_wall_heat_w=90000.,
+            max_iterations=24,relative_flow_tolerance=0.001,
+            profile_tolerance_k=0.5,relaxation=0.5,
+            tie_supply_inlet_temperature_k=330.,
+            couple_fuel_header_temperature=True,
+            header_temperature_tolerance_k=0.15,
+            header_temperature_relaxation=0.5,
+            engine_solver=header_engine,
+        )
+        assert header_result.fuel_header_feedback_converged
+        assert header_result.fuel_header_temperature_error_k<=0.15
+        assert abs(header_result.thermal_inlet_temperature_k-350.)<=0.15
+        assert header_result.tie_supply_inlet_temperature_k==330.
+        assert header_result.temperature_boundary_not_closed
+        assert header_result.max_relative_flow_error<=0.001
+        assert header_result.max_thermal_profile_update_k<=0.5
+        assert abs(header_result.power_ledger.nuclear_power_balance_error_w)<1e-5
+        assert abs(header_result.thermal_step.energy_residual_j)<1e-4
+        assert len(header_result.diagnostics)==header_result.iterations
+        assert any(
+            rec.fuel_header_temperature_error_k>0.15
+            for rec in header_result.diagnostics[:-1]
+        )
+        assert all(rec.tie_supply_inlet_temperature_k==330.
+                   for rec in header_result.diagnostics)
+        assert header_result.thermal_step.fuel_inlet_t_k==header_result.thermal_inlet_temperature_k
+        assert header_result.thermal_step.tie_supply_inlet_t_k==330.
+        # Important: repeated fixed-point trials are NOT consecutive time
+        # integrations. Independent one-step recomputation must be exact.
+        independent=advance_resolved(
+            header_result.thermal_heating,old,params,
+            header_result.thermal_inlet_temperature_k,0.1,
+            tie_supply_inlet_t_k=330.,
+        )
+        for attr in ("fuel_solid_t_k","fuel_h2_t_k","tie_solid_t_k",
+                     "tie_supply_t_k","tie_return_t_k"):
+            assert np.allclose(
+                getattr(independent.state,attr),
+                getattr(header_result.thermal_step.state,attr),
+                atol=1e-10,rtol=1e-12,
+            )
+        # Header convergence cannot silently pass on flow convergence alone.
+        rejects(lambda:couple_resolved_thermal_flows(
+            heating,old,params,core,cooling,turbine,300.,0.1,
+            nozzle_wall_heat_w=110000.,reflector_wall_heat_w=90000.,
+            max_iterations=2,
+            tie_supply_inlet_temperature_k=330.,
+            couple_fuel_header_temperature=True,
+            header_temperature_tolerance_k=0.0001,
+            engine_solver=header_engine,
+        ))
+        rejects(lambda:couple_resolved_thermal_flows(
+            heating,old,params,core,cooling,turbine,300.,0.1,
+            nozzle_wall_heat_w=110000.,reflector_wall_heat_w=90000.,
+            couple_fuel_header_temperature=True,
+            engine_solver=header_engine,
+        ))
+        rejects(lambda:couple_resolved_thermal_flows(
+            heating,old,params,core,cooling,turbine,300.,0.1,
+            nozzle_wall_heat_w=110000.,reflector_wall_heat_w=90000.,
+            tie_supply_inlet_temperature_k=20.,
+            engine_solver=header_engine,
+        ))
+
         # Flow roots that do not satisfy both groups fail closed.
         rejects(lambda:couple_resolved_thermal_flows(
             heating,old,params,core,cooling,turbine,300.,0.1,
