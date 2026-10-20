@@ -34,6 +34,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install .
 
+      - name: Validate gas-phase compressor/feed/fuel/nozzle physical closure
+        run: python -m ntr.nerva.validate_gas_feed_network
+
+      - name: Run gas-phase feed-network CLI with synthetic example
+        run: |
+          python -m ntr.nerva.validate_gas_feed_network --write-example build/nerva_gas_feed_case.json
+          test -s build/gas_feed_result.json
+
       - name: Validate compressible channel thermodynamics and momentum physics
         run: python -m ntr.nerva.validate_compressible_channel
 
