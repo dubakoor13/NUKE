@@ -46,10 +46,12 @@ def main() -> int:
     assert 500 < eq.isp_s < 1100  # broad plausibility, NOT historical calibration
 
     # Pressure -> mdot -> T -> Isp at fixed power and throat geometry.
+    # The pressure sweep is restricted so the nozzle stays within the
+    # NASA-7 200 K lower-temperature limit. An invalid state is not extrapolated.
     low = power_coupled_hydrogen_nozzle(
         1.0e9, 3.1e6, 300.0, 0.035, 100, mode="frozen")
     high = power_coupled_hydrogen_nozzle(
-        1.0e9, 6.2e6, 300.0, 0.035, 100, mode="frozen")
+        1.0e9, 3.6e6, 300.0, 0.035, 100, mode="frozen")
     assert abs(low.power_residual_w) < 1e-5*low.hydrogen_heating_power_w
     assert abs(high.power_residual_w) < 1e-5*high.hydrogen_heating_power_w
     assert low.chamber_temperature_k > high.chamber_temperature_k
