@@ -8,7 +8,9 @@ momentum/pump/nozzle or validated historical NERVA transport run.
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 import math
+import sys
 from pathlib import Path
 import tempfile
 
@@ -20,6 +22,7 @@ from .isochoric_tie import (
 )
 from .lh2_feed_cycle import HydrogenEOS
 from .resolved_transient import read_resolved_heating
+from .run_isochoric_tie import main as run_isochoric_tie_cli
 from .validate_resolved_transient import write_synthetic_reconstructions
 
 
@@ -150,6 +153,46 @@ def main() -> int:
         )
         assert np.allclose(static.state.solid_temperature_k,45.)
         assert abs(static.energy_residual_j)<1e-4
+
+        # Run the public CLI and inspect its rigid-volume state and
+        # honest thermodynamic-versus-momentum scope flags.
+        output=Path(temporary)/"isochoric_output"
+        oldargs=sys.argv
+        try:
+            sys.argv=[
+                "run_isochoric_tie",*(str(v) for v in paths),
+                "--initial-pressure-pa",str(p0),
+                "--initial-quality",str(q0),
+                "--initial-solid-temperature-k","45",
+                "--supply-cell-volume-m3","0.001",
+                "--return-cell-volume-m3","0.0012",
+                "--solid-capacity-j-k","3000",
+                "--supply-ua-w-k","1",
+                "--return-ua-w-k","1",
+                "--dt-s",str(dt),
+                "--output",str(output),
+            ]
+            assert run_isochoric_tie_cli()==0
+        finally:
+            sys.argv=oldargs
+        doc=json.loads(
+            (output/"isochoric_tie_report.json").read_text(encoding="utf-8")
+        )
+        assert doc["status"]=="PASS"
+        assert doc["compressible_eos_internal_energy_solved"]
+        assert not doc["independent_momentum_pressure_loss_solved"]
+        assert not doc["real_openmc_transport_executed"]
+        assert len(doc["history"])==1
+        assert abs(doc["history"][0]["first_law_residual_j"])<1e-4
+        with np.load(output/"isochoric_tie_final_state.npz",
+                     allow_pickle=False) as fields:
+            assert fields["supply_pressure_pa"].shape==shape
+            assert np.all(fields["supply_density_kg_m3"]>0)
+            assert np.allclose(
+                fields["supply_mass_kg"],
+                fields["supply_density_kg_m3"]*params.supply_cell_volume_m3,
+                rtol=1e-12,
+            )
 
         # Reject nonphysical volume, initial quality, pressure limit
         # and excessive direct hydrogen energy input.
