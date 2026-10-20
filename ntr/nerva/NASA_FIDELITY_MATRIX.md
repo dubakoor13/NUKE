@@ -129,3 +129,21 @@ NERVA reproduction is claimed from these idealized tests.
 
 This is still IAC/1-D and does not replace NESS 2.0, feed machinery, radiator,
 reactor neutronics, or experimentally constrained transport/heat transfer.
+
+
+## Engine-level mass and thrust accounting (new)
+
+\`engine_stream_balance.py\` distinguishes main-nozzle mass flow, bleed mass
+flow and the momentum / pressure-force equivalent for each stream.
+True system Isp is \`(F_main + F_bleed)/[(m_main + m_bleed)g0]\`, **not**
+the main nozzle's thermochemical Isp.
+
+\`nerva_xe_stream_report.py\` is an intentionally **inverse** XE-Prime example:
+it derives total mass flow from the published thrust and net Isp, takes
+the distinct main hydrogen flow from a cited NASA reference preset, then
+calculates what bleed effective velocity *would be required* for several
+explicit nozzle-efficiency assumptions. Since the resulting agreement is
+enforced algebraically, **it is not a validation against independent engine
+test data** and must never be described as a computed bleed-cycle solution.
+Independent bleed-flow data, cycle pressure drops and turbine hardware
+are essential before solving the NESS-style physical engine cycle.
