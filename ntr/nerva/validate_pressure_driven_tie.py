@@ -9,7 +9,9 @@ No independently validated NERVA momentum coefficients or OpenMC run.
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 import math
+import sys
 from pathlib import Path
 import tempfile
 
@@ -22,6 +24,7 @@ from .lh2_feed_cycle import HydrogenEOS
 from .pressure_driven_tie import (
     PressureTieFlowParameters, advance_pressure_driven_tie,
 )
+from .run_pressure_driven_tie import main as run_pressure_tie_cli
 from .resolved_transient import read_resolved_heating
 from .validate_resolved_transient import write_synthetic_reconstructions
 
@@ -154,6 +157,57 @@ def main() -> int:
         assert np.all(reverse.interface_mass_flow_kg_s[:,-1]<0)
         assert abs(reverse.mass_balance_error_kg_s)<1e-9
         assert abs(reverse.energy_balance_error_j)<1e-5
+
+        # Reproduce the pressure-driven calculation through the
+        # public CLI and verify persisted fluxes, state and diagnostics.
+        output=Path(temp)/"pressure_driven_analysis"
+        original_argv=sys.argv
+        try:
+            sys.argv=[
+                "run_pressure_driven_tie",
+                str(mesh),str(fuel),str(tie),
+                "--initial-pressure-pa",str(p0),
+                "--initial-quality","0.30",
+                "--initial-solid-temperature-k","50",
+                "--inlet-pressure-pa","600000",
+                "--outlet-pressure-pa","500000",
+                "--inlet-quality","0.30",
+                "--outlet-backflow-quality","0.30",
+                "--supply-cell-volume-m3","0.001",
+                "--return-cell-volume-m3","0.001",
+                "--solid-capacity-j-k","3000",
+                "--supply-ua-w-k","1",
+                "--return-ua-w-k","1",
+                "--interface-area-m2","1e-5",
+                "--discharge-coefficient","0.7",
+                "--dt-s","0.001","--steps","2",
+                "--output",str(output),
+            ]
+            assert run_pressure_tie_cli()==0
+        finally:
+            sys.argv=original_argv
+        report=json.loads(
+            (output/"pressure_driven_tie_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["status"]=="PASS"
+        assert report["signed_pressure_driven_axial_flow_solved"]
+        assert not report["transient_momentum_inertia_solved"]
+        assert not report["transport_executed"]
+        assert len(report["history"])==2
+        assert all(abs(row["mass_balance_error_kg_s"])<1e-9
+                   and abs(row["energy_balance_error_j"])<1e-5
+                   for row in report["history"])
+        with np.load(
+            output/"pressure_driven_tie_final_state.npz",
+            allow_pickle=False,
+        ) as data:
+            assert data["interface_mass_flow_kg_s"].shape==(
+                heat.tie_solid_w.shape[0],2*heat.tie_solid_w.shape[1]+1,
+            )
+            assert np.all(data["supply_mass_kg"]>0)
+            assert np.all(data["return_density_kg_m3"]>0)
 
         # Reject unresolvable steps and high-drop/choked flows. Never
         # silently clamp masses or use two-phase orifice closure at a
