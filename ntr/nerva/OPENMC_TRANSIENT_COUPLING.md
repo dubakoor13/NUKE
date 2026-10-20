@@ -336,3 +336,42 @@ python -m ntr.nerva.run_resolved_openmc_feedback --help
 
 The test callback is explicitly marked \`synthetic-test\`, never a
 transport-equivalent demonstration.
+
+
+## Real-statepoint provenance and Monte Carlo quality gate
+
+The resolved OpenMC runner now calls
+\`statepoint_quality.audit_fresh_transport\` **after each** fresh
+OpenMC+analysis run, before accepting any reconstructed heating field.
+
+It independently checks the completed statepoint pathname, SHA-256 and
+size against \`transport_provenance.json\`; verifies the exact
+\`cross_sections.xml\` filename and SHA-256; checks temperature-coverage
+status and the actual material fuel temperature, hydrogen temperature
+and density used by transport against the Picard request; confirms that
+the \`power/metadata.json\` references the **same** statepoint and has
+the imposed MW/W normalization; and checks the analysis QA root,
+all reported closure flags and the mesh-heating uncertainty statistics.
+
+The new **\`--max-heating-p95-rel-error\`** option defaults to \`0.5\`:
+a 50% ceiling on the 95th-percentile *local mesh heating relative
+standard error* reported by the existing OpenMC postprocessor. If that
+threshold is exceeded, this is a **hard error**, not silent acceptance.
+For higher-fidelity studies tighten the threshold with adequate neutron
+sampling. This statistic is a proxy for spatial Monte Carlo tally noise,
+**not** an uncertainty bound on engine thrust, Isp or reactor criticality.
+It also does not prove uncertainty independence between Picard steps.
+
+A numerical test constructs entirely artificial statepoint/XS bytes and
+synthetic metadata to check all failure modes without an OpenMC binary.
+That test is **not real transport**; the production runner still requires
+a genuine, completed statepoint and a compatible nuclear-data library.
+
+\`\`\`bash
+python -m ntr.nerva.validate_statepoint_quality
+python -m ntr.nerva.run_resolved_openmc_feedback --help
+\`\`\`
+
+These additional integrity checks are necessary for a credible real
+OpenMC coupling run but they are not a substitute for historical
+experimental validation or a converged neutron-transport demonstration.
