@@ -147,6 +147,9 @@ jobs:
       - name: Validate dual pump/header manifold mass and energy conservation
         run: python -m ntr.nerva.validate_dual_header_tie
 
+      - name: Validate live LH2 pump head and rotor energy with dual hydrogen manifolds
+        run: python -m ntr.nerva.validate_dynamic_pump_shaft
+
       - name: Validate real-fluid tie heating and regenerative branch hydraulic fixed point
         run: python -m ntr.nerva.validate_cryogenic_tie_hydraulic_coupling
 
