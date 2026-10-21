@@ -24,6 +24,7 @@ from .dynamic_header_tie import (
     initial_dynamic_header,advance_dynamic_header_tie,
 )
 from .isochoric_tie import IsochoricTieParameters
+from .dynamic_parallel_header import advance_dynamic_parallel_tie_header
 from .lh2_feed_cycle import LH2Cycle,HydrogenEOS
 from .regenerative_cooling import CoolingLeg,CoolingNetwork
 from .resolved_transient import read_resolved_heating
@@ -39,6 +40,8 @@ def main()->int:
     parser.add_argument("--chemistry-mode",choices=("frozen","equilibrium"),
                         default="frozen")
     parser.add_argument("--header-volume-m3",type=float,required=True)
+    parser.add_argument("--dynamic-nozzle-branch",action="store_true",
+                        help="solve nozzle/reflector flow against live header pressure")
     parser.add_argument("--initial-solid-temperature-k",type=float,required=True)
     parser.add_argument("--supply-cell-volume-m3",type=float,required=True)
     parser.add_argument("--return-cell-volume-m3",type=float,required=True)
@@ -108,9 +111,16 @@ def main()->int:
     history=[]
     latest=None
     for i in range(args.steps):
-        latest=advance_dynamic_header_tie(
-            heating,state,fluid,header,shaft,args.dt_s,eos=eos,
-        )
+        branch=None
+        if args.dynamic_nozzle_branch:
+            branch=advance_dynamic_parallel_tie_header(
+                heating,state,fluid,header,net,shaft,args.dt_s,eos=eos,
+            )
+            latest=branch.combined
+        else:
+            latest=advance_dynamic_header_tie(
+                heating,state,fluid,header,shaft,args.dt_s,eos=eos,
+            )
         state=latest.state
         history.append({
             "step":i+1,"time_s":(i+1)*args.dt_s,
@@ -125,6 +135,14 @@ def main()->int:
                 latest.tie_header_interface_total_energy_power_w,
             "nozzle_branch_inlet_kg_s":latest.nozzle_branch_inlet_flow_kg_s,
             "fixed_engine_discharge_kg_s":latest.fixed_engine_discharge_flow_kg_s,
+            "dynamic_nozzle_branch_active":
+                latest.dynamic_nozzle_branch_pressure_response_active,
+            "upstream_pump_flow_mismatch_kg_s":
+                latest.upstream_pump_header_mass_flow_mismatch_kg_s,
+            "nozzle_branch_header_pressure_residual_pa":(
+                branch.nozzle_branch.outlet_pressure_residual_pa
+                if branch is not None else None
+            ),
             "combined_mass_residual_kg_s":
                 latest.combined_tie_header_mass_residual_kg_s,
             "combined_total_energy_residual_j":
@@ -156,6 +174,9 @@ def main()->int:
     report={
         "status":"PASS",
         "tie_header_pressure_enthalpy_feedback_active":True,
+        "dynamic_nozzle_branch_header_pressure_feedback_active":
+            args.dynamic_nozzle_branch,
+        "upstream_pump_header_mass_flow_conserved":False,
         "full_shaft_cycle_feedback_converged":False,
         "dynamic_pump_turbine_nozzle_flows_solved":False,
         "actual_openmc_transport_executed":False,
