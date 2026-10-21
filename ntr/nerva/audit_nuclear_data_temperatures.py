@@ -106,9 +106,12 @@ def audit_temperature_coverage(
                     temperatures[0] <= value <= temperatures[-1]
                     for value in explicit
                 )
-                tol = (max(1e-6, config.bound_nearest_temperature_tolerance_k)
-                       if config.thermal_scattering_treatment == "evaluated-bound"
-                       else 10.0)
+                tol = (
+                    max(1e-6, config.bound_nearest_temperature_tolerance_k)
+                    if (config.thermal_scattering_treatment == "evaluated-bound"
+                        or config.bound_nearest_temperature_tolerance_k > 0)
+                    else 10.0
+                )
                 row["explicit_requested_temperatures_within_nearest_tolerance"] = all(
                     min(abs(x-value) for x in temperatures) <= tol + 1e-9
                     for value in explicit
@@ -148,7 +151,8 @@ def audit_temperature_coverage(
         "neutron_temperature_method": "nearest",
         "neutron_temperature_tolerance_K": (
             max(1e-6, config.bound_nearest_temperature_tolerance_k)
-            if config.thermal_scattering_treatment == "evaluated-bound"
+            if (config.thermal_scattering_treatment == "evaluated-bound"
+                or config.bound_nearest_temperature_tolerance_k > 0)
             else 10.0
         ),
         "model_explicit_temperature_coverage_ok": explicit_coverage_ok,
