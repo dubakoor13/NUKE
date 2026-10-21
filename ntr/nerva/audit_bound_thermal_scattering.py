@@ -56,6 +56,8 @@ def audit_bound_thermal_scattering(
             "requested_temperature_K": temp,
             "evaluated_temperatures_K": [],
             "sha256": None,
+            "actual_hdf5_kernel_loaded": False,
+            "requested_temperature_covered": False,
             "accepted": False,
             "error": None,
         }
@@ -82,15 +84,19 @@ def audit_bound_thermal_scattering(
                         not all(math.isfinite(t) and t > 0 for t in temperatures)):
                     raise ValueError("thermal kernel has no valid evaluated temperatures")
                 row["evaluated_temperatures_K"] = temperatures
-                if not (temperatures[0] - 1e-7 <= temp <= temperatures[-1] + 1e-7):
-                    raise ValueError(
-                        "requested temperature outside evaluated thermal-kernel range"
-                    )
+                row["actual_hdf5_kernel_loaded"] = True
                 digest = hashlib.sha256()
                 with path.open("rb") as stream:
                     for data in iter(lambda: stream.read(1024*1024), b""):
                         digest.update(data)
                 row["sha256"] = digest.hexdigest()
+                row["requested_temperature_covered"] = bool(
+                    temperatures[0] - 1e-7 <= temp <= temperatures[-1] + 1e-7
+                )
+                if not row["requested_temperature_covered"]:
+                    raise ValueError(
+                        "requested temperature outside evaluated thermal-kernel range"
+                    )
                 row["accepted"] = True
             except (OSError, KeyError, ValueError, TypeError, AttributeError) as error:
                 row["error"] = str(error)
@@ -101,6 +107,14 @@ def audit_bound_thermal_scattering(
         "treatment": "evaluated-bound",
         "ready": ready,
         "physically_complete_bound_thermal_scattering": ready,
+        "all_required_hdf5_kernels_loadable": all(
+            row["actual_hdf5_kernel_loaded"] for row in rows
+        ),
+        "temperature_mismatch_tables": [
+            row["table"] for row in rows
+            if row["actual_hdf5_kernel_loaded"]
+            and not row["requested_temperature_covered"]
+        ],
         "requested_solid_temperature_K": temp,
         "required_tables": list(requested),
         "tables": rows,
