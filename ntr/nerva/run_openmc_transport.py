@@ -62,6 +62,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hydrogen-density-g-cm3", type=float,
                         help="Uniform OpenMC hydrogen material density for snapshot feedback.")
     parser.add_argument("--photon-transport", action="store_true")
+    parser.add_argument(
+        "--heating-mesh-dimensions", nargs=3, type=int, default=(48, 48, 24),
+        metavar=("NX", "NY", "NZ"),
+        help=(
+            "OpenMC regular heating tally bins in x/y/z (default 48 48 24). "
+            "For nested-mesh convergence, use integer-multiple dimensions "
+            "and identical geometry, nuclear data, score, power, and bounds."
+        ),
+    )
     parser.add_argument("--diagnostic-energy-groups", type=int, default=80)
     parser.add_argument("--axial-mesh-bins", type=int, default=96)
     parser.add_argument(
@@ -156,6 +165,7 @@ def main() -> int:
         inactive=args.inactive,
         control_drum_angle_deg=args.drum_angle,
         photon_transport=args.photon_transport,
+        heating_mesh_dimension=tuple(args.heating_mesh_dimensions),
         diagnostic_energy_groups=args.diagnostic_energy_groups,
         axial_mesh_bins=args.axial_mesh_bins,
         tally_rel_err_trigger=args.target_rel_error,
@@ -228,6 +238,7 @@ def main() -> int:
             "hydrogen_temperature_k": config.hydrogen_temperature_k,
             "hydrogen_density_g_cm3": config.hydrogen_density_g_cm3,
             "photon_transport": config.photon_transport,
+            "heating_mesh_dimension": list(config.heating_mesh_dimension),
             "diagnostic_energy_groups": config.diagnostic_energy_groups,
             "axial_mesh_bins": config.axial_mesh_bins,
             "tally_rel_err_trigger": config.tally_rel_err_trigger,

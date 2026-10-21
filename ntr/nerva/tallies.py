@@ -121,7 +121,7 @@ def build_tallies(
     )
 
     mesh = openmc.RegularMesh(name="nerva_core_mesh")
-    mesh.dimension = (48, 48, 24)
+    mesh.dimension = tuple(config.heating_mesh_dimension)
     mesh.lower_left = (-r, -r, -half_length)
     mesh.upper_right = (r, r, half_length)
 

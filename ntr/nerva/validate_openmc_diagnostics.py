@@ -29,6 +29,23 @@ def main() -> int:
     assert model.settings.run_mode == "eigenvalue"
     assert model.settings.photon_transport is False
     assert model.settings.entropy_mesh is not None
+    # A mesh refinement changes only tally discretization. Geometry and
+    # reactor composition are left untouched by this config control.
+    mesh = next(t for t in model.tallies if t.name == "nerva_3d_neutronics")
+    assert tuple(mesh.find_filter(openmc.MeshFilter).mesh.dimension) == (48, 48, 24)
+    from dataclasses import replace
+    refined_cfg = replace(config, heating_mesh_dimension=(96, 96, 48))
+    refined = build_model(refined_cfg, assembly="reactor")
+    finer = next(t for t in refined.tallies if t.name == "nerva_3d_neutronics")
+    assert tuple(finer.find_filter(openmc.MeshFilter).mesh.dimension) == (96, 96, 48)
+    assert len(refined.geometry.get_all_cells()) == len(model.geometry.get_all_cells())
+    for bad_shape in ((4, 4), (0, 48, 24), (32, 32, 0), (48., 48, 24)):
+        try:
+            replace(config, heating_mesh_dimension=bad_shape).validate()
+        except ValueError as exc:
+            assert "heating_mesh_dimension" in str(exc)
+        else:
+            raise AssertionError("invalid mesh tally dimensions accepted")
 
     tallies = {t.name: t for t in model.tallies}
     required = {
