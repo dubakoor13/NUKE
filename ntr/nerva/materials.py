@@ -86,9 +86,13 @@ def build_materials(config: NervaConfig) -> dict[str, openmc.Material]:
     aluminum.set_density("g/cm3", config.aluminum_density_g_cm3)
     aluminum.add_element("Al", 1.0, percent_type="ao")
 
-    if config.thermal_scattering_treatment == "evaluated-bound":
+    # Comparison control: same Be/graphite/ZrH solid temperatures in
+    # both free-gas and bound-scattering models; only S(a,b) differs.
+    if config.bound_solid_temperature_k is not None:
         for solid in (reflector, graphite, zrh):
             solid.temperature = config.bound_solid_temperature_k
+
+    if config.thermal_scattering_treatment == "evaluated-bound":
         for key, tables in EVALUATED_BOUND_THERMAL_TABLES.items():
             target = {
                 "reflector": reflector,
