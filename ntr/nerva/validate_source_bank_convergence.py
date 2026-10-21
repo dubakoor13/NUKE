@@ -60,6 +60,10 @@ def main():
         assert details["seed"]==13007
         assert details["completed_batch"]==120
         assert details["source_sites"]==1000
+        assert details["exact_distinct_site_positions"]==1000
+        assert details["distinct_position_fraction"]==1.
+        assert 900 < details["inverse_simpson_distinct_position_count"] <= 1000
+        assert details["largest_replicated_position_weight_fraction"] == 0.001
         report=compare_independent_sources(
             pairs,lower_cm=bounds[0],upper_cm=bounds[1]
         )
@@ -69,6 +73,20 @@ def main():
         assert report["mean_early_to_late_source_total_variation"]>=0
         assert report["source_convergence_independently_demonstrated"] is False
         assert report["historical_nasa_nerva_benchmark_validated"] is False
+
+        # Deliberately cloned spatial source populations: exact position
+        # degeneracy is visible without mistaking nominal bank size for
+        # independent fission locations.
+        clones=np.repeat(np.array([[0.1,0.2,0.3],[0.2,0.3,0.4]]),
+                         500, axis=0)
+        clone_file=root/"clones.h5"
+        fake(clone_file,seed=99017,batch=120,xyz=clones)
+        _, cloned=read_source_bank(
+            clone_file,lower_cm=bounds[0],upper_cm=bounds[1]
+        )
+        assert cloned["exact_distinct_site_positions"]==2
+        assert cloned["inverse_simpson_distinct_position_count"]==2.
+        assert cloned["largest_replicated_position_weight_fraction"]==0.5
 
         reject(
             lambda:compare_independent_sources(
