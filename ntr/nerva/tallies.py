@@ -142,6 +142,25 @@ def build_tallies(
     _attach_heating_trigger(neutronics, config)
     tallies: list[openmc.Tally] = [neutronics]
 
+    # Fundamental eigenvalue-generation neutron accounting. These scores
+    # integrate the ENTIRE physical geometry (unlike the finite diagnostic
+    # mesh, which may clip reflector/vessel volumes). Fission neutrons are
+    # banked for the next generation; scatter multiplicity, however, adds
+    # live neutrons to this generation. The closure is therefore:
+    #
+    #   absorption + global_vacuum_leakage
+    #   - (nu-scatter - scatter) ~= one source neutron.
+    #
+    # Compare against OpenMC's GLOBAL leakage estimator, which already has
+    # the correct outward orientation at every exterior vacuum boundary.
+    global_balance = openmc.Tally(name="nerva_global_neutron_balance")
+    if config.photon_transport:
+        global_balance.filters = [openmc.ParticleFilter(["neutron"])]
+    global_balance.scores = [
+        "absorption", "scatter", "nu-scatter", "nu-fission",
+    ]
+    tallies.append(global_balance)
+
     if fuel_material is None and materials is not None:
         fuel_material = materials.get("fuel")
 
