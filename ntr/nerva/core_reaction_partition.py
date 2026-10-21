@@ -1,7 +1,9 @@
 """Independent material/energy reaction partition QA on REAL OpenMC eigenvalue statepoints.
 
 A correctly constructed neutron-only material tally must partition the
-unfiltered whole-geometry absorption and nu-fission reaction rates.
+unfiltered whole-geometry absorption and nu-fission TRACKLENGTH rates.
+The separate multiplicative-scattering balance uses OpenMC's ANALOG
+estimator and must not be equated to tracklength tallies per history.
 EnergyFilter reaction rates must also account for the same material totals
 within its explicitly bounded incident-neutron energy range.
 
@@ -202,10 +204,16 @@ def inspect_real_statepoint(statepoint: Path, materials_xml: Path) -> dict:
         if not sp.tallies_present or sp.n_realizations < 2:
             raise ValueError("no real active OpenMC neutron reaction realizations")
         global_tally = sp.get_tally(name="nerva_global_neutron_balance")
+        global_tracklength = sp.get_tally(name="nerva_global_reaction_tracklength")
         material = sp.get_tally(name="nerva_material_transport")
         energy = sp.get_tally(name="nerva_material_energy_transport")
-        if global_tally.filters:
-            raise ValueError("whole-core reference must not have clipped or species-mixed filters")
+        if global_tally.filters or global_tracklength.filters:
+            raise ValueError("whole-core reaction tallies must not have clipped filters")
+        if global_tally.estimator != "analog":
+            raise ValueError("multiplicative-scatter neutron balance must use analog estimator")
+        if any(tally.estimator != "tracklength" for tally in
+               (global_tracklength, material, energy)):
+            raise ValueError("material and global reference reactions must use matching tracklength estimators")
         if len(material.filters) != 1 or not isinstance(
                 material.filters[0], openmc.MaterialFilter):
             raise ValueError("whole-core material reactions must use only MaterialFilter")
@@ -218,6 +226,10 @@ def inspect_real_statepoint(statepoint: Path, materials_xml: Path) -> dict:
             raise ValueError("material and energy tally bins do not match")
         bins = np.asarray(energy.filters[1].bins, dtype=float)
         global_rates = {
+            s: float(_extract_tally(global_tracklength, s, (1,))[0])
+            for s in SCORES
+        }
+        analog_rates = {
             s: float(_extract_tally(global_tally, s, (1,))[0]) for s in SCORES
         }
         material_rates = {
@@ -230,6 +242,22 @@ def inspect_real_statepoint(statepoint: Path, materials_xml: Path) -> dict:
             ids, names, global_rates, material_rates, energy_rates, bins
         )
         result.update({
+            "estimator_consistency": {
+                "partition_reference_estimator": "tracklength",
+                "material_estimator": "tracklength",
+                "material_energy_estimator": "tracklength",
+                "separate_conservation_estimator": "analog",
+                "analog_minus_tracklength_global": {
+                    score: analog_rates[score] - global_rates[score]
+                    for score in SCORES
+                },
+                "interpretation": (
+                    "Analog neutron multiplicity accounting and tracklength "
+                    "reaction-rate estimates are distinct statistical estimators. "
+                    "Their nonzero sample-mean differences are not missing "
+                    "materials. Partition identities require matching estimators."
+                ),
+            },
             "source": "GENUINE_OPENMC_EIGENVALUE_STATEPOINT",
             "statepoint_sha256": _file_sha256(statepoint),
             "materials_xml_sha256": _file_sha256(materials_xml),
