@@ -23,6 +23,9 @@ import numpy as np
 from .openmc_replica_convergence import (
     MeshReplica, _check_transport_identity, load_mesh_replica
 )
+from .axial_covariance import (
+    axial_mean_covariance, integrated_axial_fraction_sem,
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,9 @@ class ReplicaEnsembleResult:
     active_fraction: float
     p95_active_relative_sem: float
     max_axial_fraction_sem: float
+    axial_first_half_integral_sem: float
+    axial_last_half_integral_sem: float
+    axial_total_integral_sem: float
     half_split_total_variation: float
     maximum_balanced_split_total_variation: float | None
     tested_balanced_split_total_variation: float
@@ -172,8 +178,22 @@ def assess_replica_ensemble(
     rel_sem[active]=sem[active]/mean[active]
     p95=float(np.percentile(rel_sem[active],95))
     axial_means=stack.sum(axis=(1,2))
-    axial_sem=axial_means.std(axis=0,ddof=1)/math.sqrt(n)
+    axial_mean, axial_covariance_of_mean, axial_sem = axial_mean_covariance(
+        axial_means
+    )
     max_axial=float(np.max(axial_sem))
+    midpoint=max(1,axial_means.shape[1]//2)
+    first_half_integral_sem=integrated_axial_fraction_sem(
+        axial_covariance_of_mean, 0, midpoint
+    )
+    last_half_integral_sem=(
+        integrated_axial_fraction_sem(
+            axial_covariance_of_mean, midpoint, axial_means.shape[1]
+        ) if midpoint < axial_means.shape[1] else 0.
+    )
+    total_integral_sem=integrated_axial_fraction_sem(
+        axial_covariance_of_mean, 0, axial_means.shape[1]
+    )
     split=n//2
     # Original input-order split is maintained as a descriptive output for
     # legacy consumers. It MUST NOT drive the PASS/FAIL decision.
@@ -227,6 +247,9 @@ def assess_replica_ensemble(
         active_fraction=float(np.mean(active)),
         p95_active_relative_sem=p95,
         max_axial_fraction_sem=max_axial,
+        axial_first_half_integral_sem=first_half_integral_sem,
+        axial_last_half_integral_sem=last_half_integral_sem,
+        axial_total_integral_sem=total_integral_sem,
         half_split_total_variation=half_tv,
         maximum_balanced_split_total_variation=worst_balanced,
         tested_balanced_split_total_variation=split_metric,
@@ -246,7 +269,10 @@ def assess_replica_ensemble(
         status="PASS" if passing else "FAIL",
         interpretation=(
             "Empirical spread across independent eigenvalue OpenMC replicas "
-            "under fixed geometry and reactor power. SEM assumes independent "
+            "under fixed geometry and reactor power. Axial sample-mean "
+            "covariance preserves power-normalization anticorrelation, so "
+            "integrated axial uncertainties include off-diagonal terms. "
+            "SEM assumes independent "
             "replicate estimates; systematic bias and fission-source convergence "
             "are NOT covered. Original two-half split is order-sensitive and "
             "reported for continuity only; acceptance uses the worst balanced "
@@ -263,8 +289,9 @@ def assess_replica_ensemble(
         "sem_power_fraction":sem,
         "active_mask":active,
         "relative_sem_active":rel_sem,
-        "axial_power_fraction_mean":axial_means.mean(axis=0),
+        "axial_power_fraction_mean":axial_mean,
         "axial_power_fraction_sem":axial_sem,
+        "axial_power_fraction_covariance_of_mean":axial_covariance_of_mean,
     }
     return summary,outputs
 

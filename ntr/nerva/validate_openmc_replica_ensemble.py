@@ -57,6 +57,24 @@ def main() -> int:
                             rel_tol=1e-12)
         assert math.isclose(result.max_axial_fraction_sem,expected_sem/3,
                             rel_tol=1e-12)
+        axial_cov = fields["axial_power_fraction_covariance_of_mean"]
+        assert axial_cov.shape == (3,3)
+        assert np.allclose(axial_cov, axial_cov.T, atol=1e-15)
+        assert np.allclose(axial_cov.sum(axis=0), 0., atol=1e-15)
+        assert math.isclose(
+            axial_cov[0,2], -(expected_sem/3)**2,
+            rel_tol=1e-12
+        )
+        assert math.isclose(
+            result.axial_first_half_integral_sem,
+            expected_sem/3, rel_tol=1e-12
+        )
+        assert math.isclose(
+            result.axial_last_half_integral_sem,
+            expected_sem/3, rel_tol=1e-12
+        )
+        assert result.axial_total_integral_sem < 1e-12
+        assert np.sqrt(np.sum(fields["axial_power_fraction_sem"]**2)) > 0.01
         # First two replicates have -0.04 axial bias, latter +0.04.
         assert math.isclose(result.half_split_total_variation,0.08/3,
                             rel_tol=1e-12)
@@ -258,6 +276,7 @@ def main() -> int:
         with np.load(root/"output"/"ensemble_heating_statistics.npz",
                      allow_pickle=False) as archived:
             assert np.allclose(archived["mean_power_fraction"],1/12)
+            assert archived["axial_power_fraction_covariance_of_mean"].shape == (3,3)
 
     print(
         "Multi-seed heating ensemble numerical QA: PASS; "
