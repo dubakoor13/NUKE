@@ -6,6 +6,8 @@ on:
       - '.github/workflows/nerva-real-neutron-balance.yml'
       - 'ntr/nerva/core_neutron_balance.py'
       - 'ntr/nerva/validate_core_neutron_balance.py'
+      - 'ntr/nerva/core_reaction_partition.py'
+      - 'ntr/nerva/validate_core_reaction_partition.py'
       - 'ntr/nerva/tallies.py'
       - 'ntr/nerva/run_real_core_replicas.py'
   workflow_dispatch: {}
@@ -42,6 +44,7 @@ jobs:
               openmc --version
               test -f "$OPENMC_CROSS_SECTIONS"
               python -m ntr.nerva.validate_core_neutron_balance
+              python -m ntr.nerva.validate_core_reaction_partition
               python -m ntr.nerva.run_openmc_transport \
                 --cross-sections "$OPENMC_CROSS_SECTIONS" \
                 --assembly core --rings 3 \
@@ -57,6 +60,11 @@ jobs:
               python -m ntr.nerva.core_neutron_balance \
                 --statepoint "$statepoint" \
                 --output /repo/build/nerva_core_neutron_balance/global_neutron_balance.json \
+                --strict
+              python -m ntr.nerva.core_reaction_partition \
+                --statepoint "$statepoint" \
+                --materials-xml /repo/build/nerva_core_neutron_balance/materials.xml \
+                --output /repo/build/nerva_core_neutron_balance/material_reaction_partition.json \
                 --strict
             '
       - name: Persist genuine global neutron accounting evidence
