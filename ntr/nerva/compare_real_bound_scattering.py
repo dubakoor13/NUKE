@@ -61,10 +61,13 @@ def _without_bound_tables(xml: Path) -> list[tuple[str,str]]:
     root = ET.parse(xml).getroot()
     records=[]
     for material in root.findall("material"):
-        element=ET.fromstring(ET.tostring(material))
-        for sab in list(element.findall("sab")):
-            element.remove(sab)
-        records.append((element.attrib.get("id",""),ET.tostring(element,encoding="unicode")))
+        attributes=tuple(sorted(material.attrib.items()))
+        physics=tuple(
+            (child.tag,tuple(sorted(child.attrib.items())),(child.text or "").strip())
+            for child in material
+            if child.tag != "sab"
+        )
+        records.append((material.attrib.get("id",""), attributes, physics))
     return sorted(records)
 
 
