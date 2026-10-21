@@ -106,7 +106,11 @@ def _close_balance(
         leak_sem + rates["absorption"][1]
         + rates["nu-scatter"][1] + rates["scatter"][1]
     )
-    threshold = max(abs_tolerance, sigma_multiplier * sem_bound)
+    # Absorption, scatter, nu-scatter and leakage are strongly correlated:
+    # naive marginal SEM addition can be huge while the *particle
+    # bookkeeping identity* is exact. Do not enlarge the physics acceptance
+    # tolerance based on an unidentified covariance structure.
+    threshold = abs_tolerance
     native_k_value, native_k_sigma = native_k
     nu_fiss, nu_fiss_sem = rates["nu-fission"]
     production_delta = None if native_k_value is None else nu_fiss - native_k_value
@@ -116,7 +120,7 @@ def _close_balance(
     )
     production_tolerance = (
         None if native_k_value is None
-        else max(abs_tolerance * max(1.0, native_k_value),
+        else max(abs_tolerance * max(native_k_value, nu_fiss),
                  sigma_multiplier * production_sem_bound)
     )
     balance_pass = abs(signed_residual) <= threshold
@@ -138,6 +142,10 @@ def _close_balance(
         "balance_signed_residual_minus_one":signed_residual,
         "conservative_residual_standard_error_upper_bound":sem_bound,
         "screen_threshold_per_source":threshold,
+        "screen_uses_strict_physical_closure_not_widened_by_score_covariance":True,
+        "uncertainty_bound_below_closure_tolerance":(
+            sigma_multiplier * sem_bound <= abs_tolerance
+        ),
         "neutron_balance_screen_passed":balance_pass,
         "nu_fission_vs_native_tracklength_k":{
             "nu_fission_production_per_source":nu_fiss,
@@ -155,7 +163,11 @@ def _close_balance(
             "for the next eigenvalue source generation. Native global OpenMC "
             "leakage avoids signed-vacuum-surface cancellation. Marginal "
             "reported tally SEMs are correlated, so their SUM is a "
-            "conservative error bound, not an exact joint variance. Passing "
+            "conservative error bound, not an exact joint variance. "
+            "That SEM bound does NOT relax the strict conservation "
+            "identity threshold. The native k-tracklength cross-check "
+            "uses its own estimator uncertainty, rather than an absolute "
+            "2%-of-one-neutron floor. Passing "
             "these screens is necessary physics implementation evidence, "
             "not independent source convergence or measured NASA fidelity."
         ),
