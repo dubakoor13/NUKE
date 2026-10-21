@@ -8,7 +8,9 @@ Not NASA hardware calibration, real OpenMC transport or two-fluid CHF.
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 import math
+import sys
 from pathlib import Path
 import tempfile
 
@@ -21,6 +23,7 @@ from .distributed_tie_euler import (
 from .isochoric_tie import IsochoricTieParameters
 from .lh2_feed_cycle import HydrogenEOS
 from .resolved_transient import read_resolved_heating
+from .run_distributed_tie_euler import main as run_distributed_tie_cli
 from .validate_resolved_transient import write_synthetic_reconstructions
 
 
@@ -209,6 +212,70 @@ def main()->int:
             without_drag.interface_total_energy_flux_w,
             atol=1e-8,rtol=1e-12,
         )
+
+        # Public CLI writes all three conserved quantities and a
+        # JSON audit without inferring OpenMC execution or NASA data.
+        output=Path(td)/"euler_report"
+        argv_old=sys.argv
+        try:
+            sys.argv=[
+                "run_distributed_tie_euler",str(mesh),str(fuel),str(tie),
+                "--initial-pressure-pa",str(p0),
+                "--initial-quality","0.30",
+                "--initial-solid-temperature-k","45",
+                "--inlet-pressure-pa",str(p_in),
+                "--outlet-pressure-pa",str(p_out),
+                "--inlet-quality","0.30",
+                "--outlet-backflow-quality","0.30",
+                "--supply-cell-volume-m3","0.001",
+                "--return-cell-volume-m3","0.001",
+                "--flow-area-m2","0.001",
+                "--solid-capacity-j-k","3000",
+                "--supply-ua-w-k","0.8",
+                "--return-ua-w-k","0.8",
+                "--darcy-friction-factor","0.03",
+                "--turnaround-loss-coefficient","0.6",
+                "--dt-s",str(dt),"--steps","2",
+                "--output",str(output),
+            ]
+            assert run_distributed_tie_cli()==0
+        finally:
+            sys.argv=argv_old
+        report=json.loads(
+            (output/"distributed_tie_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["status"]=="PASS"
+        assert report["distributed_axial_momentum"]
+        assert report["fluid_total_energy_conserved"]
+        assert not report["actual_openmc_transport_executed"]
+        assert not report["full_nerva_pump_turbine_nozzle_cycle_converged"]
+        assert len(report["history"])==2
+        assert all(
+            abs(row["mass_residual_kg_s"])<1e-9 and
+            abs(row["momentum_residual_n"])<1e-5 and
+            abs(row["total_energy_residual_j"])<1e-5
+            for row in report["history"]
+        )
+        with np.load(
+            output/"distributed_tie_final_state.npz",
+            allow_pickle=False
+        ) as fields:
+            assert fields["fluid_mass_kg"].shape==(nt,2*nz)
+            assert fields["interface_mass_flux_kg_s"].shape==(
+                nt,2*nz+1
+            )
+            assert np.all(fields["fluid_density_kg_m3"]>0)
+            assert np.allclose(
+                fields["fluid_total_energy_j"],
+                fields["fluid_mass_kg"]*(
+                    fields["fluid_specific_enthalpy_j_kg"]-
+                    fields["fluid_pressure_pa"]/
+                    fields["fluid_density_kg_m3"]+
+                    0.5*fields["fluid_velocity_m_s"]**2
+                ),atol=1e-7,rtol=1e-12,
+            )
 
         # Reject unstable acoustic CFL, nonphysical geometric input
         # and invalid pre-existing momentum/total-energy state.
