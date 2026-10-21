@@ -148,6 +148,7 @@ def analyze_reaction_replica_statistics(data: list[dict]) -> dict:
                 or np.any(total <= 0) or np.any(mat < 0)
                 or np.any(energies < 0) or np.any(spectra < 0)
                 or any(abs(float(row.sum())-1.) > 1e-10 for row in spectra)
+                or np.any(np.abs(spectra - energies / energies.sum(axis=1)[:, None]) > 2e-10)
                 or np.any(np.abs(mat.sum(axis=1)-total) > 1e-6)
                 or np.any(np.abs(energies.sum(axis=1)-total) >
                           np.maximum(1e-6, 0.02*total))):
