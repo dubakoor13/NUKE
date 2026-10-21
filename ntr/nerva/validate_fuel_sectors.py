@@ -29,6 +29,23 @@ def main() -> int:
         ],
         key=lambda cell: cell.name,
     )
+    coating = [
+        cell for cell in universe.cells.values()
+        if cell.name == "outer ZrC coating"
+    ]
+    assert len(coating) == 1
+    # The HexLattice, not a second coincident hexagonal prism, provides
+    # the outer fuel-element boundary. Verify that rounding-scale points
+    # immediately around the nominal outer-prism face remain covered by
+    # the ZrC cell: the previous double clip lost real neutrons here.
+    edge = config.fuel_flat_to_flat_cm / 2.
+    for eps in (-1e-8, 1e-8):
+        for side in (-1, 1):
+            point = (side * (edge + eps), 0., 0.)
+            assert point in coating[0].region, (
+                f"uncovered outer fuel-element lattice edge: {point}"
+            )
+
     assert len(sector_cells) == 19
     assert all(
         cell.fill is materials["fuel"]
