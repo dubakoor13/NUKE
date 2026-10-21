@@ -68,6 +68,8 @@ def main() -> int:
     print(f"  max axial fraction SEM: {summary.max_axial_fraction_sem:.6g}")
     print(f"  original-order half-split TV (diagnostic only): {summary.half_split_total_variation:.6g}")
     print(f"  worst balanced TV (exhaustive <=12): {summary.maximum_balanced_split_total_variation}")
+    print(f"  tested balanced TV ({summary.balanced_split_method}): "
+          f"{summary.tested_balanced_split_total_variation:.6g}")
     print(f"  balanced split partitions tested: {summary.balanced_splits_tested}")
     print(f"  maximum leave-one-out TV: {summary.maximum_leave_one_out_total_variation:.6g}")
     print(f"  report: {out/'ensemble_convergence_report.json'}")
