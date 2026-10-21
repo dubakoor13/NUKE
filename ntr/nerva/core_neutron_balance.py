@@ -188,6 +188,16 @@ def inspect_real_statepoint(path: Path) -> dict:
         if not sp.tallies_present:
             raise ValueError("real OpenMC statepoint contains no tallies")
         tally=sp.get_tally(name="nerva_global_neutron_balance")
+        # OpenMC's global leakage may contain non-neutron particle escape
+        # in coupled neutron+photon transport. A neutron-only reaction tally
+        # must NEVER be balanced against potentially all-particle leakage.
+        # Coupled-mode balance needs a separate species-resolved leakage
+        # tally with correctly oriented vacuum-boundary accounting.
+        if any(isinstance(filter_,openmc.ParticleFilter) for filter_ in tally.filters):
+            raise ValueError(
+                "neutron global balance is not supported for coupled-photon "
+                "transport until species-resolved vacuum leakage is available"
+            )
         rates={score:_scalar_tally(tally,score)
                for score in ("absorption","scatter","nu-scatter","nu-fission")}
         native=_global_leakage(sp)
