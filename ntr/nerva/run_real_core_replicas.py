@@ -168,7 +168,7 @@ def parse_args():
     p.add_argument("--batches",type=int,default=24)
     p.add_argument("--inactive",type=int,default=8)
     p.add_argument(
-        "--hydrogen-temperature-k", type=float, default=293.6,
+        "--hydrogen-temperature-k", type=float, default=293.6059129982851,
         help=(
             "Explicit coolant material temperature [K]. Default 293.6 K "
             "is a COLD neutron-transport executable smoke test, NOT "
