@@ -60,6 +60,15 @@ def main() -> int:
         # First two replicates have -0.04 axial bias, latter +0.04.
         assert math.isclose(result.half_split_total_variation,0.08/3,
                             rel_tol=1e-12)
+        assert result.balanced_splits_exhaustive
+        assert result.balanced_splits_tested == 3
+        assert math.isclose(
+            result.maximum_balanced_split_total_variation,
+            0.08/3, rel_tol=1e-12
+        )
+        assert result.maximum_leave_one_out_total_variation <= (
+            result.tolerance_max_leave_one_out_total_variation
+        )
         assert result.mean_pairwise_total_variation>0
         assert result.maximum_leave_one_out_total_variation>0
         assert fields["mean_power_fraction"].shape==(2,2,3)
@@ -91,6 +100,63 @@ def main() -> int:
             max_half_split_total_variation=0.01,
         )
         assert bad_split.status=="FAIL"
+
+        # Regression for the original input-order loophole: alternating
+        # strongly divergent maps can make the naive half-split look near
+        # zero, although another balanced split has large spatial TV.
+        shuffled = [members[i] for i in (0, 3, 1, 2)]
+        shuffled_qa, _ = assess_replica_ensemble(
+            shuffled,
+            max_p95_relative_sem=0.04,
+            max_axial_fraction_sem=0.01,
+            max_half_split_total_variation=0.01,
+            max_leave_one_out_total_variation=1.0,
+        )
+        assert shuffled_qa.half_split_total_variation < 1e-12
+        assert shuffled_qa.status=="FAIL"
+        assert math.isclose(
+            shuffled_qa.maximum_balanced_split_total_variation,
+            result.maximum_balanced_split_total_variation,
+            rel_tol=1e-12,
+        )
+
+        # Leave-one-out is also an active gate, unlike the previous code.
+        # An innocuous half split cannot hide an extreme single run.
+        loo_bad, _ = assess_replica_ensemble(
+            shuffled,
+            max_p95_relative_sem=1.,
+            max_axial_fraction_sem=1.,
+            max_half_split_total_variation=1.,
+            max_leave_one_out_total_variation=0.02,
+        )
+        assert loo_bad.status == "FAIL"
+        assert loo_bad.maximum_leave_one_out_total_variation > 0.02
+
+        # Exhaustive odd-sized split requires C(5,2)=10 partitions.
+        odd, _ = assess_replica_ensemble(
+            members + [members[1]],
+            max_p95_relative_sem=0.1,
+        )
+        assert odd.balanced_splits_exhaustive
+        assert odd.balanced_splits_tested == 10
+
+        # For larger ensembles the explicitly approximate fallback must
+        # still be input-order INVARIANT for its acceptance decision.
+        many = members * 4
+        large_a, _ = assess_replica_ensemble(
+            many, max_p95_relative_sem=0.1
+        )
+        large_b, _ = assess_replica_ensemble(
+            many[::-1], max_p95_relative_sem=0.1
+        )
+        assert not large_a.balanced_splits_exhaustive
+        assert large_a.maximum_balanced_split_total_variation is None
+        assert large_a.status == large_b.status
+        assert math.isclose(
+            large_a.maximum_leave_one_out_total_variation,
+            large_b.maximum_leave_one_out_total_variation,
+            rel_tol=1e-12,
+        )
 
         # A changed absolute nuclear power or mesh is a hard error.
         expect_error(lambda:assess_replica_ensemble(members[:3]))
