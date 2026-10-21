@@ -45,8 +45,10 @@ class NervaConfig:
     # 'evaluated-bound' enables chemically bound thermal scattering in
     # specific PURE moderators/reflectors, but only when all required
     # evaluated S(alpha,beta) HDF5 kernels exist in cross_sections.xml.
-    # Existing cold NNDC test library lacks those kernels; free-gas
-    # remains explicitly a surrogate, never "NASA validated".
+    # NNDC test data include the four named kernels at about 296 K,
+    # but cold incident-neutron XS are at about 293.6 K: exact solid-
+    # temperature coverage must be checked independently. Free-gas
+    # remains a surrogate, never "NASA validated".
     thermal_scattering_treatment: str = "free-gas"
     bound_solid_temperature_k: float | None = None
     reflector_density_g_cm3: float = 1.85
