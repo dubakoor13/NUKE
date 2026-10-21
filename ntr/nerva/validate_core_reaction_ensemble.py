@@ -38,7 +38,9 @@ def fixture():
         out.append({
             "seed":seed,
             "material_ids":materials,
-            "incident_energy_bins_eV":bins,
+            # Independent test fixtures: never alias neutron energy-bin
+            # definitions across simulated independent OpenMC RNG seeds.
+            "incident_energy_bins_eV":[interval.copy() for interval in bins],
             "scores":{
                 "absorption":{
                     "global_per_source":absorption,
