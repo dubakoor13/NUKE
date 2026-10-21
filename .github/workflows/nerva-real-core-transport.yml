@@ -1,0 +1,67 @@
+name: NERVA actual OpenMC neutron transport (core only)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nerva-real-core-transport.yml'
+      - 'ntr/nerva/run_real_core_replicas.py'
+      - 'ntr/nerva/validate_real_core_replicas_statistics.py'
+      - 'ntr/nerva/model.py'
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/statepoint_content_audit.py'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  real-core-four-seed-smoke:
+    name: Executed four-seed NERVA-derived core eigenvalue transport
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull official OpenMC executable with its NNDC test-data archive
+        run: |
+          set -euo pipefail
+          mkdir -p build/nerva_real_core
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' \
+            | tee build/nerva_real_core/docker_image_repo_digest.json
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{.Id}}' \
+            | tee build/nerva_real_core/docker_image_id.txt
+
+      - name: Execute OpenMC C++ neutron transport on four independent seeds
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --cpus=2 --memory=6g \
+            -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /repo \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              echo "Executable: $(command -v openmc)"
+              openmc --version
+              python --version
+              python -c "import openmc; print(\"OpenMC Python:\", openmc.__version__)"
+              test -f "$OPENMC_CROSS_SECTIONS"
+              echo "Evaluated neutron library: $OPENMC_CROSS_SECTIONS"
+              python -m ntr.nerva.validate_real_core_replicas_statistics
+              python -m ntr.nerva.run_real_core_replicas \
+                --rings 1 --particles 300 --batches 24 --inactive 8 \
+                --seeds 13007 23011 33013 43019 \
+                --output build/nerva_real_core
+            '
+
+      - name: Persist physical-statepoint evidence even when transport fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerva-real-openmc-four-seed-core-evidence
+          path: build/nerva_real_core/
+          if-no-files-found: warn
+          retention-days: 21
