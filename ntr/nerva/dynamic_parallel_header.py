@@ -64,6 +64,7 @@ def solve_nozzle_reflector_to_header(
     eos: HydrogenEOS | None = None,
     minimum_reference_fraction: float = 0.25,
     maximum_reference_fraction: float = 1.75,
+    pump_reservoir_override: tuple[float,float] | None = None,
 ) -> DynamicNozzleBranch:
     """Find series jacket/reflector flow matching the live header p.
 
@@ -78,8 +79,15 @@ def solve_nozzle_reflector_to_header(
     cooling=shaft.regenerative_cooling
     if cooling is None:
         raise ValueError("regenerative network absent")
-    p_in=bc.upstream_pressure_pa
-    h_in=bc.upstream_stagnation_enthalpy_j_kg
+    if pump_reservoir_override is None:
+        p_in,h_in=bc.upstream_pressure_pa,bc.upstream_stagnation_enthalpy_j_kg
+    else:
+        if (not isinstance(pump_reservoir_override,tuple)
+                or len(pump_reservoir_override)!=2):
+            raise ValueError("live pump reservoir must be a (pressure, enthalpy) tuple")
+        p_in,h_in=pump_reservoir_override
+        if not math.isfinite(p_in) or p_in<=0 or not math.isfinite(h_in):
+            raise ValueError("invalid live pump reservoir EOS state")
     m_ref=cooling.nozzle_reflector_mass_flow_kg_s
     if (not math.isfinite(header_pressure_pa)
             or header_pressure_pa<=0 or header_pressure_pa>=p_in):
@@ -189,19 +197,22 @@ def advance_dynamic_parallel_tie_header(
     dt_s:float,
     *,
     eos: HydrogenEOS | None = None,
+    pump_reservoir_override: tuple[float,float] | None = None,
 ) -> DynamicParallelTieHeaderStep:
     """Live nozzle mass/enthalpy + live Euler tie outlet -> same header."""
     eos=eos or HydrogenEOS()
     p_old,_,_,_=header_properties(old.header,header_params,eos=eos)
     solution=solve_nozzle_reflector_to_header(
-        network,shaft,p_old,eos=eos
+        network,shaft,p_old,eos=eos,
+        pump_reservoir_override=pump_reservoir_override,
     )
     combined=advance_dynamic_header_tie(
         heating,old,distributed_params,header_params,shaft,dt_s,
         eos=eos,nozzle_branch_override=(
             solution.mass_flow_kg_s,
             solution.outlet_stagnation_enthalpy_j_kg,
-        )
+        ),
+        tie_supply_reservoir_override=pump_reservoir_override,
     )
     if not combined.dynamic_nozzle_branch_pressure_response_active:
         raise RuntimeError("dynamic pressure-conditioned branch not applied")

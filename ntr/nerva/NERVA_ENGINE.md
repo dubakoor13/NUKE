@@ -1643,6 +1643,75 @@ transient fluid inventory or momentum wave solution; its
 heat-power inputs are fixed. The validation uses synthetic nuclear
 heating, not actual OpenMC transport or historical NASA results.
 
+## Dual dynamic H2 manifolds: close upstream branch mass/energy inventory
+
+`dual_header_tie.py` adds a finite-volume **pump-discharge
+hydrogen manifold** to the existing pressure-responsive nozzle/
+reflector branch, distributed tie-tube Euler and downstream common
+header. Both header volumes independently store `m` and `m*u`.
+The upstream header receives reference pump-delivered hydrogen and
+supplies two separate branches:
+
+```text
+dM_pump_header/dt = mdot_pump_reference
+                    - mdot_nozzle - F_mass_tie_supply
+
+d(M*u)_pump_header/dt = mdot_pump_reference*h_pump_reference
+                    - mdot_nozzle*h_pump_header
+                    - F_total_energy_tie_supply
+
+p_up,h_up = CoolProp(m_pump_header / V_pump_header, u_pump_header)
+```
+
+The numerical Rusanov tie-supply face flux appears with opposite
+sign in the upstream header and tie inlet. The tie-return face
+flux is likewise shared with the downstream header. The
+quasi-steady nozzle/reflector branch receives the **live pump
+manifold** pressure and enthalpy and solves for positive flow to
+the **live downstream header** pressure; the enthalpy gain across
+this branch is exactly `Q_nozzle + Q_reflector`.
+
+The global control volume includes two H2 manifold inventories,
+distributed tie H2 mass, momentum and *kinetic-inclusive total*
+energy, all tie solid thermal masses, and the nozzle/reflector
+external heat deposition:
+
+```text
+dM_total/dt = mdot_pump_reference - mdot_engine_reference
+
+dE_total/dt = mdot_pump_reference*h_pump_reference
+              - mdot_engine_reference*h_downstream_header
+              + Q_nuclear_tie
+              + Q_nozzle_reflector
+```
+
+The two internal tie Euler face fluxes and both ends of the
+regenerative nozzle branch therefore cancel from the **combined**
+mass and total-energy balances. Both dynamic manifold pressures
+are recomputed from CoolProp after each conservative Euler
+timestep, then supplied to both hydraulic branches on the next.
+Changing pump-manifold volume changes pressure dynamics without
+inventing an imposed branch flow.
+
+Run `python -m ntr.nerva.validate_dual_header_tie`. For a source
+NPZ transient, extend the existing runner with
+`--dynamic-nozzle-branch --upstream-manifold-volume-m3 0.0001`
+(and the existing `--header-volume-m3` option).
+The runner exports dual inventory mass, internal energy, EOS
+pressure and enthalpy, conservation residuals and explicit
+model-scope flags.
+
+**Remaining:** The pump-delivered reference `mdot` and
+pump stagnation enthalpy, and the engine downstream mass demand,
+are still supplied by the independently solved *steady*
+shaft-closed cycle. We now conserve their resulting transient
+branch flow mismatch as real pump-manifold hydrogen inventory;
+this does NOT yet re-solve the pump head/shaft power, turbine
+bleed, nozzle choking, core flow or dynamic upstream tank.
+No authentic NERVA hardware dimensions, new OpenMC transport,
+non-equilibrium two-phase slip/CHF or NASA benchmark runs are
+implied by these synthetic regressions.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
