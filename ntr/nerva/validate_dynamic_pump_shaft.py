@@ -234,16 +234,19 @@ def main()->int:
         # Changing rotor inertia modifies angular acceleration, not
         # instantaneous pump performance at the same speed.
         heavy=replace(params,rotor_inertia_kg_m2=params.rotor_inertia_kg_m2*20)
+        # Use the non-equilibrium initial speed so the rotor work
+        # increment is RESOLVABLE above machine precision. The
+        # nominal shaft-closed reference has almost zero net torque.
         heavy_result=advance_dynamic_pump_tie(
-            heat,initial,core,heavy,flow,up,down,net,shaft,dt,eos=eos,
+            heat,fast_initial,core,heavy,flow,up,down,net,shaft,dt,eos=eos,
         )
-        validate_balance(heavy_result,initial,heavy,dt,net,heat)
+        validate_balance(heavy_result,fast_initial,heavy,dt,net,heat)
         assert math.isclose(
-            first.pump.mass_flow_kg_s,
+            perturbed.pump.mass_flow_kg_s,
             heavy_result.pump.mass_flow_kg_s,rel_tol=1e-12,
         )
-        assert abs(heavy_result.state.rotor_angular_speed_rad_s-1200.)<(
-            abs(first.state.rotor_angular_speed_rad_s-1200.)
+        assert abs(heavy_result.state.rotor_angular_speed_rad_s-1201.2)<(
+            abs(perturbed.state.rotor_angular_speed_rad_s-1201.2)
         )
         # User-facing two-manifold CLI with flow-driven pump curve,
         # rotor kinetic energy and explicit nonconverged turbine flags.
