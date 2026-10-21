@@ -167,6 +167,7 @@ def advance_dynamic_header_tie(
     *,
     eos: HydrogenEOS | None = None,
     nozzle_branch_override: tuple[float,float] | None = None,
+    tie_supply_reservoir_override: tuple[float,float] | None = None,
 ) -> DynamicHeaderTieStep:
     """Explicit split-step tie + dynamic header with exact SHARED face fluxes.
 
@@ -208,10 +209,19 @@ def advance_dynamic_header_tie(
         if not math.isfinite(m_nozzle) or m_nozzle<=0 or not math.isfinite(h_nozzle):
             raise ValueError("dynamic nozzle branch flow/enthalpy invalid")
 
+    if tie_supply_reservoir_override is None:
+        p_up,h_up=bc.upstream_pressure_pa,bc.upstream_stagnation_enthalpy_j_kg
+    else:
+        if (not isinstance(tie_supply_reservoir_override,tuple)
+                or len(tie_supply_reservoir_override)!=2):
+            raise ValueError("tie supply reservoir override must be (pressure,enthalpy)")
+        p_up,h_up=tie_supply_reservoir_override
+        if (not math.isfinite(p_up) or p_up<=0
+                or not math.isfinite(h_up)):
+            raise ValueError("invalid live upstream manifold H2 state")
     tie=advance_distributed_tie(
         heating,old.tie,distributed_params,
-        bc.upstream_pressure_pa,
-        bc.upstream_stagnation_enthalpy_j_kg,
+        p_up,h_up,
         p_old,h_old,dt_s,eos=eos,
     )
     # The only tie->header interface carries these conservative Euler
