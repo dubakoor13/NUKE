@@ -67,6 +67,11 @@ def audit_bound_thermal_scattering(
             path = Path(entry.resolved_path)
             try:
                 thermal = openmc.data.ThermalScattering.from_hdf5(path)
+                if thermal.name != name:
+                    raise ValueError(
+                        f"evaluated kernel HDF5 name {thermal.name!r} "
+                        f"does not match {name!r} in cross_sections.xml"
+                    )
                 # OpenMC kTs maps temperature identifiers to kT [eV].
                 kts = thermal.kTs
                 vals = kts.values() if isinstance(kts, dict) else kts
@@ -87,7 +92,7 @@ def audit_bound_thermal_scattering(
                         digest.update(data)
                 row["sha256"] = digest.hexdigest()
                 row["accepted"] = True
-            except (OSError, KeyError, ValueError, TypeError) as error:
+            except (OSError, KeyError, ValueError, TypeError, AttributeError) as error:
                 row["error"] = str(error)
         rows.append(row)
 
