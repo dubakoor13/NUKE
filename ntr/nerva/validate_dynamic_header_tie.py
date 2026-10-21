@@ -8,8 +8,10 @@ and uncalibrated hardware parameters, not historical NASA validation.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict,replace
+import json
 import math
+import sys
 from pathlib import Path
 import tempfile
 
@@ -32,6 +34,7 @@ from .validate_hot_lh2_cycle import hot_case
 from .validate_regenerative_cooling import network
 from .validate_turbine_bleed_cycle import sample_turbine
 from .validate_resolved_transient import write_synthetic_reconstructions
+from .run_dynamic_header_tie import main as run_dynamic_header_cli
 
 
 def rejects(call):
@@ -209,6 +212,68 @@ def main()->int:
             abs(larger.header_new_pressure_pa-larger.header_old_pressure_pa)<
             abs(result.header_new_pressure_pa-result.header_old_pressure_pa)
         )
+
+        # Public CLI replays shaft, EOS and dynamic header feedback,
+        # saving all conserved variables and source-provenance flags.
+        config=Path(td)/"engine.json"
+        config.write_text(json.dumps({
+            "lh2_cycle":asdict(hot_case()),
+            "turbine":asdict(sample_turbine()),
+            "regenerative_cooling":asdict(network()),
+        }),encoding="utf-8")
+        out=Path(td)/"report"
+        prev_args=sys.argv
+        try:
+            sys.argv=[
+                "run_dynamic_header_tie",str(mesh),str(fuel),str(tie),
+                "--engine-config",str(config),
+                "--header-volume-m3","0.0001",
+                "--initial-solid-temperature-k","35",
+                "--supply-cell-volume-m3","0.0001",
+                "--return-cell-volume-m3","0.0001",
+                "--flow-area-m2","0.0002",
+                "--solid-capacity-j-k","3000",
+                "--supply-ua-w-k","0.4",
+                "--return-ua-w-k","0.4",
+                "--darcy-friction-factor","0.04",
+                "--turnaround-loss-coefficient","0.6",
+                "--dt-s",str(dt),"--steps","2",
+                "--output",str(out),
+            ]
+            assert run_dynamic_header_cli()==0
+        finally:
+            sys.argv=prev_args
+        report=json.loads(
+            (out/"dynamic_tie_header_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["status"]=="PASS"
+        assert report["tie_header_pressure_enthalpy_feedback_active"]
+        assert not report["full_shaft_cycle_feedback_converged"]
+        assert not report["dynamic_pump_turbine_nozzle_flows_solved"]
+        assert not report["actual_openmc_transport_executed"]
+        assert len(report["history"])==2
+        assert all(
+            abs(r["combined_mass_residual_kg_s"])<1e-8
+            and abs(r["combined_total_energy_residual_j"])<1e-5
+            and abs(r["tie_momentum_residual_n"])<1e-5
+            for r in report["history"]
+        )
+        assert (
+            report["history"][0]["header_pressure_pa"]!=
+            report["history"][1]["header_pressure_pa"]
+        )
+        with np.load(
+            out/"dynamic_tie_header_final_state.npz",allow_pickle=False,
+        ) as data:
+            assert data["tie_mass_kg"].shape==state.tie.mass_kg.shape
+            assert data["tie_interface_mass_flux_kg_s"].shape==(
+                heating.tie_solid_w.shape[0],
+                2*heating.tie_solid_w.shape[1]+1,
+            )
+            assert float(data["header_mass_kg"])>0
+            assert float(data["header_pressure_pa"])>0
 
         rejects(lambda:advance_dynamic_header_tie(
             heating,state,params,hdr,shaft,0.,eos=eos
