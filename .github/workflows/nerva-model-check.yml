@@ -326,6 +326,9 @@ jobs:
       - name: Validate whole-core neutron conservation with (n,xn) multiplicity
         run: python -m ntr.nerva.validate_core_neutron_balance
 
+      - name: Validate independent material, energy and global neutron reaction identities
+        run: python -m ntr.nerva.validate_core_reaction_partition
+
       - name: Audit reference-specific NASA core geometry and composition gaps
         run: python -m ntr.nerva.physical_core_reference_validation --assembly core --rings 3 --output build/nerva_core_reference_audit.json
 
