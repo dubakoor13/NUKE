@@ -8,8 +8,10 @@ measured turbopump curve or real OpenMC data are used.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict,replace
+import json
 import math
+import sys
 from pathlib import Path
 import tempfile
 
@@ -38,6 +40,7 @@ from .validate_regenerative_cooling import network
 from .validate_turbine_bleed_cycle import sample_turbine
 from .validate_resolved_transient import write_synthetic_reconstructions
 from .resolved_transient import read_resolved_heating
+from .run_dynamic_header_tie import main as run_dynamic_pump_cli
 
 
 def rejects(f):
@@ -88,7 +91,7 @@ def validate_balance(step, old, params, dt, net, heat):
     # turbine drive into rotor, and external distributed thermal heat.
     oldhyd=old.hydraulic
     newhyd=fluid.state
-    cs=heat.tie_solid_w.shape and 3000.
+    cs=3000.
     fluid_storage=(
         (newhyd.pump.internal_energy_j-oldhyd.pump.internal_energy_j)+
         (newhyd.downstream.header.internal_energy_j-
@@ -211,9 +214,10 @@ def main()->int:
             second.pump.manifold_pressure_pa,
             first.fluid.pump_new_pressure_pa,rel_tol=1e-11,
         )
-        assert second.state.rotor_angular_speed_rad_s!=(
-            first.state.rotor_angular_speed_rad_s
-        )
+        # Reference turbine power nearly exactly matches reference
+        # pump demand, so speed may be unchanged to machine precision
+        # at a single 1e-7 s step. Exercise a nonzero speed transient
+        # under the intentionally perturbed pump curve below instead.
         # Start slightly faster: this must change the physical pump
         # supply and subsequent common-header state even though
         # turbine reference delivered power is held unchanged.
@@ -222,6 +226,9 @@ def main()->int:
             heat,fast_initial,core,params,flow,up,down,net,shaft,dt,eos=eos,
         )
         validate_balance(perturbed,fast_initial,params,dt,net,heat)
+        assert perturbed.state.rotor_angular_speed_rad_s!=(
+            fast_initial.rotor_angular_speed_rad_s
+        )
         assert perturbed.pump.mass_flow_kg_s>first.pump.mass_flow_kg_s
         assert perturbed.fluid.state.pump.mass_kg!=first.fluid.state.pump.mass_kg
         # Changing rotor inertia modifies angular acceleration, not
@@ -238,6 +245,72 @@ def main()->int:
         assert abs(heavy_result.state.rotor_angular_speed_rad_s-1200.)<(
             abs(first.state.rotor_angular_speed_rad_s-1200.)
         )
+        # User-facing two-manifold CLI with flow-driven pump curve,
+        # rotor kinetic energy and explicit nonconverged turbine flags.
+        config=Path(td)/"engine.json"
+        config.write_text(json.dumps({
+            "lh2_cycle":asdict(core),
+            "turbine":asdict(sample_turbine()),
+            "regenerative_cooling":asdict(net),
+        }),encoding="utf-8")
+        output=Path(td)/"pump_report"
+        original_argv=sys.argv
+        try:
+            sys.argv=[
+                "run_dynamic_header_tie",
+                str(mesh),str(fuel),str(tie),
+                "--engine-config",str(config),
+                "--header-volume-m3","0.0001",
+                "--dynamic-nozzle-branch",
+                "--upstream-manifold-volume-m3","0.0001",
+                "--rotor-reference-speed-rad-s","1200",
+                "--rotor-inertia-kg-m2","0.05",
+                "--initial-solid-temperature-k","35",
+                "--supply-cell-volume-m3","0.0001",
+                "--return-cell-volume-m3","0.0001",
+                "--flow-area-m2","0.0002",
+                "--solid-capacity-j-k","3000",
+                "--supply-ua-w-k","0.4",
+                "--return-ua-w-k","0.4",
+                "--darcy-friction-factor","0.04",
+                "--turnaround-loss-coefficient","0.6",
+                "--dt-s",str(dt),"--steps","2",
+                "--output",str(output),
+            ]
+            assert run_dynamic_pump_cli()==0
+        finally:
+            sys.argv=original_argv
+        report=json.loads(
+            (output/"dynamic_tie_header_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["status"]=="PASS"
+        assert report["pump_flow_and_rotor_kinetic_energy_are_dynamic"]
+        assert not report["pump_head_and_pump_mass_flow_are_steady_references"]
+        assert report["turbine_power_held_at_steady_shaft_reference"]
+        assert not report["historical_nasa_pump_curve_validated"]
+        assert not report["full_shaft_cycle_feedback_converged"]
+        assert len(report["history"])==2
+        assert all(
+            x["dynamic_pump_delivered_flow_kg_s"]>0
+            and x["dynamic_pump_shaft_power_w"]>0
+            and abs(x["total_system_mass_residual_kg_s"])<1e-8
+            and abs(x["total_fluid_rotor_energy_residual_j"])<1e-5
+            for x in report["history"]
+        )
+        assert (
+            report["history"][0]["dynamic_pump_delivered_flow_kg_s"]!=
+            report["history"][1]["dynamic_pump_delivered_flow_kg_s"]
+        )
+        with np.load(
+            output/"dynamic_tie_header_final_state.npz",
+            allow_pickle=False,
+        ) as npz:
+            assert float(npz["rotor_angular_speed_rad_s"])>0
+            assert float(npz["dynamic_pump_mass_flow_kg_s"])>0
+            assert float(npz["upstream_manifold_mass_kg"])>0
+
         rejects(lambda:pump_delivery_at_state(
             core,params,1200.,core.tank_pressure_pa+core.pump_shutoff_pressure_rise_pa*1.01,eos=eos
         ))
