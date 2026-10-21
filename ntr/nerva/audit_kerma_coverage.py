@@ -20,6 +20,7 @@ import openmc.data
 from .audit_nuclear_data_temperatures import _requested_temperatures
 from .config import NervaConfig
 from .nuclear_data import _library_entries, resolve_cross_sections
+from .mt901_numeric import inspect_mt901_numeric_curves
 
 
 def _sha256(path: Path) -> str:
@@ -31,7 +32,7 @@ def _sha256(path: Path) -> str:
 
 
 def assess_mt901_inventory(rows: list[dict]) -> dict:
-    """Require positively observed MT=901 for every required nuclide.
+    """Require real finite MT901 coefficients for every evaluated nuclide.
 
     This is a necessary *coverage screen* for one local-heating method,
     not validation of KERMA numeric values, evaluated-data provenance,
@@ -45,21 +46,33 @@ def assess_mt901_inventory(rows: list[dict]) -> dict:
     if len(set(names)) != len(names):
         raise ValueError("duplicate neutron nuclide in MT=901 inventory")
     invalid = []
+    absent = []
+    numerically_unusable = []
     for row in rows:
         present = row.get("local_kerma_mt901_present")
+        numeric = row.get("local_kerma_mt901_numerical_usable")
         if present is not None and not isinstance(present, bool):
             raise ValueError("local KERMA reaction presence must be boolean or null")
+        if numeric is not None and not isinstance(numeric, bool):
+            raise ValueError("local KERMA numerical availability must be boolean or null")
         if present is not True:
+            absent.append(row["nuclide"])
             invalid.append(row["nuclide"])
-    ready = len(invalid) == 0
+        elif numeric is not True:
+            numerically_unusable.append(row["nuclide"])
+            invalid.append(row["nuclide"])
+    ready = not invalid
     return {
         "number_of_required_neutron_nuclides": len(rows),
         "nuclides_missing_or_unverified_mt901": invalid,
+        "nuclides_mt901_absent": absent,
+        "nuclides_mt901_present_but_numerically_unusable": numerically_unusable,
         "local_heating_evaluated_kerma_inventory_complete": ready,
         "neutron_only_heating_local_can_be_claimed_from_inventory": ready,
         "interpretation": (
-            "MT=901 presence in EVERY required nuclide is a conservative "
-            "data-coverage preflight, not a physical reactor acceptance test. "
+            "MT901 reaction presence AND actual finite, nonzero tabulated "
+            "coefficients at all supplied neutron temperatures are required. "
+            "This is a library-input screen, not physical reactor acceptance. "
             "Actual neutron-local heating tallies must also be nonzero and "
             "numerically verified. MT=301 ordinary heating, kappa-fission and "
             "other scores cannot silently replace missing MT=901. "
@@ -92,6 +105,8 @@ def audit_kerma_coverage(cross_sections: Path, *,
             "physical_neutron_hdf5_path": str(p) if p else None,
             "physical_neutron_hdf5_sha256": None,
             "local_kerma_mt901_present": None,
+            "local_kerma_mt901_numerical_usable": None,
+            "mt901_actual_coefficient_diagnostics": None,
             "ordinary_heating_mt301_present": None,
             "fission_heating_mt318_present": None,
             "library_load_error": None,
@@ -105,6 +120,11 @@ def audit_kerma_coverage(cross_sections: Path, *,
                     raise ValueError("evaluated HDF5 nuclide identity mismatch")
                 row["physical_neutron_hdf5_sha256"] = _sha256(p)
                 row["local_kerma_mt901_present"] = 901 in data.reactions
+                numeric = inspect_mt901_numeric_curves(data)
+                row["local_kerma_mt901_numerical_usable"] = numeric[
+                    "local_kerma_mt901_numerical_usable"
+                ]
+                row["mt901_actual_coefficient_diagnostics"] = numeric
                 row["ordinary_heating_mt301_present"] = 301 in data.reactions
                 row["fission_heating_mt318_present"] = 318 in data.reactions
             except Exception as exc:
@@ -136,6 +156,7 @@ def main() -> int:
     for row in report["nuclides"]:
         print(row["nuclide"], "MT301", row["ordinary_heating_mt301_present"],
               "MT901", row["local_kerma_mt901_present"],
+              "MT901_numeric", row["local_kerma_mt901_numerical_usable"],
               "load_error", row["library_load_error"])
     print("NASA NERVA physical core heating validated: NO")
     if args.require_mt901 and not report["local_heating_evaluated_kerma_inventory_complete"]:
