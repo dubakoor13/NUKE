@@ -44,6 +44,13 @@ jobs:
             openmc/openmc:v0.15.3 \
             bash -lc '
               set -euo pipefail
+              # The NUKE checkout contains a separate /repo/openmc source tree.
+              # It must NEVER shadow the installed Docker OpenMC Python
+              # bindings and their libopenmc.so. Run outside the checkout,
+              # prepend Docker site-packages, and import NUKE via /repo.
+              cd /tmp
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\\"purelib\\"])"):/repo"
+              python -c "import openmc; print(\"Installed OpenMC module:\", openmc.__file__); assert not openmc.__file__.startswith(\"/repo/\")"
               echo "Executable: $(command -v openmc)"
               openmc --version
               python --version
@@ -55,7 +62,7 @@ jobs:
                 --rings 1 --particles 300 --batches 24 --inactive 8 \
                 --hydrogen-temperature-k 293.6059129982851 \
                 --seeds 13007 23011 33013 43019 \
-                --output build/nerva_real_core
+                --output /repo/build/nerva_real_core
             '
 
       - name: Persist physical-statepoint evidence even when transport fails
