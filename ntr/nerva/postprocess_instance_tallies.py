@@ -211,6 +211,10 @@ def main() -> int:
     tie_return_axial_paths: list[str] = []
 
     with openmc.StatePoint(args.statepoint) as sp:
+        from .power import heating_score_for_transport
+        heating_score = heating_score_for_transport(bool(sp.photon_transport))
+        if metadata.get("power_normalization_score", heating_score) != heating_score:
+            raise ValueError("instance tally heating estimator differs from mesh normalization")
         for sector_index in range(1, 20):
             sector_name = (
                 f"nerva_fuel_sector_"
@@ -224,11 +228,11 @@ def main() -> int:
             if sector_tally is not None:
                 heating = _score(
                     sector_tally,
-                    "heating-local",
+                    heating_score,
                 )
                 heating_std = _score(
                     sector_tally,
-                    "heating-local",
+                    heating_score,
                     value="std_dev",
                 )
                 fuel_sector_integrated_raw[sector_index] = (
@@ -268,11 +272,11 @@ def main() -> int:
             if sector_axial_tally is not None:
                 axial_mean, axial_paths = _distrib_axial_score(
                     sector_axial_tally,
-                    "heating-local",
+                    heating_score,
                 )
                 axial_std, _ = _distrib_axial_score(
                     sector_axial_tally,
-                    "heating-local",
+                    heating_score,
                     value="std_dev",
                 )
                 fuel_sector_axial_raw[sector_index] = (
@@ -295,10 +299,10 @@ def main() -> int:
             fuel_tally = None
 
         if fuel_tally is not None:
-            heating = _score(fuel_tally, "heating-local")
+            heating = _score(fuel_tally, heating_score)
             heating_std = _score(
                 fuel_tally,
-                "heating-local",
+                heating_score,
                 value="std_dev",
             )
             fission = _score(fuel_tally, "fission")
@@ -344,11 +348,11 @@ def main() -> int:
             )
             fuel_axial_raw, fuel_axial_paths = _distrib_axial_score(
                 fuel_axial_tally,
-                "heating-local",
+                heating_score,
             )
             fuel_axial_std_raw, _ = _distrib_axial_score(
                 fuel_axial_tally,
-                "heating-local",
+                heating_score,
                 value="std_dev",
             )
             fuel_axial_raw = (
@@ -368,10 +372,10 @@ def main() -> int:
             except LookupError:
                 continue
 
-            heating = _score(tally, "heating-local")
+            heating = _score(tally, heating_score)
             heating_std = _score(
                 tally,
-                "heating-local",
+                heating_score,
                 value="std_dev",
             )
             absorption = _score(tally, "absorption")
@@ -416,11 +420,11 @@ def main() -> int:
             if axial_tally is not None:
                 axial_mean, axial_paths = _distrib_axial_score(
                     axial_tally,
-                    "heating-local",
+                    heating_score,
                 )
                 axial_std, _ = _distrib_axial_score(
                     axial_tally,
-                    "heating-local",
+                    heating_score,
                     value="std_dev",
                 )
                 channel_axial_raw[channel_index] = (
@@ -435,10 +439,10 @@ def main() -> int:
             if not tally.name.startswith("nerva_tie_instance_"):
                 continue
 
-            heating = _score(tally, "heating-local")
+            heating = _score(tally, heating_score)
             heating_std = _score(
                 tally,
-                "heating-local",
+                heating_score,
                 value="std_dev",
             )
             absorption = _score(tally, "absorption")
@@ -479,11 +483,11 @@ def main() -> int:
             )
             axial_mean, axial_paths = _distrib_axial_score(
                 tally,
-                "heating-local",
+                heating_score,
             )
             axial_std, _ = _distrib_axial_score(
                 tally,
-                "heating-local",
+                heating_score,
                 value="std_dev",
             )
             tie_component_axial_raw[component] = (
@@ -509,12 +513,12 @@ def main() -> int:
             tie_supply_axial_raw, tie_supply_axial_paths = (
                 _distrib_axial_score(
                     tie_supply_axial_tally,
-                    "heating-local",
+                    heating_score,
                 )
             )
             tie_supply_axial_std_raw, _ = _distrib_axial_score(
                 tie_supply_axial_tally,
-                "heating-local",
+                heating_score,
                 value="std_dev",
             )
             tie_supply_axial_raw = (
@@ -541,12 +545,12 @@ def main() -> int:
             tie_return_axial_raw, tie_return_axial_paths = (
                 _distrib_axial_score(
                     tie_return_axial_tally,
-                    "heating-local",
+                    heating_score,
                 )
             )
             tie_return_axial_std_raw, _ = _distrib_axial_score(
                 tie_return_axial_tally,
-                "heating-local",
+                heating_score,
                 value="std_dev",
             )
             tie_return_axial_raw = (
