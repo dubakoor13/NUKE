@@ -1384,8 +1384,14 @@ h = u + p/rho
 U_new = U_old - (dt*A/V)*(F_right - F_left) + dt*S/V
 ```
 
-CoolProp hydrogen provides `p(rho,u)`, temperature, equilibrium
-quality and local speed of sound. Each face uses ONE shared local
+CoolProp hydrogen provides `p(rho,u)`, temperature and equilibrium
+quality. **Single-phase** sound speed comes directly from the EOS;
+**two-phase** sound speed is an explicitly assumed homogeneous-
+equilibrium, isentropic finite-difference derivative
+`c² = (∂p/∂rho)_s`, because CoolProp does not provide a unique
+unqualified two-phase sound speed. Derivative failure rejects the
+state; this closure does not describe slip or non-equilibrium waves.
+Each face uses ONE shared local
 Lax-Friedrichs/Rusanov numerical flux with signal speed
 `max(|v_L|+c_L, |v_R|+c_R)`; mass, momentum and total energy
 therefore have telescoping internal fluxes. The equations explicitly
