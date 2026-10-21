@@ -24,6 +24,7 @@ from .config import NervaConfig
 from .nuclear_data import inspect_nuclear_data
 from .audit_nuclear_data_temperatures import audit_temperature_coverage
 from .statepoint_content_audit import audit_eigenvalue_statepoint_content
+from .core_neutron_balance import inspect_real_statepoint
 from .source_bank_convergence import compare_independent_sources
 from .source_bank_trajectory import source_bank_trajectory
 
@@ -323,6 +324,17 @@ def main() -> int:
         ):
             raise RuntimeError("Nuclear data index changed across OpenMC seeds")
         structural = audit_eigenvalue_statepoint_content(file)
+        neutron_balance = inspect_real_statepoint(file)
+        (run_directory / "global_neutron_balance.json").write_text(
+            json.dumps(neutron_balance, indent=2, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        if (not neutron_balance["neutron_balance_screen_passed"]
+                or neutron_balance["nu_fission_vs_native_tracklength_k"]["screen_passed"] is False):
+            raise RuntimeError(
+                "GENUINE OpenMC core neutron balance failed conservation or "
+                "nu-fission production integrity; inspect global_neutron_balance.json"
+            )
         if structural["seed"] != seed:
             raise RuntimeError("Completed OpenMC statepoint initial seed does not match requested seed")
         if structural["n_batches"] < args.batches:
@@ -350,6 +362,7 @@ def main() -> int:
                 "source_entropy_serial_correlation"
             ),
             "hdf5_eigenvalue_integrity":structural,
+            "global_neutron_balance": neutron_balance,
         })
         (output/"progress.json").write_text(json.dumps(all_runs,indent=2)+"\n")
 
