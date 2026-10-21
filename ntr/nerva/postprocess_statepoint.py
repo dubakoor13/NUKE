@@ -101,6 +101,13 @@ def main() -> int:
             value="std_dev",
         )
         total_heating = _score_mesh_field(tally, "heating")
+        # OpenMC kappa-fission includes the recoverable energy produced by
+        # fission, not necessarily the energy deposited within this mesh.
+        # Older statepoints lack this additional diagnostic.
+        kappa_fission_ev = (
+            _score_mesh_field(tally, "kappa-fission")
+            if "kappa-fission" in tally.scores else None
+        )
         absorption = _score_mesh_field(tally, "absorption")
         fission = _score_mesh_field(tally, "fission")
         nu_fission = _score_mesh_field(tally, "nu-fission")
@@ -342,6 +349,21 @@ def main() -> int:
         np.sum(tie_return_hydrogen_power_density) * cell_volume_cm3
     )
 
+    recoverable_fission_power_w = None
+    deposited_to_fission_ratio = None
+    if kappa_fission_ev is not None:
+        kappa_sum = float(np.sum(kappa_fission_ev, dtype=np.float64))
+        if not np.isfinite(kappa_sum) or kappa_sum <= 0:
+            raise ValueError("OpenMC recoverable fission tally must be positive finite")
+        recoverable_fission_power_w = float(
+            kappa_sum * EV_TO_J * normalized.source_rate_s
+        )
+        if not np.isfinite(recoverable_fission_power_w) or recoverable_fission_power_w <= 0:
+            raise ValueError("invalid OpenMC recoverable fission power")
+        deposited_to_fission_ratio = (
+            normalized.total_power_w / recoverable_fission_power_w
+        )
+
     partition_audit = audit_heat_partition(
         power_density,
         fuel_power_density,
@@ -400,6 +422,17 @@ def main() -> int:
         "requested_power_MW": args.power_mw,
         "normalized_power_W": normalized.total_power_w,
         "source_rate_per_s": normalized.source_rate_s,
+        "reactor_power_input_definition": (
+            "normalized energy deposited within the scored reactor mesh; "
+            "gross recoverable fission power is an independent diagnostic"
+        ),
+        "recoverable_fission_power_W": recoverable_fission_power_w,
+        "deposited_to_recoverable_fission_power_ratio": deposited_to_fission_ratio,
+        "recoverable_fission_interpretation": (
+            "kappa-fission is not the spatial deposition tally; its ratio "
+            "to deposited heat includes capture heating and transport losses "
+            "and is not a direct photon leakage fraction"
+        ),
         "power_partition_audit": partition_audit,
         "fuel_power_W": fuel_power_w,
         "fuel_power_fraction": fuel_power_w / normalized.total_power_w,
