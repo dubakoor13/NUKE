@@ -217,8 +217,10 @@ def main() -> int:
         ):
             raise RuntimeError("Nuclear data index changed across OpenMC seeds")
         structural = audit_eigenvalue_statepoint_content(file)
-        if structural["run_mode"] if "run_mode" in structural else False:
-            raise RuntimeError("Unexpected statepoint audit result")
+        if structural["seed"] != seed:
+            raise RuntimeError("Completed OpenMC statepoint initial seed does not match requested seed")
+        if structural["n_batches"] < args.batches:
+            raise RuntimeError("OpenMC transport ran fewer than requested batches")
         if structural["photon_transport"]:
             raise RuntimeError("Unrequested photon transport in neutron-only core")
         diagnostics = json.loads(
