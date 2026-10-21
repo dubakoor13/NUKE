@@ -11,6 +11,7 @@ import numpy as np
 import openmc
 
 from .power import EV_TO_J, heating_score_for_transport, normalize_regular_mesh
+from .heat_partition import audit_heat_partition
 
 
 def parse_args() -> argparse.Namespace:
@@ -341,6 +342,17 @@ def main() -> int:
         np.sum(tie_return_hydrogen_power_density) * cell_volume_cm3
     )
 
+    partition_audit = audit_heat_partition(
+        power_density,
+        fuel_power_density,
+        tie_power_density,
+        fuel_hydrogen_power_density,
+        tie_hydrogen_power_density,
+        tie_supply_hydrogen_power_density,
+        tie_return_hydrogen_power_density,
+        cell_volume_cm3,
+    )
+
     maximum_power_density = float(np.max(power_density))
     active_mask = power_density > 1.0e-9 * maximum_power_density
     mean_active_power_density = (
@@ -388,6 +400,7 @@ def main() -> int:
         "requested_power_MW": args.power_mw,
         "normalized_power_W": normalized.total_power_w,
         "source_rate_per_s": normalized.source_rate_s,
+        "power_partition_audit": partition_audit,
         "fuel_power_W": fuel_power_w,
         "fuel_power_fraction": fuel_power_w / normalized.total_power_w,
         "tie_power_W": tie_power_w,
@@ -451,6 +464,10 @@ def main() -> int:
     print(
         f"  direct tie-tube H2 heating: "
         f"{tie_hydrogen_power_w / 1.0e6:.6g} MW"
+    )
+    print(
+        f"  remaining unassigned material heat: "
+        f"{partition_audit['remaining_unassigned_fraction']:.6f} of reactor power"
     )
     print(f"  mesh max/mean-active power peaking: {mesh_power_peaking:.6f}")
     print(f"  mesh heating p95 relative error: {p95_relative_error:.6f}")
