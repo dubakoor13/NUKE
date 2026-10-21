@@ -1537,6 +1537,61 @@ priority is an actual two-way transient tie/regenerator/shaft coupling
 with physically matched junction conditions and independently
 calibrated effective H2 areas and loss coefficients.
 
+## Dynamic, pressure-feedback common header and distributed tie Euler
+
+The opt-in `dynamic_header_tie.py` moves beyond fixed engine
+reservoir boundary conditions. A **rigid, well-mixed hydrogen common
+header** receives the exact conservative Rusanov `mass` and
+`total energy` outlet face fluxes computed by the distributed tie
+Euler solver. The nozzle/reflector parallel branch contributes its
+independently solved steady `mdot_nozzle*h_nozzle` from the existing
+shaft-closed regenerative-cooling network. The header discharges the
+reference solved engine tank flow, which remains fixed in this
+increment.
+
+```text
+m_header,n+1 = m_header,n + dt*(mdot_nozzle + mdot_tie_face - mdot_engine)
+(m*u)_header,n+1 = (m*u)_header,n
+    + dt*(mdot_nozzle*h_nozzle + F_total_energy,tie_face - mdot_engine*h_header,n)
+
+rho_header,n+1 = m_header,n+1 / V_header
+p_header,n+1, T_header,n+1 = CoolProp(rho_header,n+1, u_header,n+1)
+h_header,n+1 = u_header,n+1 + p_header,n+1/rho_header,n+1
+```
+
+The updated `p_header` and `h_header` enter the **next**
+tie-Euler return-outlet acoustic boundary and real backflow
+reservoir, enabling actual bidirectional tie/header pressure and
+enthalpy feedback. The return face flux is counted **once**,
+with opposite signs in the two inventories. The combined audit
+includes tie fluid *kinetic plus internal energy*, tie solids,
+and header *internal energy*; it checks total mass/energy
+against the two remaining external inlets and fixed engine outlet.
+
+Run `python -m ntr.nerva.validate_dynamic_header_tie` for the
+real-CoolProp synthetic nuclear heating regression: pressure
+feedback changes the subsequent Euler flux; changing header
+volume changes pressure response; local and combined inventories
+close, including direction-sensitive return energy. The command
+`python -m ntr.nerva.run_dynamic_header_tie --help` accepts an
+engine JSON, mesh/fuel/tie reconstructed nuclear power NPZ, tie
+hydraulic/solid parameters and the **declared header volume**,
+and writes a strict JSON transient ledger plus NPZ fields.
+
+**Scope:** This is genuinely *two-way tie-to-header thermodynamic
+feedback*, but **not** a fully two-way NERVA shaft-cycle solution.
+The nozzle/reflector inlet flow and enthalpy and total engine
+discharge demand are frozen at a valid independently solved
+pump/turbine/nozzle operating point. Consequently, the header
+pressure change is NOT fed back into pump head, nozzle/core
+choking, turbine bleed, or branch distribution. The model is
+first-order explicit, stationary header with no internal bulk
+kinetic storage or turbulent mixing, requires small acoustic
+timesteps, and does not include true two-phase slip/CHF,
+3D geometry, real OpenMC transport, or NASA experimental
+validation. No synthetic regression is a historically calibrated
+NERVA result.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
