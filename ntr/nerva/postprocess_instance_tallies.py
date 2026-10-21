@@ -213,7 +213,7 @@ def main() -> int:
     with openmc.StatePoint(args.statepoint) as sp:
         from .power import heating_score_for_transport
         heating_score = heating_score_for_transport(bool(sp.photon_transport))
-        if metadata.get("power_normalization_score", heating_score) != heating_score:
+        if metadata.get("power_normalization_score", "heating-local") != heating_score:
             raise ValueError("instance tally heating estimator differs from mesh normalization")
         for sector_index in range(1, 20):
             sector_name = (
