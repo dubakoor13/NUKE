@@ -248,7 +248,7 @@ def main() -> int:
         local_kerma = audit_kerma_coverage(cross_sections, config=config)
         kerma_path = args.output / "local_kerma_physics_preflight.json"
         kerma_path.write_text(
-            json.dumps(local_kerma, indent=2, allow_nan=False) + "\\n",
+            json.dumps(local_kerma, indent=2, allow_nan=False) + chr(10),
             encoding="utf-8",
         )
         if not local_kerma["local_heating_evaluated_kerma_inventory_complete"]:
