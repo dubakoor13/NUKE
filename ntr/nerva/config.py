@@ -51,6 +51,9 @@ class NervaConfig:
     # remains a surrogate, never "NASA validated".
     thermal_scattering_treatment: str = "free-gas"
     bound_solid_temperature_k: float | None = None
+    # User-selected nearest nuclear-data temperature tolerance [K].
+    # A small finite tolerance <=5 K does NOT replace hot evaluated data.
+    bound_nearest_temperature_tolerance_k: float = 0.0
     reflector_density_g_cm3: float = 1.85
     zrc_density_g_cm3: float = 6.5
     graphite_density_g_cm3: float = 1.70
@@ -170,6 +173,14 @@ class NervaConfig:
         return self.reflector_outer_radius_cm + self.pressure_vessel_thickness_cm
 
     def validate(self) -> None:
+        if (
+            not math.isfinite(self.bound_nearest_temperature_tolerance_k)
+            or not 0.0 <= self.bound_nearest_temperature_tolerance_k <= 5.0
+        ):
+            raise ValueError("bound nearest temperature tolerance must be within 0..5 K")
+        if (self.thermal_scattering_treatment == "free-gas"
+                and self.bound_nearest_temperature_tolerance_k != 0.0):
+            raise ValueError("nearest temperature tolerance only applies to evaluated-bound")
         if self.thermal_scattering_treatment not in ("free-gas", "evaluated-bound"):
             raise ValueError(
                 "thermal_scattering_treatment must be 'free-gas' or "
