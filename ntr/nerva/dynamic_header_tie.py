@@ -106,6 +106,8 @@ class DynamicHeaderTieStep:
     tie_header_pressure_feedback_active: bool = True
     dynamic_core_flow_computed: bool = False
     actual_openmc_transport_executed: bool = False
+    dynamic_nozzle_branch_pressure_response_active: bool = False
+    upstream_pump_header_mass_flow_mismatch_kg_s: float = 0.
 
 
 def header_properties(
@@ -164,6 +166,7 @@ def advance_dynamic_header_tie(
     dt_s: float,
     *,
     eos: HydrogenEOS | None = None,
+    nozzle_branch_override: tuple[float,float] | None = None,
 ) -> DynamicHeaderTieStep:
     """Explicit split-step tie + dynamic header with exact SHARED face fluxes.
 
@@ -182,16 +185,28 @@ def advance_dynamic_header_tie(
     hydraulic=shaft.regenerative_cooling
     assert hydraulic is not None
     nozzle_leg=hydraulic.legs[1]
-    m_nozzle=hydraulic.nozzle_reflector_mass_flow_kg_s
-    h_nozzle=nozzle_leg.outlet_stagnation_enthalpy_j_kg
+    m_nozzle_ref=hydraulic.nozzle_reflector_mass_flow_kg_s
+    h_nozzle_ref=nozzle_leg.outlet_stagnation_enthalpy_j_kg
     m_core=shaft.tank_mass_flow_kg_s
-    if (not math.isfinite(m_nozzle) or m_nozzle<=0 or
-            not math.isfinite(h_nozzle) or m_core<=0 or
+    if (not math.isfinite(m_nozzle_ref) or m_nozzle_ref<=0 or
+            not math.isfinite(h_nozzle_ref) or m_core<=0 or
             not math.isclose(
-                m_nozzle+bc.steady_tie_branch_mass_flow_kg_s,m_core,
+                m_nozzle_ref+bc.steady_tie_branch_mass_flow_kg_s,m_core,
                 rel_tol=1e-9,abs_tol=1e-10
             )):
         raise ValueError("steady nozzle / tie / header pump split not closed")
+    # Optional pressure-conditioned nozzle+reflector path. The
+    # independent shaft reference remains immutable: this is NOT
+    # a re-solved pump, core or turbine mass balance.
+    if nozzle_branch_override is None:
+        m_nozzle,h_nozzle=m_nozzle_ref,h_nozzle_ref
+    else:
+        if (not isinstance(nozzle_branch_override,tuple)
+                or len(nozzle_branch_override)!=2):
+            raise ValueError("nozzle branch override must be (mdot,h_out)")
+        m_nozzle,h_nozzle=nozzle_branch_override
+        if not math.isfinite(m_nozzle) or m_nozzle<=0 or not math.isfinite(h_nozzle):
+            raise ValueError("dynamic nozzle branch flow/enthalpy invalid")
 
     tie=advance_distributed_tie(
         heating,old.tie,distributed_params,
@@ -297,4 +312,10 @@ def advance_dynamic_header_tie(
         combined_tie_header_mass_residual_kg_s=combined_m,
         combined_tie_solid_header_energy_residual_j=combined_energy,
         combined_tie_header_momentum_residual_n=combined_mom,
+        dynamic_nozzle_branch_pressure_response_active=(
+            nozzle_branch_override is not None
+        ),
+        upstream_pump_header_mass_flow_mismatch_kg_s=(
+            m_nozzle+tie_in-m_core
+        ),
     )
