@@ -158,7 +158,8 @@ def inspect_statepoint(path: Path) -> dict:
         )
         report = evaluate_heating_scores(mesh, material)
     report.update({
-        "source": "GENUINE_OPENMC_EIGENVALUE_HDF5",
+        "source": "OPENMC_FORMAT_EIGENVALUE_HDF5_CONTENT",
+        "executable_origin_proven_by_hdf5_contents_alone": False,
         "statepoint_sha256": digest(path),
         "statepoint_path": str(path),
         "seed": seed,
