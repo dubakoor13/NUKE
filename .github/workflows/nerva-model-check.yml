@@ -323,6 +323,9 @@ jobs:
       - name: Validate actual core material thermal physics and NASA reference distinctions
         run: python -m ntr.nerva.validate_physical_core_nuclear_data
 
+      - name: Validate whole-core neutron conservation with (n,xn) multiplicity
+        run: python -m ntr.nerva.validate_core_neutron_balance
+
       - name: Audit reference-specific NASA core geometry and composition gaps
         run: python -m ntr.nerva.physical_core_reference_validation --assembly core --rings 3 --output build/nerva_core_reference_audit.json
 
