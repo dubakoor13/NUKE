@@ -170,6 +170,61 @@ def _reservoir(
     return rho,0.,u,pressure,t,c,q
 
 
+def _right_open_outflow_ghost(
+    eos: HydrogenEOS, p_static_pa: float,
+    density_interior: float, u_interior: float,
+    velocity_interior: float, p_interior: float,
+    sound_speed_interior: float,
+    backflow_reservoir: tuple[float,float,float,float,float,float,float],
+) -> tuple[float,float,float,float,float,float,float]:
+    """Subsonic outlet: prescribe static P, extrapolate interior entropy.
+
+    A *stationary* hot-header reservoir ghost has a radically different
+    density from an initially cold liquid in the outlet cell. Rusanov
+    diffusion then invents enormous pressure-wave mass flux even for
+    outward flow. At subsonic outflow the incoming characteristic
+    carries STATIC pressure, while the outgoing entropy/flow
+    characteristics originate in the tie interior. Use an isentropic
+    EOS density at external p and the locally extrapolated acoustic
+    velocity v + (p_i-p_b)/(rho_i*c_i).
+
+    If the characteristic estimate indicates reversed inflow, apply
+    the genuine backflow reservoir H2 enthalpy instead. This is a
+    linearized acoustic outlet treatment, not an exact multi-phase
+    characteristic boundary or a validated hot-header junction.
+    """
+    if any(not math.isfinite(x) for x in (
+        p_static_pa,density_interior,u_interior,
+        velocity_interior,p_interior,sound_speed_interior,
+    )):
+        raise ValueError("invalid boundary H2 primitive field")
+    if p_static_pa<=0 or density_interior<=0 or sound_speed_interior<=0:
+        raise ValueError("nonpositive H2 outlet boundary state")
+    jump=p_interior-p_static_pa
+    if abs(jump)<=1e-8*max(1.,p_interior,p_static_pa):
+        jump=0.
+    velocity=velocity_interior+jump/(
+        density_interior*sound_speed_interior
+    )
+    if velocity < -1e-7:
+        return backflow_reservoir
+    entropy=eos.get(
+        "Smass","Dmass",density_interior,"Umass",u_interior
+    )
+    ghost_density=eos.get(
+        "Dmass","P",p_static_pa,"Smass",entropy
+    )
+    ghost_u=eos.get(
+        "Umass","P",p_static_pa,"Smass",entropy
+    )
+    _,temp,sound,quality,_,_= _state_properties(
+        eos,ghost_density,ghost_u,velocity,
+    )
+    return (
+        ghost_density,velocity,ghost_u,p_static_pa,temp,sound,quality
+    )
+
+
 def initial_distributed_tie_state(
     heating: ResolvedHeating, params: DistributedTieParameters,
     initial_pressure_pa: float, initial_specific_enthalpy_j_kg: float,
@@ -283,7 +338,17 @@ def advance_distributed_tie(
                 amax=max(abs(vl)+cl,cr)
                 R=ucv[0];FR=physical[0]
             elif i==nc:
-                rr,vr,ur,pr,tr,cr,qr=right_res
+                # Outflow takes the INTERIOR thermodynamic entropy
+                # and the engine/common-header STATIC pressure.
+                # The hot reservoir enthalpy is used ONLY for real
+                # backflow; otherwise a stationary hot ghost would
+                # produce massive artificial Rusanov density diffusion.
+                rr,vr,ur,pr,tr,cr,qr=_right_open_outflow_ghost(
+                    eos,outlet_pressure_pa,
+                    float(rho[j,-1]),float(internal[j,-1]),
+                    float(vel[j,-1]),float(p[j,-1]),float(c[j,-1]),
+                    right_res,
+                )
                 R=np.array((rr,rr*vr,rr*(ur+0.5*vr*vr)))
                 FR=np.array((rr*vr,rr*vr*vr+pr,
                              rr*vr*(ur+pr/rr+0.5*vr*vr)))
@@ -388,19 +453,58 @@ def advance_distributed_tie(
     )
     scale=max(1.,abs(sstore),abs(internal_store),abs(kstore),
               abs(nuclear),abs(inpower),abs(outpower))
-    if (abs(mtotal)>1e-9+
+    # Audits reconstruct derivatives from actually stored state
+    # differences. With tiny acoustic dt, subtracting two ~35 K
+    # solid temperatures (and two large H2 energies) incurs genuine
+    # IEEE-754 cancellation amplified by 1/dt. Bound ONLY this
+    # representational roundoff by the magnitudes of the source
+    # inventories, not by the unrelated upstream reactor power.
+    # The FACE conservation algebra and EOS state are unchanged.
+    eps=np.finfo(float).eps
+    local_solid_roundoff=8.*eps*th.solid_capacity_j_k*(
+        np.abs(old.solid_temperature_k)+np.abs(solid_new)
+    )/dt_s
+    local_fluid_roundoff=8.*eps*(
+        np.abs(old.total_energy_j)+np.abs(etnew)
+    )/dt_s
+    max_local_energy_allowed=(
+        1e-7+1e-8*scale+
+        max(float(np.max(local_solid_roundoff)),
+            float(np.max(local_fluid_roundoff)))
+    )
+    global_momentum_roundoff=8.*eps*float(
+        np.sum(np.abs(old.momentum_kg_m_s)+np.abs(momnew))
+    )/dt_s
+    global_mass_roundoff=8.*eps*float(
+        np.sum(np.abs(old.mass_kg)+np.abs(mnew))
+    )/dt_s
+    local_mass_roundoff=8.*eps*float(
+        np.max(np.abs(old.mass_kg)+np.abs(mnew))
+    )/dt_s
+    local_momentum_roundoff=8.*eps*float(
+        np.max(np.abs(old.momentum_kg_m_s)+np.abs(momnew))
+    )/dt_s
+    if (abs(mtotal)>1e-9+global_mass_roundoff+
             1e-9*max(abs(float(np.sum(face[:,0,0]))),
                      abs(float(np.sum(face[:,-1,0]))))
-            or abs(ptotal)>1e-7+1e-9*max(
+            or abs(ptotal)>1e-7+global_momentum_roundoff+1e-9*max(
                 abs(float(np.sum(face[:,0,1]))),
                 abs(float(np.sum(face[:,-1,1])))
             )
             or abs(erest)>1e-7+1e-8*dt_s*scale
-            or np.max(abs(lm))>1e-8
-            or np.max(abs(lp))>1e-5
+            or np.max(abs(lm))>1e-8+local_mass_roundoff
+            or np.max(abs(lp))>1e-5+local_momentum_roundoff
             or max(float(np.max(abs(le))),float(np.max(abs(ls))))
-                   >1e-7+1e-8*scale):
-        raise RuntimeError("compressible tie conservative Euler residual failed")
+                   >max_local_energy_allowed):
+        raise RuntimeError(
+            "compressible tie conservative Euler residual failed: "
+            f"mass={mtotal:.8g} kg/s, momentum={ptotal:.8g} N, "
+            f"energy={erest:.8g} J, "
+            f"local_mass={float(np.max(abs(lm))):.8g} kg/s, "
+            f"local_momentum={float(np.max(abs(lp))):.8g} N, "
+            f"local_energy={max(float(np.max(abs(le))),float(np.max(abs(ls)))):.8g} W, "
+            f"local_energy_roundoff_limit={max_local_energy_allowed:.8g} W"
+        )
     return DistributedTieStep(
         state=DistributedTieState(
             solid_temperature_k=solid_new,

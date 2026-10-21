@@ -133,6 +133,15 @@ def main()->int:
                    (coupling.inlet_transient_mass_flow_kg_s-
                     coupling.outlet_transient_mass_flow_kg_s))<1e-8
         assert coupling.steady_tie_mass_flow_reference_kg_s>0
+        # With a cold compressed-liquid tie and a hot header,
+        # using the hot reservoir density as an OUTFLOW ghost gave
+        # an unphysical ~27 kg/s at the outlet against only 0.0172
+        # kg/s in the shaft cycle. The subsonic outflow must use
+        # internal tie entropy and externally imposed static pressure
+        # instead; hot-header enthalpy is a BACKFLOW-only condition.
+        assert coupling.outlet_transient_mass_flow_kg_s>=-1e-7
+        assert coupling.outlet_transient_mass_flow_kg_s<2.
+        assert abs(coupling.outlet_mass_flow_reference_residual_kg_s)<2.
         assert math.isclose(
             coupling.inlet_mass_flow_reference_residual_kg_s,
             coupling.inlet_transient_mass_flow_kg_s-
