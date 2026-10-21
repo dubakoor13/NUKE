@@ -61,8 +61,14 @@ def main() -> int:
     assert changed["relative_l2_power_density_difference"] > 0
     assert changed["total_variation_power_fraction"] > 0
 
+    # Shift both faces equally: preserve volume and normalized power so
+    # the test exercises the actual physical-bounds identity gate.
     reject(lambda: compare_heating_meshes(
-        a, replace(b, lower_left_cm=np.array([-1., -2., -2.]))
+        a, replace(
+            b,
+            lower_left_cm=np.array([-1., -2., -2.]),
+            upper_right_cm=np.array([3., 2., 2.]),
+        )
     ), "bounds")
     reject(lambda: compare_heating_meshes(
         a, replace(b, score="heating", photon_transport=True)
