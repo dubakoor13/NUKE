@@ -76,7 +76,7 @@ def _attach_heating_trigger(
         config.tally_rel_err_trigger,
         ignore_zeros=True,
     )
-    trigger.scores = ["heating-local"]
+    trigger.scores = ["heating" if config.photon_transport else "heating-local"]
     tally.triggers = [trigger]
 
 
@@ -579,5 +579,14 @@ def build_tallies(
             ]
             leakage.scores = ["current"]
             tallies.append(leakage)
+
+    # Both heating scores remain available for diagnostics. When photons
+    # are transported, the thermal coupling must use 'heating' (physical
+    # photon deposition locations), not 'heating-local' (on-site gamma
+    # deposition approximation). Preserve neutron-only tally definitions.
+    if config.photon_transport:
+        for tally in tallies:
+            if "heating-local" in tally.scores and "heating" not in tally.scores:
+                tally.scores = [*tally.scores, "heating"]
 
     return openmc.Tallies(tallies)
