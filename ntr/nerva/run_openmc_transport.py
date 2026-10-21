@@ -19,6 +19,7 @@ from .audit_nuclear_data_temperatures import (
     audit_temperature_coverage,
 )
 from .audit_bound_thermal_scattering import audit_bound_thermal_scattering
+from .physical_core_reference_validation import assess_core_fidelity
 from .geometry import (
     cluster_summary,
     geometry_summary,
@@ -241,6 +242,14 @@ def main() -> int:
     ]:
         raise RuntimeError("OpenMC temperature feedback outside available neutron XS temperature range")
 
+    physical_audit = None
+    if args.assembly in ("core", "mixed-core"):
+        physical_audit = assess_core_fidelity(config, assembly=args.assembly)
+        (args.output / "nasa_core_physical_reference_audit.json").write_text(
+            json.dumps(physical_audit, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
     if args.statepoint_batches is not None:
         stages = sorted(set(args.statepoint_batches))
         if (len(stages) != len(args.statepoint_batches)
@@ -293,6 +302,7 @@ def main() -> int:
             ),
         },
         "geometry_summary": _summary(config, args.assembly),
+        "nasa_core_physical_reference_audit": physical_audit,
         "nuclear_data": {
             "cross_sections_xml": report.cross_sections_xml,
             "cross_sections_sha256": report.sha256,
