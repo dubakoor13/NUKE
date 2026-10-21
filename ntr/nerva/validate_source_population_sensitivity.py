@@ -139,7 +139,7 @@ def main() -> int:
                 "cross_sections_sha256": "another-evaluation"
             })
         )
-        reject(lambda: assess_population_sensitivity(small, large), "cross")
+        reject(lambda: assess_population_sensitivity(small, large), "transport provenance")
         path.write_text(json.dumps(original))
 
         path = large / "real_core_transport_summary.json"
