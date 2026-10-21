@@ -49,7 +49,7 @@ jobs:
               # bindings and their libopenmc.so. Run outside the checkout,
               # prepend Docker site-packages, and import NUKE via /repo.
               cd /tmp
-              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\\"purelib\\"])"):/repo"
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
               python -c "import openmc; print(\"Installed OpenMC module:\", openmc.__file__); assert not openmc.__file__.startswith(\"/repo/\")"
               echo "Executable: $(command -v openmc)"
               openmc --version
