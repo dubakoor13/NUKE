@@ -187,6 +187,12 @@ def parse_args():
             "transport provide a multi-temperature evaluated XS library."
         ),
     )
+    p.add_argument(
+        "--thermal-scattering", choices=("free-gas", "evaluated-bound"),
+        default="free-gas",
+    )
+    p.add_argument("--bound-solid-temperature-k", type=float)
+    p.add_argument("--bound-nearest-temperature-tolerance-k", type=float, default=0.0)
     p.add_argument("--seeds",type=int,nargs="+",default=(13007,23011,33013,43019))
     return p.parse_args()
 
@@ -214,6 +220,9 @@ def main() -> int:
     cfg = NervaConfig(
         core_rings=args.rings,particles=args.particles,batches=args.batches,
         inactive=args.inactive,hydrogen_temperature_k=args.hydrogen_temperature_k,
+        thermal_scattering_treatment=args.thermal_scattering,
+        bound_solid_temperature_k=args.bound_solid_temperature_k,
+        bound_nearest_temperature_tolerance_k=args.bound_nearest_temperature_tolerance_k,
         heating_mesh_dimension=(8,8,8),
         axial_mesh_bins=8,diagnostic_energy_groups=8,
     )
@@ -253,6 +262,9 @@ def main() -> int:
             "--cross-sections",str(xs),
             "--assembly","core","--rings",str(args.rings),
             "--hydrogen-temperature-k",str(args.hydrogen_temperature_k),
+            "--thermal-scattering",str(args.thermal_scattering),
+            "--bound-nearest-temperature-tolerance-k",
+            str(args.bound_nearest_temperature_tolerance_k),
             "--particles",str(args.particles),
             "--batches",str(args.batches),"--inactive",str(args.inactive),
             "--heating-mesh-dimensions","8","8","8",
@@ -262,6 +274,11 @@ def main() -> int:
             "--statepoint-batches",*[str(batch) for batch in stages],
             "--output",str(run_directory),
         ]
+        if args.bound_solid_temperature_k is not None:
+            cmd.extend([
+                "--bound-solid-temperature-k",
+                str(args.bound_solid_temperature_k),
+            ])
         print("ACTUAL OPENMC NEUTRON TRANSPORT seed =",seed,flush=True)
         with (output/f"seed_{seed}.log").open("w",encoding="utf-8") as handle:
             proc = subprocess.run(cmd,stdout=handle,stderr=subprocess.STDOUT,
@@ -368,6 +385,9 @@ def main() -> int:
         "assembly": "core",
         "rings":args.rings,
         "hydrogen_temperature_K": args.hydrogen_temperature_k,
+        "thermal_scattering_treatment": args.thermal_scattering,
+        "bound_solid_temperature_K": args.bound_solid_temperature_k,
+        "bound_nearest_temperature_tolerance_K": args.bound_nearest_temperature_tolerance_k,
         "cold_xs_smoke_test_only": args.hydrogen_temperature_k <= 300.,
         "not_historical_nerva_operating_temperature": True,
         "particles_per_generation":args.particles,
