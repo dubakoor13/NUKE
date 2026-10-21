@@ -85,6 +85,7 @@ def main() -> int:
         "nu-fission",
         "heating",
         "heating-local",
+        "kappa-fission",
     } <= mesh_scores
 
     material_filter = tallies[
