@@ -320,6 +320,9 @@ jobs:
       - name: Validate NERVA nuclear-data preflight parser
         run: python -m ntr.nerva.validate_nuclear_data
 
+      - name: Validate HDF5 spatial fission-source bank time/seed statistics (synthetic)
+        run: python -m ntr.nerva.validate_source_bank_convergence
+
       - name: Validate OpenMC correlated-source and per-batch eigenvalue numerics
         run: python -m ntr.nerva.validate_source_history_statistics
 
