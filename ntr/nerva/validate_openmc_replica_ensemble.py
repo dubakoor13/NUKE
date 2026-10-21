@@ -60,6 +60,11 @@ def main() -> int:
         # First two replicates have -0.04 axial bias, latter +0.04.
         assert math.isclose(result.half_split_total_variation,0.08/3,
                             rel_tol=1e-12)
+        assert result.balanced_split_method == "exhaustive_worst_balanced_partition"
+        assert math.isclose(
+            result.tested_balanced_split_total_variation,
+            result.maximum_balanced_split_total_variation, rel_tol=1e-12
+        )
         assert result.balanced_splits_exhaustive
         assert result.balanced_splits_tested == 3
         assert math.isclose(
@@ -148,6 +153,12 @@ def main() -> int:
         )
         large_b, _ = assess_replica_ensemble(
             many[::-1], max_p95_relative_sem=0.1
+        )
+        assert large_a.balanced_split_method == "deterministic_hash_partition"
+        assert math.isclose(
+            large_a.tested_balanced_split_total_variation,
+            large_b.tested_balanced_split_total_variation,
+            rel_tol=1e-12, abs_tol=1e-12,
         )
         assert not large_a.balanced_splits_exhaustive
         assert large_a.maximum_balanced_split_total_variation is None
