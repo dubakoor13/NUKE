@@ -9,6 +9,18 @@ import numpy as np
 
 EV_TO_J = 1.602176634e-19
 
+def heating_score_for_transport(photon_transport: bool) -> str:
+    """Physically consistent OpenMC deposition estimator for the run mode.
+
+    neutron-only: heating-local, including secondary-gamma energy locally.
+    neutron-photon: heating, tallying energy where photons deposit it.
+    Never normalize a transported-photon spatial power map with heating-local.
+    """
+    if not isinstance(photon_transport, (bool, np.bool_)):
+        raise TypeError("photon_transport must be boolean")
+    return "heating" if photon_transport else "heating-local"
+
+
 
 @dataclass(frozen=True)
 class NormalizedMeshFields:
