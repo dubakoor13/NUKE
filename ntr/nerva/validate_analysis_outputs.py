@@ -171,6 +171,33 @@ def main() -> int:
         abs_tol=0.0,
     )
 
+    # New normalized OpenMC outputs have a disjoint per-voxel first-law
+    # ledger. Historical fixture metadata may not yet contain it.
+    budget = power.get("power_partition_audit")
+    if budget is not None:
+        if not isinstance(budget, dict) or budget.get("passed") is not True:
+            raise ValueError("OpenMC voxelwise thermal partition audit has not passed")
+        physical_power = _finite_number(budget["mesh_total_w"], "partition.mesh_total_w")
+        remaining = _finite_number(
+            budget["remaining_unassigned_material_power_w"],
+            "partition.remaining_unassigned_material_power_w",
+        )
+        components = budget["disjoint_components_w"]
+        assigned = sum(
+            _finite_number(components[key], "partition." + key)
+            for key in ("fuel_solid", "tie_solid", "fuel_hydrogen", "tie_hydrogen")
+        )
+        _assert_close(
+            assigned + remaining, physical_power,
+            "OpenMC selected deposition partition closure",
+            rel_tol=1e-6, abs_tol=1e-3,
+        )
+        _assert_close(
+            physical_power, normalized_power_w,
+            "OpenMC selected deposited power",
+            rel_tol=1e-6, abs_tol=1e-3,
+        )
+
     fuel_power_w = _finite_number(
         power["fuel_power_W"],
         "fuel_power_W",
