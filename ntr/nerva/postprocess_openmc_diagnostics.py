@@ -12,6 +12,10 @@ import numpy as np
 import openmc
 
 from .power import EV_TO_J, heating_score_for_transport
+from .source_history_statistics import (
+    analyze_correlated_history,
+    batch_average_generation_k,
+)
 
 
 _MATERIAL_ORDER = (
@@ -592,20 +596,19 @@ def main() -> int:
         entropy = _entropy_history(sp)
 
         k_generation = np.asarray(
-            getattr(sp, "k_generation", []),
-            dtype=float,
+            getattr(sp, "k_generation", []), dtype=float
         )
-        if k_generation.ndim == 2:
-            k_batch_mean = np.mean(k_generation, axis=1)
-        else:
-            k_batch_mean = k_generation.reshape(-1)
-
         n_inactive = int(getattr(sp, "n_inactive", 0))
-        active_k_batch_mean = (
-            k_batch_mean[n_inactive:]
-            if k_batch_mean.size > n_inactive
-            else np.asarray([], dtype=float)
+        n_batches = int(getattr(sp, "n_batches", 0))
+        generations_per_batch = int(
+            getattr(sp, "generations_per_batch", 1)
         )
+        k_batch_mean = batch_average_generation_k(
+            k_generation,
+            batches=n_batches,
+            generations_per_batch=generations_per_batch,
+        )
+        active_k_batch_mean = k_batch_mean[n_inactive:]
         entropy_array = np.asarray(entropy, dtype=float)
         active_entropy = (
             entropy_array[n_inactive:]
@@ -907,6 +910,17 @@ def main() -> int:
         "entropy_last": None if not entropy else entropy[-1],
         "source_convergence": {
             "inactive_batches": n_inactive,
+            "generations_per_batch": generations_per_batch,
+            "per_batch_k_serial_correlation": (
+                analyze_correlated_history(
+                    k_batch_mean, inactive=n_inactive
+                )
+            ),
+            "entropy_serial_correlation": (
+                analyze_correlated_history(
+                    entropy_array, inactive=n_inactive
+                ) if entropy_array.size else None
+            ),
             "active_k_batch_metrics": _trend_metrics(
                 active_k_batch_mean
             ),
@@ -915,7 +929,8 @@ def main() -> int:
             ),
             "interpretation": (
                 "Trend diagnostics only. No k-effective target or automatic "
-                "criticality tuning is applied."
+                "criticality tuning is applied. Serial-correlation-adjusted "
+                "effective samples remain diagnostic, not proof of source convergence."
             ),
         },
         "mesh_peaking": _peaking_metrics(power_density),
