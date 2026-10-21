@@ -1592,6 +1592,57 @@ timesteps, and does not include true two-phase slip/CHF,
 validation. No synthetic regression is a historically calibrated
 NERVA result.
 
+## Dynamic parallel nozzle/reflector flow responding to common-header pressure
+
+`dynamic_parallel_header.py` extends the dynamic rigid-volume
+H2 mixing header and distributed tie Euler solver with a **live
+parallel nozzle/reflector coolant branch**. At each acoustic
+timestep, the existing, independent shaft-closed cycle still
+defines the pump discharge pressure and H2 inlet enthalpy. The
+nozzle jacket and reflector are then re-evaluated with the
+existing CoolProp `regenerative_cooling._leg` solver at a trial
+mass flow, including heating and subsonic hydraulic losses.
+The positive branch flow is solved until
+
+```text
+p_reflector_out(m_nozzle, p_pump, h_pump, Q_nozzle, Q_reflector)
+   = p_dynamic_header,old
+
+h_nozzle_branch_out =
+    h_pump + (Q_nozzle + Q_reflector)/m_nozzle
+```
+
+The root is restricted to a locally admissible bracket about the
+shaft-closed reference flow. If the pressure cannot be matched
+without violating EOS/flow limits, the calculation rejects it;
+it does not silently extrapolate a calibrated hardware curve.
+
+This **calculated** nozzle-branch mass/enthalpy is added to the
+finite-volume header along with the **single shared Rusanov**
+tie-return mass and total-energy flux. The resulting actual
+header pressure and thermodynamic enthalpy feed into both the
+nozzle/reflector hydraulic root and tie-Euler outflow boundary
+on the next step. Changing common-header pressure therefore
+changes both parallel branches rather than only the tie fluid.
+
+Run `python -m ntr.nerva.validate_dynamic_parallel_header`.
+The previously added public runner now accepts
+`python -m ntr.nerva.run_dynamic_header_tie --dynamic-nozzle-branch ...`,
+which writes the live nozzle pressure root residual and
+combined mass/total-energy conservation to JSON. The existing
+runner without the switch is unchanged.
+
+**Open upstream physics:** There is no upstream pump accumulator
+in this version. The computed sum of nozzle and tie inlet flows
+need not equal the independently solved shaft-cycle pump flow.
+That **explicitly reported mass-flow mismatch** must be closed by a
+future dynamic pump manifold, pump curve and turbine/shaft/nozzle
+feedback. Engine downstream discharge demand remains fixed.
+The nozzle branch is quasisteady, without a separate distributed
+transient fluid inventory or momentum wave solution; its
+heat-power inputs are fixed. The validation uses synthetic nuclear
+heating, not actual OpenMC transport or historical NASA results.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
