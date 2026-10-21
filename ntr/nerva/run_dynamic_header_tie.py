@@ -28,6 +28,9 @@ from .dynamic_parallel_header import advance_dynamic_parallel_tie_header
 from .dual_header_tie import (
     DualHeaderTieState,initial_pump_manifold,advance_dual_header_tie,
 )
+from .dynamic_pump_shaft import (
+    DynamicPumpParameters,DynamicPumpState,advance_dynamic_pump_tie,
+)
 from .lh2_feed_cycle import LH2Cycle,HydrogenEOS
 from .regenerative_cooling import CoolingLeg,CoolingNetwork
 from .resolved_transient import read_resolved_heating
@@ -47,6 +50,12 @@ def main()->int:
                         help="solve nozzle/reflector flow against live header pressure")
     parser.add_argument("--upstream-manifold-volume-m3",type=float,
                         help="also evolve a conservative pump-discharge H2 inventory")
+    parser.add_argument("--rotor-reference-speed-rad-s",type=float,
+                        help="enable live pump map/rotor using explicit reference angular speed")
+    parser.add_argument("--rotor-inertia-kg-m2",type=float,
+                        help="rotor inertia for live pump-map / kinetic-energy model")
+    parser.add_argument("--initial-rotor-speed-rad-s",type=float,
+                        help="initial angular speed; defaults to reference speed")
     parser.add_argument("--initial-solid-temperature-k",type=float,required=True)
     parser.add_argument("--supply-cell-volume-m3",type=float,required=True)
     parser.add_argument("--return-cell-volume-m3",type=float,required=True)
@@ -67,6 +76,14 @@ def main()->int:
     if (args.upstream_manifold_volume_m3 is not None and
             not args.dynamic_nozzle_branch):
         raise ValueError("dynamic upstream manifold requires --dynamic-nozzle-branch")
+    if (args.rotor_reference_speed_rad_s is None)!=(args.rotor_inertia_kg_m2 is None):
+        raise ValueError("rotor reference speed and inertia must be supplied together")
+    if (args.rotor_reference_speed_rad_s is not None and
+            args.upstream_manifold_volume_m3 is None):
+        raise ValueError("dynamic rotor pump requires a dynamic upstream manifold")
+    if (args.initial_rotor_speed_rad_s is not None and
+            args.rotor_reference_speed_rad_s is None):
+        raise ValueError("initial rotor speed requires the live pump model")
     raw=json.loads(args.engine_config.read_text(encoding="utf-8"))
     if not isinstance(raw,dict) or set(raw)!={
         "lh2_cycle","turbine","regenerative_cooling"
@@ -127,12 +144,40 @@ def main()->int:
         )
         if upstream_params is not None else None
     )
+    pump_params=(
+        DynamicPumpParameters(
+            reference_angular_speed_rad_s=args.rotor_reference_speed_rad_s,
+            rotor_inertia_kg_m2=args.rotor_inertia_kg_m2,
+        ) if args.rotor_reference_speed_rad_s is not None else None
+    )
+    if pump_params is not None:
+        pump_params.validate()
+    pump_state=(
+        DynamicPumpState(
+            rotor_angular_speed_rad_s=(
+                args.initial_rotor_speed_rad_s
+                if args.initial_rotor_speed_rad_s is not None
+                else pump_params.reference_angular_speed_rad_s
+            ),hydraulic=dual,
+        ) if pump_params is not None else None
+    )
     history=[]
     latest=None
     for i in range(args.steps):
         branch=None
         dual_result=None
-        if dual is not None:
+        pump_result=None
+        if pump_state is not None:
+            pump_result=advance_dynamic_pump_tie(
+                heating,pump_state,core,pump_params,fluid,
+                upstream_params,header,net,shaft,args.dt_s,eos=eos,
+            )
+            pump_state=pump_result.state
+            dual_result=pump_result.fluid
+            dual=dual_result.state
+            branch=dual_result.parallel
+            latest=branch.combined
+        elif dual is not None:
             dual_result=advance_dual_header_tie(
                 heating,dual,fluid,upstream_params,header,
                 net,shaft,args.dt_s,eos=eos,
@@ -182,6 +227,30 @@ def main()->int:
             "upstream_manifold_mass_kg":(
                 dual.pump.mass_kg if dual is not None else None
             ),
+            "dynamic_pump_delivered_flow_kg_s":(
+                pump_result.pump.mass_flow_kg_s if pump_result is not None
+                else None
+            ),
+            "dynamic_pump_stage_pressure_pa":(
+                pump_result.pump.pump_stage_pressure_pa
+                if pump_result is not None else None
+            ),
+            "dynamic_pump_shaft_power_w":(
+                pump_result.pump.shaft_power_w if pump_result is not None
+                else None
+            ),
+            "rotor_angular_speed_rad_s":(
+                pump_state.rotor_angular_speed_rad_s
+                if pump_state is not None else None
+            ),
+            "rotor_energy_balance_residual_j":(
+                pump_result.rotor_energy_balance_residual_j
+                if pump_result is not None else None
+            ),
+            "total_fluid_rotor_energy_residual_j":(
+                pump_result.total_fluid_rotor_energy_balance_residual_j
+                if pump_result is not None else None
+            ),
             "total_system_mass_residual_kg_s":(
                 dual_result.combined_system_mass_residual_kg_s
                 if dual_result is not None else None
@@ -230,6 +299,18 @@ def main()->int:
                 dual_result.pump_new_enthalpy_j_kg
             ),
         )
+    if pump_state is not None:
+        fields.update(
+            rotor_angular_speed_rad_s=np.array(
+                pump_state.rotor_angular_speed_rad_s
+            ),
+            dynamic_pump_mass_flow_kg_s=np.array(
+                pump_result.pump.mass_flow_kg_s
+            ),
+            dynamic_pump_shaft_power_w=np.array(
+                pump_result.pump.shaft_power_w
+            ),
+        )
     np.savez_compressed(
         output/"dynamic_tie_header_final_state.npz",**fields,
     )
@@ -240,7 +321,10 @@ def main()->int:
             args.dynamic_nozzle_branch,
         "upstream_pump_header_mass_flow_conserved":dual is not None,
         "upstream_manifold_h2_inventory_active":dual is not None,
-        "pump_head_and_pump_mass_flow_are_steady_references":True,
+        "pump_head_and_pump_mass_flow_are_steady_references":pump_state is None,
+        "pump_flow_and_rotor_kinetic_energy_are_dynamic":pump_state is not None,
+        "turbine_power_held_at_steady_shaft_reference":True,
+        "historical_nasa_pump_curve_validated":False,
         "full_shaft_cycle_feedback_converged":False,
         "dynamic_pump_turbine_nozzle_flows_solved":False,
         "actual_openmc_transport_executed":False,
@@ -250,6 +334,9 @@ def main()->int:
         "header_parameters":asdict(header),
         "upstream_manifold_parameters":(
             asdict(upstream_params) if upstream_params is not None else None
+        ),
+        "dynamic_pump_parameters":(
+            asdict(pump_params) if pump_params is not None else None
         ),
         "tie_parameters":asdict(fluid),
         "history":history,

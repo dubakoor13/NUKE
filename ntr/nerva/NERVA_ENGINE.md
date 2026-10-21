@@ -1714,6 +1714,84 @@ No authentic NERVA hardware dimensions, new OpenMC transport,
 non-equilibrium two-phase slip/CHF or NASA benchmark runs are
 implied by these synthetic regressions.
 
+## Variable-flow LH2 pump map and rotor kinetic-energy coupling
+
+`dynamic_pump_shaft.py` adds an **opt-in** flow/pressure/speed
+response to the upstream LH2 pump while keeping the existing
+two-manifold, parallel regenerative and distributed tie-Euler solver.
+It reuses the hypothetical `LH2Cycle` pump head and feed-line
+loss coefficients rather than inventing historical NERVA pump curves.
+
+For user-supplied reference angular speed `omega_ref` and inertia
+`J`, the instantaneous physically admissible pump flow follows
+
+```text
+Delta_p_pump = Delta_p_shutoff*(omega/omega_ref)^2 - K_pump*m_dot^2
+p_upstream_manifold = p_tank + Delta_p_pump - K_feed*m_dot^2
+
+m_dot = sqrt( [p_tank + Delta_p_shutoff*(omega/omega_ref)^2
+               - p_upstream_manifold] / (K_pump+K_feed) )
+```
+
+The root is rejected if pressure head is nonpositive, the tank is
+not subcooled, the outlet is not dense LH2, flow exceeds the
+specified `LH2Cycle.maximum_mass_flow_kg_s`, or the speed is outside
+the declared synthetic affinity domain (default 0.8-1.2 relative
+to `omega_ref`). The existing CoolProp isentropic pump model
+calculates `h_2s = h(P_stage,s_tank)` and
+`h_2 = h_tank + (h_2s-h_tank)/eta_pump`. Pump shaft power
+`P_pump = m_dot*(h_2-h_tank)` is the **same energy added to H2**,
+which prevents double counting the pump liquid enthalpy gain.
+
+Rotor energy is `E_rot = J*omega^2/2`, evolved over one timestep:
+
+```text
+E_rot,new - E_rot,old =
+    dt*(P_turbine_delivered,reference - P_pump)
+```
+
+The **existing** `dual_header_tie.py` conservative flow/enthalpy
+ledger accepts the live pump `(m_dot,h_2)` source, so the global
+**fluid + rotor** energy audit telescopes into
+
+```text
+d(E_fluid + E_tie_solids + E_rot)/dt
+    = m_dot_pump*h_tank + P_turbine_delivered,reference
+      + Q_tie_nuclear + Q_nozzle_reflector
+      - m_dot_engine_reference*h_common_header
+```
+
+Both hydraulic branches receive evolving pump-manifold pressure
+and enthalpy through the previous dynamic network code.
+`python -m ntr.nerva.validate_dynamic_pump_shaft` checks
+pressure/speed flow response, energy and physical limits.
+
+The public runner uses the established mesh/fuel/tie NPZ and
+engine JSON inputs plus `--dynamic-nozzle-branch`,
+`--upstream-manifold-volume-m3`,
+`--rotor-reference-speed-rad-s` and
+`--rotor-inertia-kg-m2` (optional
+`--initial-rotor-speed-rad-s`):
+
+```bash
+python -m ntr.nerva.run_dynamic_header_tie --help
+```
+
+JSON/NPZ results include solved pump flow/head/shaft power,
+manifold pressure, rotor speed, and energy residuals.
+
+**Physical scope:** The turbine **delivered** shaft power is still
+held at the independently solved reference value, and the
+downstream engine/core/nozzle discharge mass demand is still
+fixed. The rotor model does not evolve turbine torque as a
+function of changing exhaust pressure, does not model spin
+startup/control, shaft mechanical losses beyond the reference
+delivered-power convention, cavitation collapse, or measured
+pump efficiency/speed maps. These are *synthetic pump-affinity
+and rotor-inertia* verification cases, **not NASA historical
+NERVA hardware validation**, OpenMC neutron transport, or a
+fully converged expander-cycle model.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit

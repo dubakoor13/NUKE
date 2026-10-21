@@ -72,6 +72,7 @@ class DualHeaderTieStep:
     pump_flow_and_head_are_reference_values: bool = True
     shaft_turbine_core_nozzle_feedback_converged: bool = False
     actual_openmc_transport_executed: bool = False
+    pump_flow_and_head_dynamic: bool = False
 
 
 def initial_pump_manifold(
@@ -104,6 +105,7 @@ def advance_dual_header_tie(
     shaft: ShaftClosedPoint,
     dt_s: float,
     *, eos: HydrogenEOS | None = None,
+    pump_delivery_override: tuple[float,float] | None = None,
 ) -> DualHeaderTieStep:
     """One explicit two-manifold/two-branch conservative timestep."""
     if not math.isfinite(dt_s) or dt_s<=0:
@@ -113,10 +115,16 @@ def advance_dual_header_tie(
     bc=engine_tie_reservoirs(shaft)
     # The reference pump *source* is not the instantaneous sum of the
     # dynamically varying nozzle branch and tie supply Euler flux.
-    m_pump=shaft.tank_mass_flow_kg_s
-    h_pump=bc.upstream_stagnation_enthalpy_j_kg
+    if pump_delivery_override is None:
+        m_pump=shaft.tank_mass_flow_kg_s
+        h_pump=bc.upstream_stagnation_enthalpy_j_kg
+    else:
+        if (not isinstance(pump_delivery_override,tuple)
+                or len(pump_delivery_override)!=2):
+            raise ValueError("pump delivery must be (mass flow, enthalpy)")
+        m_pump,h_pump=pump_delivery_override
     if not math.isfinite(m_pump) or m_pump<=0 or not math.isfinite(h_pump):
-        raise ValueError("invalid pump reference source")
+        raise ValueError("invalid pump delivery source")
 
     parallel=advance_dynamic_parallel_tie_header(
         heating,old.downstream,distributed_params,downstream_params,
@@ -230,4 +238,8 @@ def advance_dual_header_tie(
         combined_system_mass_residual_kg_s=total_mass_residual,
         combined_system_total_energy_residual_j=energy_residual,
         combined_net_mass_inventory_rate_kg_s=total_mass_rate,
+        pump_flow_and_head_are_reference_values=(
+            pump_delivery_override is None
+        ),
+        pump_flow_and_head_dynamic=(pump_delivery_override is not None),
     )
