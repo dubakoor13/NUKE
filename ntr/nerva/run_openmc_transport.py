@@ -81,6 +81,14 @@ def parse_args() -> argparse.Namespace:
         help="Required temperature for Be, graphite and ZrH evaluated bound kernels.",
     )
     parser.add_argument(
+        "--bound-nearest-temperature-tolerance-k", type=float, default=0.0,
+        help=(
+            "Explicit maximum allowed nearest evaluated neutron and S(a,b) "
+            "temperature offset, 0..5 K, for evaluated-bound mode only. "
+            "The OpenMC transport settings use this same tolerance."
+        ),
+    )
+    parser.add_argument(
         "--heating-mesh-dimensions", nargs=3, type=int, default=(48, 48, 24),
         metavar=("NX", "NY", "NZ"),
         help=(
@@ -175,6 +183,7 @@ def main() -> int:
         core_rings=args.rings,
         thermal_scattering_treatment=args.thermal_scattering,
         bound_solid_temperature_k=args.bound_solid_temperature_k,
+        bound_nearest_temperature_tolerance_k=args.bound_nearest_temperature_tolerance_k,
         fuel_temperature_k=args.fuel_temperature_k,
         hydrogen_temperature_k=(args.hydrogen_temperature_k if args.hydrogen_temperature_k is not None
                                 else NervaConfig.hydrogen_temperature_k),
@@ -237,7 +246,9 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    if (args.fuel_temperature_k is not None or args.hydrogen_temperature_k is not None) and not temperature_audit[
+    if (args.fuel_temperature_k is not None
+            or args.hydrogen_temperature_k is not None
+            or config.thermal_scattering_treatment == "evaluated-bound") and not temperature_audit[
         "model_explicit_temperature_coverage_ok"
     ]:
         raise RuntimeError("OpenMC temperature feedback outside available neutron XS temperature range")
@@ -289,6 +300,7 @@ def main() -> int:
             "hydrogen_temperature_k": config.hydrogen_temperature_k,
             "thermal_scattering_treatment": config.thermal_scattering_treatment,
             "bound_solid_temperature_k": config.bound_solid_temperature_k,
+            "bound_nearest_temperature_tolerance_k": config.bound_nearest_temperature_tolerance_k,
             "hydrogen_density_g_cm3": config.hydrogen_density_g_cm3,
             "photon_transport": config.photon_transport,
             "heating_mesh_dimension": list(config.heating_mesh_dimension),
