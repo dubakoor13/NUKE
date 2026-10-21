@@ -7,6 +7,30 @@ import openmc
 from .config import NervaConfig
 
 
+# GNDS/OpenMC thermal-scattering identifiers, not interchangeable with
+# free-atom scattering kernels. Do NOT apply graphite S(a,b) to every
+# carbon atom of mixed UC/ZrC/graphite fuel: its phase fractions are not
+# specified by the current conceptual fuel chemistry.
+EVALUATED_BOUND_THERMAL_TABLES: dict[str, tuple[str, ...]] = {
+    "reflector": ("c_Be",),
+    "graphite": ("c_Graphite",),
+    "zrh": ("c_H_in_ZrH", "c_Zr_in_ZrH"),
+}
+
+
+def required_bound_scattering_tables(config: NervaConfig) -> tuple[str, ...]:
+    """Required S(a,b) kernels for the specified *surrogate* materials."""
+    if config.thermal_scattering_treatment == "free-gas":
+        return ()
+    if config.thermal_scattering_treatment != "evaluated-bound":
+        raise ValueError("invalid thermal-scattering model")
+    return tuple(sorted({
+        table
+        for names in EVALUATED_BOUND_THERMAL_TABLES.values()
+        for table in names
+    }))
+
+
 def build_materials(config: NervaConfig) -> dict[str, openmc.Material]:
     """Create materials used by the demonstration model."""
     config.validate()
@@ -61,6 +85,20 @@ def build_materials(config: NervaConfig) -> dict[str, openmc.Material]:
     aluminum = openmc.Material(name="aluminum-alloy pressure-vessel surrogate")
     aluminum.set_density("g/cm3", config.aluminum_density_g_cm3)
     aluminum.add_element("Al", 1.0, percent_type="ao")
+
+    if config.thermal_scattering_treatment == "evaluated-bound":
+        for solid in (reflector, graphite, zrh):
+            solid.temperature = config.bound_solid_temperature_k
+        for key, tables in EVALUATED_BOUND_THERMAL_TABLES.items():
+            target = {
+                "reflector": reflector,
+                "graphite": graphite,
+                "zrh": zrh,
+            }[key]
+            for table in tables:
+                target.add_s_alpha_beta(table)
+        # Carbon bound within heterogeneous fuel phases is intentionally
+        # untreated until graphite/UC/ZrC phase fractions are documented.
 
     return {
         "fuel": fuel,

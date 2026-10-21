@@ -320,6 +320,12 @@ jobs:
       - name: Validate NERVA nuclear-data preflight parser
         run: python -m ntr.nerva.validate_nuclear_data
 
+      - name: Validate actual core material thermal physics and NASA reference distinctions
+        run: python -m ntr.nerva.validate_physical_core_nuclear_data
+
+      - name: Audit reference-specific NASA core geometry and composition gaps
+        run: python -m ntr.nerva.physical_core_reference_validation --assembly core --rings 3 --output build/nerva_core_reference_audit.json
+
       - name: Validate HDF5 spatial fission-source bank time/seed statistics (synthetic)
         run: python -m ntr.nerva.validate_source_bank_convergence
 

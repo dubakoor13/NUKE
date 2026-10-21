@@ -10,7 +10,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from .config import NervaConfig
-from .materials import build_materials
+from .materials import build_materials, required_bound_scattering_tables
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,8 @@ class NuclearDataReport:
     thermal_materials: tuple[str, ...]
     required_neutron_nuclides: tuple[str, ...]
     missing_neutron_nuclides: tuple[str, ...]
+    required_thermal_scattering_tables: tuple[str, ...]
+    missing_thermal_scattering_tables: tuple[str, ...]
     entries: tuple[LibraryEntry, ...]
     photon_transport_requested: bool
     photon_library_present: bool
@@ -162,6 +164,10 @@ def inspect_nuclear_data(
 
     required = set(required_neutron_nuclides(config))
     missing = tuple(sorted(required - neutron_materials))
+    needed_bound = set(
+        required_bound_scattering_tables(config or NervaConfig())
+    )
+    missing_thermal = tuple(sorted(needed_bound - thermal_materials))
 
     missing_files = tuple(
         entry.resolved_path
@@ -172,6 +178,7 @@ def inspect_nuclear_data(
     photon_present = bool(photon_materials)
     ready = (
         not missing
+        and not missing_thermal
         and (not require_referenced_files or not missing_files)
         and (not photon_transport or photon_present)
     )
@@ -184,6 +191,8 @@ def inspect_nuclear_data(
         thermal_materials=tuple(sorted(thermal_materials)),
         required_neutron_nuclides=tuple(sorted(required)),
         missing_neutron_nuclides=missing,
+        required_thermal_scattering_tables=tuple(sorted(needed_bound)),
+        missing_thermal_scattering_tables=missing_thermal,
         entries=entries,
         photon_transport_requested=bool(photon_transport),
         photon_library_present=photon_present,

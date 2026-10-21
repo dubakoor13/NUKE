@@ -42,6 +42,15 @@ class NervaConfig:
     hydrogen_density_g_cm3: float = 0.0030
     hydrogen_temperature_k: float = 600.0
     fuel_temperature_k: float | None = None  # None retains legacy default OpenMC behavior
+    # 'evaluated-bound' enables chemically bound thermal scattering in
+    # specific PURE moderators/reflectors, but only when all required
+    # evaluated S(alpha,beta) HDF5 kernels exist in cross_sections.xml.
+    # NNDC test data include the four named kernels at about 296 K,
+    # but cold incident-neutron XS are at about 293.6 K: exact solid-
+    # temperature coverage must be checked independently. Free-gas
+    # remains a surrogate, never "NASA validated".
+    thermal_scattering_treatment: str = "free-gas"
+    bound_solid_temperature_k: float | None = None
     reflector_density_g_cm3: float = 1.85
     zrc_density_g_cm3: float = 6.5
     graphite_density_g_cm3: float = 1.70
@@ -161,6 +170,22 @@ class NervaConfig:
         return self.reflector_outer_radius_cm + self.pressure_vessel_thickness_cm
 
     def validate(self) -> None:
+        if self.thermal_scattering_treatment not in ("free-gas", "evaluated-bound"):
+            raise ValueError(
+                "thermal_scattering_treatment must be 'free-gas' or "
+                "'evaluated-bound'; missing evaluated data cannot be approximated"
+            )
+        if self.bound_solid_temperature_k is not None and (
+            not math.isfinite(self.bound_solid_temperature_k)
+            or self.bound_solid_temperature_k <= 0
+        ):
+            raise ValueError("bound solid temperature must be positive finite K")
+        if (self.thermal_scattering_treatment == "evaluated-bound"
+                and self.bound_solid_temperature_k is None):
+            raise ValueError(
+                "evaluated-bound thermal scattering requires explicit "
+                "bound_solid_temperature_k and matching evaluated S(a,b)"
+            )
         if self.fuel_temperature_k is not None and (
             not math.isfinite(self.fuel_temperature_k) or self.fuel_temperature_k <= 0
         ):

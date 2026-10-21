@@ -1,0 +1,67 @@
+name: NERVA core evaluated thermal-scattering nuclear-data audit
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nerva-bound-scattering-physics-audit.yml'
+      - 'ntr/nerva/audit_bound_thermal_scattering.py'
+      - 'ntr/nerva/materials.py'
+      - 'ntr/nerva/nuclear_data.py'
+      - 'ntr/nerva/config.py'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  evaluated-data-physics:
+    name: Verify real NNDC archive S(alpha,beta) availability, no neutron simulation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull exact official OpenMC tested binary and evaluated-data container
+        run: |
+          set -euo pipefail
+          mkdir -p build/nerva_bound_scattering
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' \
+            > build/nerva_bound_scattering/docker_image_digest.json
+
+      - name: Inspect actual tabulated S(alpha,beta) kernels at cold reference temperature
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              test -f "$OPENMC_CROSS_SECTIONS"
+              set +e
+              python -m ntr.nerva.audit_bound_thermal_scattering \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --solid-temperature-k 293.6059129982851 \
+                --output /repo/build/nerva_bound_scattering/actual_nndc_bound_kernel_audit.json
+              outcome=$?
+              set -e
+              # Missing thermal HDF5 kernels is physical INCOMPLETENESS,
+              # not acceptable hot-core transport. Report it accurately.
+              if [ "$outcome" -ne 0 ] && [ "$outcome" -ne 2 ]; then
+                exit "$outcome"
+              fi
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_bound_scattering/actual_nndc_bound_kernel_audit.json\")); assert len(p[\"required_tables\"])==4; print(\"Real evaluated-data ready for bound core transport:\",p[\"ready\"]); print(\"Missing/unusable:\", [r[\"table\"] for r in p[\"tables\"] if not r[\"accepted\"]])"
+            '
+
+      - name: Retain actual evaluated nuclear-data coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerva-actual-nndc-bound-thermal-kernel-audit
+          path: build/nerva_bound_scattering/
+          if-no-files-found: warn
+          retention-days: 21
