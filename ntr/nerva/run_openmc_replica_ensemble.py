@@ -23,7 +23,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-synthetic",action="store_true")
     p.add_argument("--max-p95-relative-sem",type=float,default=0.10)
     p.add_argument("--max-axial-fraction-sem",type=float,default=0.01)
-    p.add_argument("--max-half-split-total-variation",type=float,default=0.05)
+    p.add_argument("--max-half-split-total-variation",type=float,default=0.05,
+                   help="Maximum allowed worst balanced split TV (exact for <=12 replicas).")
+    p.add_argument("--max-leave-one-out-total-variation",type=float,default=0.05,
+                   help="Maximum allowed deviation of any replica from all others.")
     p.add_argument("--active-threshold-relative",type=float,default=1e-5)
     p.add_argument("--output",type=Path,
                    default=Path("build/nerva_openmc_replica_ensemble"))
@@ -38,6 +41,7 @@ def main() -> int:
         max_p95_relative_sem=a.max_p95_relative_sem,
         max_axial_fraction_sem=a.max_axial_fraction_sem,
         max_half_split_total_variation=a.max_half_split_total_variation,
+        max_leave_one_out_total_variation=a.max_leave_one_out_total_variation,
         active_threshold_relative=a.active_threshold_relative,
     )
     out=a.output.resolve()
@@ -62,7 +66,12 @@ def main() -> int:
     print(f"  replicas: {summary.replica_count}")
     print(f"  p95 relative sample SEM: {summary.p95_active_relative_sem:.6g}")
     print(f"  max axial fraction SEM: {summary.max_axial_fraction_sem:.6g}")
-    print(f"  half-split power total variation: {summary.half_split_total_variation:.6g}")
+    print(f"  original-order half-split TV (diagnostic only): {summary.half_split_total_variation:.6g}")
+    print(f"  worst balanced TV (exhaustive <=12): {summary.maximum_balanced_split_total_variation}")
+    print(f"  tested balanced TV ({summary.balanced_split_method}): "
+          f"{summary.tested_balanced_split_total_variation:.6g}")
+    print(f"  balanced split partitions tested: {summary.balanced_splits_tested}")
+    print(f"  maximum leave-one-out TV: {summary.maximum_leave_one_out_total_variation:.6g}")
     print(f"  report: {out/'ensemble_convergence_report.json'}")
     return 0 if summary.status=="PASS" else 2
 
