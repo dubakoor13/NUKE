@@ -25,6 +25,7 @@ from .nuclear_data import inspect_nuclear_data
 from .audit_nuclear_data_temperatures import audit_temperature_coverage
 from .statepoint_content_audit import audit_eigenvalue_statepoint_content
 from .source_bank_convergence import compare_independent_sources
+from .source_bank_trajectory import source_bank_trajectory
 
 
 def _sha256(path: Path) -> str:
@@ -169,11 +170,12 @@ def parse_args():
     p.add_argument("--batches",type=int,default=120)
     p.add_argument("--inactive",type=int,default=30)
     p.add_argument(
-        "--source-bank-batches", nargs=2, type=int, default=None,
-        metavar=("EARLY_ACTIVE_BATCH", "FINAL_BATCH"),
+        "--source-bank-batches", nargs="+", type=int, default=None,
+        metavar="ACTIVE_BATCH",
         help=(
-            "Two saved post-inactive OpenMC statepoint batches. "
-            "Default: midpoint of active interval and final batch."
+            "Three or more strictly increasing active source-bank batches, "
+            "ending at the final batch. Without this option, sample five "
+            "evenly spaced post-inactive source checkpoints."
         ),
     )
     p.add_argument(
@@ -216,15 +218,22 @@ def main() -> int:
         axial_mesh_bins=8,diagnostic_energy_groups=8,
     )
     cfg.validate()
-    stages = (
-        list(args.source_bank_batches)
-        if args.source_bank_batches is not None
-        else [(args.inactive + args.batches) // 2, args.batches]
-    )
-    if not args.inactive < stages[0] < stages[1] == args.batches:
+    if args.source_bank_batches is not None:
+        stages = list(args.source_bank_batches)
+    else:
+        active = args.batches - args.inactive
+        stages = [
+            args.inactive + j * active // 5 for j in range(1, 6)
+        ]
+    if (
+        len(stages) < 3
+        or stages[-1] != args.batches
+        or stages[0] <= args.inactive
+        or any(a >= b for a, b in zip(stages, stages[1:]))
+    ):
         raise ValueError(
-            "saved source banks require two ordered ACTIVE batches "
-            "ending at the final requested batch"
+            "source bank stationarity needs >=3 strictly increasing "
+            "ACTIVE batch checkpoints, ending at final transport batch"
         )
     manifest = _verify_nuclear_data(xs,cfg,output/"verified_xs_files.json")
     binary = subprocess.run(["openmc","--version"],capture_output=True,text=True)
@@ -236,6 +245,7 @@ def main() -> int:
 
     all_runs = []
     source_snapshots = []
+    source_trajectories = []
     for seed in args.seeds:
         run_directory = output / f"seed_{seed}"
         cmd = [
@@ -249,7 +259,7 @@ def main() -> int:
             "--diagnostic-energy-groups","8",
             "--axial-mesh-bins","8",
             "--seed",str(seed),
-            "--statepoint-batches",str(stages[0]),str(stages[1]),
+            "--statepoint-batches",*[str(batch) for batch in stages],
             "--output",str(run_directory),
         ]
         print("ACTUAL OPENMC NEUTRON TRANSPORT seed =",seed,flush=True)
@@ -273,19 +283,22 @@ def main() -> int:
         # OpenMC zero-pads intermediate statepoint numbers to the digit
         # count of the requested final batch (e.g. 060 of 120).
         filename_digits = len(str(args.batches))
-        early_bank = run_directory / (
-            f"statepoint.{stages[0]:0{filename_digits}d}.h5"
-        )
-        late_bank = run_directory / (
-            f"statepoint.{stages[1]:0{filename_digits}d}.h5"
-        )
-        if (not early_bank.is_file() or not late_bank.is_file()
-                or late_bank.resolve() != file.resolve()):
+        snapshots = [
+            run_directory / f"statepoint.{batch:0{filename_digits}d}.h5"
+            for batch in stages
+        ]
+        if (
+            any(not item.is_file() for item in snapshots)
+            or snapshots[-1].resolve() != file.resolve()
+        ):
             raise RuntimeError(
-                "Real OpenMC run did not save both requested fission-source "
-                "snapshots; no stationarity analysis possible"
+                "OpenMC did not save every requested source-bank checkpoint"
             )
-        source_snapshots.append((early_bank, late_bank))
+        source_trajectories.append(snapshots)
+        # Retain the preexisting two-bank comparison for backward compatible
+        # diagnostic fields. With the five-stage CI schedule this is still
+        # batch 60 vs 120, as in the last validated physical run.
+        source_snapshots.append((snapshots[1], snapshots[-1]))
         if provenance.get("config",{}).get("seed") != seed:
             raise RuntimeError("OpenMC transport input seed mismatch")
         if provenance["nuclear_data"]["cross_sections_sha256"] != (
@@ -337,6 +350,18 @@ def main() -> int:
         ),
         bins=(4,4,4),
     )
+    trajectory_report = source_bank_trajectory(
+        source_trajectories,
+        lower_cm=(
+            -cfg.core_radius_cm, -cfg.core_radius_cm,
+            -0.5 * cfg.active_length_cm,
+        ),
+        upper_cm=(
+            cfg.core_radius_cm, cfg.core_radius_cm,
+            0.5 * cfg.active_length_cm,
+        ),
+        bins=(4, 4, 4),
+    )
     summary = {
         "execution": "ACTUAL_OPENMC_TRANSPORT",
         "model_scope": "NERVA-derived core; not calibrated historical geometry",
@@ -351,12 +376,27 @@ def main() -> int:
         "cross_sections_xml_sha256":manifest["cross_sections_sha256"],
         "run_statistics":_aggregate(all_runs),
         "independent_seed_source_bank_shape_diagnostics":shape_report,
+        "multi_checkpoint_source_bank_trajectory":trajectory_report,
         "runs":all_runs,
     }
     (output/"real_core_transport_summary.json").write_text(
         json.dumps(summary,indent=2,allow_nan=False)+"\n"
     )
     print(json.dumps(summary["run_statistics"],indent=2),flush=True)
+    print(
+        "Mean adjacent-batch spatial total variation (within seed):",
+        trajectory_report[
+            "mean_within_seed_adjacent_total_variation_by_interval"
+        ],
+        flush=True,
+    )
+    print(
+        "Mean final cross-seed spatial TV:",
+        trajectory_report[
+            "between_seed_mean_total_variation_by_batch"
+        ][-1],
+        flush=True,
+    )
     print(
         "Real OpenMC fission-source-bank across-seed and over-time "
         "shape diagnostics: ",
