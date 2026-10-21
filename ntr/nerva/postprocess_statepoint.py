@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import openmc
 
-from .power import EV_TO_J, normalize_regular_mesh
+from .power import EV_TO_J, heating_score_for_transport, normalize_regular_mesh
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,6 +77,8 @@ def main() -> int:
     args.output.mkdir(parents=True, exist_ok=True)
 
     with openmc.StatePoint(args.statepoint) as statepoint:
+        photon_transport = bool(statepoint.photon_transport)
+        heating_score = heating_score_for_transport(photon_transport)
         tally = statepoint.get_tally(name="nerva_3d_neutronics")
         mesh_filter = tally.find_filter(openmc.MeshFilter)
         mesh = mesh_filter.mesh
@@ -91,10 +93,10 @@ def main() -> int:
         spacing = (upper_right - lower_left) / dimension
         cell_volume_cm3 = float(np.prod(spacing))
 
-        heating = _score_mesh_field(tally, "heating-local")
+        heating = _score_mesh_field(tally, heating_score)
         heating_std = _score_mesh_field(
             tally,
-            "heating-local",
+            heating_score,
             value="std_dev",
         )
         total_heating = _score_mesh_field(tally, "heating")
@@ -104,14 +106,14 @@ def main() -> int:
         flux = _score_mesh_field(tally, "flux")
 
         fuel_tally = statepoint.get_tally(name="nerva_3d_fuel_heating")
-        fuel_heating = _score_mesh_field(fuel_tally, "heating-local")
+        fuel_heating = _score_mesh_field(fuel_tally, heating_score)
 
         try:
             tie_tally = statepoint.get_tally(name="nerva_3d_tie_heating")
         except LookupError:
             tie_heating = np.zeros_like(fuel_heating)
         else:
-            tie_heating = _score_mesh_field(tie_tally, "heating-local")
+            tie_heating = _score_mesh_field(tie_tally, heating_score)
 
         try:
             fuel_h2_tally = statepoint.get_tally(
@@ -122,7 +124,7 @@ def main() -> int:
         else:
             fuel_h2_heating = _score_mesh_field(
                 fuel_h2_tally,
-                "heating-local",
+                heating_score,
             )
 
         try:
@@ -134,7 +136,7 @@ def main() -> int:
         else:
             tie_h2_heating = _score_mesh_field(
                 tie_h2_tally,
-                "heating-local",
+                heating_score,
             )
 
         try:
@@ -146,7 +148,7 @@ def main() -> int:
         else:
             tie_supply_h2_heating = _score_mesh_field(
                 tie_supply_h2_tally,
-                "heating-local",
+                heating_score,
             )
 
         try:
@@ -158,7 +160,7 @@ def main() -> int:
         else:
             tie_return_h2_heating = _score_mesh_field(
                 tie_return_h2_tally,
-                "heating-local",
+                heating_score,
             )
 
         normalized = normalize_regular_mesh(
@@ -376,6 +378,13 @@ def main() -> int:
 
     metadata = {
         "statepoint": str(args.statepoint),
+        "photon_transport": photon_transport,
+        "power_normalization_score": heating_score,
+        "power_normalization_interpretation": (
+            "OpenMC heating with transported secondary photons"
+            if photon_transport
+            else "OpenMC heating-local with secondary photons deposited at birth"
+        ),
         "requested_power_MW": args.power_mw,
         "normalized_power_W": normalized.total_power_w,
         "source_rate_per_s": normalized.source_rate_s,
