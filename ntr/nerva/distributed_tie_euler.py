@@ -453,19 +453,58 @@ def advance_distributed_tie(
     )
     scale=max(1.,abs(sstore),abs(internal_store),abs(kstore),
               abs(nuclear),abs(inpower),abs(outpower))
-    if (abs(mtotal)>1e-9+
+    # Audits reconstruct derivatives from actually stored state
+    # differences. With tiny acoustic dt, subtracting two ~35 K
+    # solid temperatures (and two large H2 energies) incurs genuine
+    # IEEE-754 cancellation amplified by 1/dt. Bound ONLY this
+    # representational roundoff by the magnitudes of the source
+    # inventories, not by the unrelated upstream reactor power.
+    # The FACE conservation algebra and EOS state are unchanged.
+    eps=np.finfo(float).eps
+    local_solid_roundoff=8.*eps*th.solid_capacity_j_k*(
+        np.abs(old.solid_temperature_k)+np.abs(solid_new)
+    )/dt_s
+    local_fluid_roundoff=8.*eps*(
+        np.abs(old.total_energy_j)+np.abs(etnew)
+    )/dt_s
+    max_local_energy_allowed=(
+        1e-7+1e-8*scale+
+        max(float(np.max(local_solid_roundoff)),
+            float(np.max(local_fluid_roundoff)))
+    )
+    global_momentum_roundoff=8.*eps*float(
+        np.sum(np.abs(old.momentum_kg_m_s)+np.abs(momnew))
+    )/dt_s
+    global_mass_roundoff=8.*eps*float(
+        np.sum(np.abs(old.mass_kg)+np.abs(mnew))
+    )/dt_s
+    local_mass_roundoff=8.*eps*float(
+        np.max(np.abs(old.mass_kg)+np.abs(mnew))
+    )/dt_s
+    local_momentum_roundoff=8.*eps*float(
+        np.max(np.abs(old.momentum_kg_m_s)+np.abs(momnew))
+    )/dt_s
+    if (abs(mtotal)>1e-9+global_mass_roundoff+
             1e-9*max(abs(float(np.sum(face[:,0,0]))),
                      abs(float(np.sum(face[:,-1,0]))))
-            or abs(ptotal)>1e-7+1e-9*max(
+            or abs(ptotal)>1e-7+global_momentum_roundoff+1e-9*max(
                 abs(float(np.sum(face[:,0,1]))),
                 abs(float(np.sum(face[:,-1,1])))
             )
             or abs(erest)>1e-7+1e-8*dt_s*scale
-            or np.max(abs(lm))>1e-8
-            or np.max(abs(lp))>1e-5
+            or np.max(abs(lm))>1e-8+local_mass_roundoff
+            or np.max(abs(lp))>1e-5+local_momentum_roundoff
             or max(float(np.max(abs(le))),float(np.max(abs(ls))))
-                   >1e-7+1e-8*scale):
-        raise RuntimeError("compressible tie conservative Euler residual failed")
+                   >max_local_energy_allowed):
+        raise RuntimeError(
+            "compressible tie conservative Euler residual failed: "
+            f"mass={mtotal:.8g} kg/s, momentum={ptotal:.8g} N, "
+            f"energy={erest:.8g} J, "
+            f"local_mass={float(np.max(abs(lm))):.8g} kg/s, "
+            f"local_momentum={float(np.max(abs(lp))):.8g} N, "
+            f"local_energy={max(float(np.max(abs(le))),float(np.max(abs(ls)))):.8g} W, "
+            f"local_energy_roundoff_limit={max_local_energy_allowed:.8g} W"
+        )
     return DistributedTieStep(
         state=DistributedTieState(
             solid_temperature_k=solid_new,
