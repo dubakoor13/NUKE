@@ -353,6 +353,9 @@ jobs:
       - name: Validate real-format fission source energy drift and HDF5 integrity (synthetic)
         run: python -m ntr.nerva.validate_source_energy_audit
 
+      - name: Validate genuine-format 4D fission source joint spatial and energy numerical identities
+        run: python -m ntr.nerva.validate_source_phase_space_audit
+
       - name: Validate source-particle population sensitivity statistics and provenance
         run: python -m ntr.nerva.validate_source_population_sensitivity
 
