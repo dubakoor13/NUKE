@@ -161,6 +161,22 @@ def build_tallies(
     ]
     tallies.append(global_balance)
 
+    # Independent cross-filter reaction bookkeeping MUST use a like-for-like
+    # estimator. The global conservation tally above includes continuous-
+    # energy nu-scatter, which forces OpenMC's ANALOG estimator, whereas
+    # material/incident-energy reaction tallies use TRACKLENGTH. Analog and
+    # tracklength sample means differ statistically even for identical
+    # physical reaction rates: do not demand machine-level bin closure
+    # between different estimators or weaken neutron accounting tolerances.
+    global_tracklength = openmc.Tally(
+        name="nerva_global_reaction_tracklength"
+    )
+    global_tracklength.estimator = "tracklength"
+    if config.photon_transport:
+        global_tracklength.filters = [openmc.ParticleFilter(["neutron"])]
+    global_tracklength.scores = ["absorption", "nu-fission"]
+    tallies.append(global_tracklength)
+
     if fuel_material is None and materials is not None:
         fuel_material = materials.get("fuel")
 
