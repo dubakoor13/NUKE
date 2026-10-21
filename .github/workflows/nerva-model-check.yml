@@ -350,6 +350,9 @@ jobs:
       - name: Validate nested-resolution fission-source TV and site-cloning numerics (synthetic)
         run: python -m ntr.nerva.validate_source_resolution_audit
 
+      - name: Validate real-format fission source energy drift and HDF5 integrity (synthetic)
+        run: python -m ntr.nerva.validate_source_energy_audit
+
       - name: Validate source-particle population sensitivity statistics and provenance
         run: python -m ntr.nerva.validate_source_population_sensitivity
 
