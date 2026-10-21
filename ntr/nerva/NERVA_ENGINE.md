@@ -1496,6 +1496,47 @@ Two-phase slip/critical-flow/boiling HTC/CHF, authentic hardware
 geometry, real OpenMC transport and NASA experimental validation
 remain unresolved.
 
+## Correct subsonic tie outlet characteristic and hot-header backflow
+
+The initial shaft-conditioned distributed Euler test exposed a critical
+**physical-scale** regression: a stationary hot-header ghost fluid
+was placed directly against initially cold compressed-liquid tie H2
+at the outlet. The Rusanov diffusive density flux produced an
+unphysical approximately **27 kg/s** instantaneous outlet flow while
+the independently solved engine tie hydraulic flow was about
+**0.0172 kg/s**. Numerical first-law and mass conservation still
+passed because they verified the mathematics of that flux; this is
+precisely why conservation alone does not validate interface physics.
+
+`distributed_tie_euler.py` now treats the right/open boundary
+according to the **direction of the outgoing acoustic characteristic**.
+For outgoing (subsonic) flow, the boundary static pressure comes from
+the downstream solved header, but H2 entropy is extrapolated from
+the adjacent interior cell:
+
+```text
+s_ghost = s(rho_interior, u_interior)
+rho_ghost, u_ghost = CoolProp(p_header, s_ghost)
+v_ghost = v_interior + (p_interior-p_header)/(rho_interior*c_interior)
+```
+
+If the predicted characteristic velocity turns negative, it instead
+uses the declared downstream H2 reservoir's thermodynamic enthalpy as
+a real **backflow** boundary. The approximation is a *linearized*
+acoustic boundary using the locally selected single-phase or
+homogeneous-equilibrium sound speed, not an exact nonlinear
+characteristic Riemann solution. This removes the inappropriate
+contact discontinuity across a genuine outgoing boundary without
+inventing a mass source. Shared interface mass, momentum and
+kinetic-inclusive total-energy conservation checks remain unchanged.
+
+Regression: `validate_distributed_tie_engine_boundary` now checks
+the outlet flow cannot reproduce the originally identified
+orders-of-magnitude hot-header ghost artifact. The next engineering
+priority is an actual two-way transient tie/regenerator/shaft coupling
+with physically matched junction conditions and independently
+calibrated effective H2 areas and loss coefficients.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
