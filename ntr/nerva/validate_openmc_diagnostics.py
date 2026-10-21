@@ -97,6 +97,26 @@ def main() -> int:
         "nerva_fuel_spectrum"
     ].find_filter(openmc.EnergyFilter)
     assert len(energy_filter.bins) == 16
+    # Every reported thermal/epithermal/fast fraction must be exactly
+    # bin-aligned, independent of diagnostic neutron group count.
+    from .neutron_energy_groups import diagnostic_energy_edges
+    import numpy as np
+    for n in (8, 16, 80):
+        edges = diagnostic_energy_edges(n)
+        assert len(edges) == n + 1
+        assert np.any(edges == 0.625)
+        assert np.any(edges == 1.0e5)
+        bins = np.column_stack((edges[:-1], edges[1:]))
+        fractions = _spectral_fractions(bins, np.ones(n))
+        assert np.isclose(sum(fractions.values()), 1., rtol=0, atol=1e-12)
+    np.testing.assert_allclose(
+        np.asarray(energy_filter.bins),
+        np.column_stack(
+            (diagnostic_energy_edges(16)[:-1],
+             diagnostic_energy_edges(16)[1:])
+        ),
+        rtol=1e-11, atol=0,
+    )
 
     axial_filter = tallies[
         "nerva_axial_transport"
