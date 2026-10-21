@@ -94,6 +94,7 @@ class DynamicPumpStep:
     core_nozzle_mass_demand_reference_fixed: bool = True
     whole_engine_cycle_converged: bool = False
     historical_nasa_pump_map_validated: bool = False
+    turbine_shaft_power_dynamic: bool = False
 
 
 def pump_delivery_at_state(
@@ -193,6 +194,7 @@ def advance_dynamic_pump_tie(
     reference_shaft: ShaftClosedPoint,
     dt_s: float,
     *, eos: HydrogenEOS | None = None,
+    turbine_shaft_power_override_w: float | None = None,
 ) -> DynamicPumpStep:
     """Couple real-fluid pump map, conservative headers, Euler tie and rotor."""
     if not math.isfinite(dt_s) or dt_s<=0:
@@ -215,7 +217,11 @@ def advance_dynamic_pump_tie(
             delivery.delivered_stagnation_enthalpy_j_kg,
         ),
     )
-    turbine_drive=reference_shaft.turbine_shaft_delivered_power_w
+    turbine_drive=(
+        reference_shaft.turbine_shaft_delivered_power_w
+        if turbine_shaft_power_override_w is None
+        else turbine_shaft_power_override_w
+    )
     if not math.isfinite(turbine_drive) or turbine_drive<0:
         raise ValueError("invalid fixed reference turbine delivered power")
     initial_E=0.5*pump_parameters.rotor_inertia_kg_m2*(
@@ -267,4 +273,10 @@ def advance_dynamic_pump_tie(
         total_fluid_rotor_energy_balance_residual_j=fluid_plus_rotor_residual,
         rotor_initial_energy_j=initial_E,
         rotor_final_energy_j=final_E,
+        turbine_shaft_power_reference_fixed=(
+            turbine_shaft_power_override_w is None
+        ),
+        turbine_shaft_power_dynamic=(
+            turbine_shaft_power_override_w is not None
+        ),
     )
