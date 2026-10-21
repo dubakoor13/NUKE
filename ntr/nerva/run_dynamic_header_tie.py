@@ -32,6 +32,9 @@ from .dynamic_pump_shaft import (
     DynamicPumpParameters,DynamicPumpState,advance_dynamic_pump_tie,
 )
 from .lh2_feed_cycle import LH2Cycle,HydrogenEOS
+from .dynamic_turbine_admission import (
+    calibrate_effective_admission,advance_dynamic_turbine_pump,
+)
 from .regenerative_cooling import CoolingLeg,CoolingNetwork
 from .resolved_transient import read_resolved_heating
 from .turbine_bleed_cycle import TurbineBleed,solve_turbine_bleed
@@ -54,6 +57,8 @@ def main()->int:
                         help="enable live pump map/rotor using explicit reference angular speed")
     parser.add_argument("--rotor-inertia-kg-m2",type=float,
                         help="rotor inertia for live pump-map / kinetic-energy model")
+    parser.add_argument("--dynamic-turbine-bleed",action="store_true",
+                        help="use current warm-header EOS to solve turbine admission/shaft power")
     parser.add_argument("--initial-rotor-speed-rad-s",type=float,
                         help="initial angular speed; defaults to reference speed")
     parser.add_argument("--initial-solid-temperature-k",type=float,required=True)
@@ -84,6 +89,8 @@ def main()->int:
     if (args.initial_rotor_speed_rad_s is not None and
             args.rotor_reference_speed_rad_s is None):
         raise ValueError("initial rotor speed requires the live pump model")
+    if args.dynamic_turbine_bleed and args.rotor_reference_speed_rad_s is None:
+        raise ValueError("dynamic turbine bleed requires dynamic pump rotor")
     raw=json.loads(args.engine_config.read_text(encoding="utf-8"))
     if not isinstance(raw,dict) or set(raw)!={
         "lh2_cycle","turbine","regenerative_cooling"
@@ -161,13 +168,29 @@ def main()->int:
             ),hydraulic=dual,
         ) if pump_params is not None else None
     )
+    admission=(
+        calibrate_effective_admission(shaft,turbine,eos=eos)
+        if args.dynamic_turbine_bleed else None
+    )
     history=[]
     latest=None
     for i in range(args.steps):
         branch=None
         dual_result=None
         pump_result=None
-        if pump_state is not None:
+        turbine_result=None
+        if admission is not None:
+            turbine_result=advance_dynamic_turbine_pump(
+                heating,pump_state,core,pump_params,admission,fluid,
+                upstream_params,header,net,shaft,args.dt_s,eos=eos,
+            )
+            pump_result=turbine_result.pump_and_fluid
+            pump_state=turbine_result.state
+            dual_result=pump_result.fluid
+            dual=dual_result.state
+            branch=dual_result.parallel
+            latest=branch.combined
+        elif pump_state is not None:
             pump_result=advance_dynamic_pump_tie(
                 heating,pump_state,core,pump_params,fluid,
                 upstream_params,header,net,shaft,args.dt_s,eos=eos,
@@ -230,6 +253,30 @@ def main()->int:
             "dynamic_pump_delivered_flow_kg_s":(
                 pump_result.pump.mass_flow_kg_s if pump_result is not None
                 else None
+            ),
+            "dynamic_turbine_bleed_flow_kg_s":(
+                turbine_result.turbine.bleed_mass_flow_kg_s
+                if turbine_result is not None else None
+            ),
+            "dynamic_turbine_delivered_power_w":(
+                turbine_result.turbine.delivered_rotor_power_w
+                if turbine_result is not None else None
+            ),
+            "dynamic_core_nozzle_flow_mismatch_kg_s":(
+                turbine_result.core_reference_nozzle_flow_mismatch_kg_s
+                if turbine_result is not None else None
+            ),
+            "turbine_exhaust_enthalpy_j_kg":(
+                turbine_result.turbine.exhaust_enthalpy_j_kg
+                if turbine_result is not None else None
+            ),
+            "turbine_mechanical_loss_w":(
+                turbine_result.turbine.mechanical_loss_w
+                if turbine_result is not None else None
+            ),
+            "combined_turbine_pump_open_energy_residual_j":(
+                turbine_result.combined_open_system_energy_residual_j
+                if turbine_result is not None else None
             ),
             "dynamic_pump_stage_pressure_pa":(
                 pump_result.pump.pump_stage_pressure_pa
@@ -323,7 +370,10 @@ def main()->int:
         "upstream_manifold_h2_inventory_active":dual is not None,
         "pump_head_and_pump_mass_flow_are_steady_references":pump_state is None,
         "pump_flow_and_rotor_kinetic_energy_are_dynamic":pump_state is not None,
-        "turbine_power_held_at_steady_shaft_reference":True,
+        "turbine_power_held_at_steady_shaft_reference":admission is None,
+        "dynamic_real_h2_turbine_bleed_active":admission is not None,
+        "core_nozzle_choking_dynamically_resolved":False,
+        "historical_nasa_turbine_map_validated":False,
         "historical_nasa_pump_curve_validated":False,
         "full_shaft_cycle_feedback_converged":False,
         "dynamic_pump_turbine_nozzle_flows_solved":False,
@@ -337,6 +387,9 @@ def main()->int:
         ),
         "dynamic_pump_parameters":(
             asdict(pump_params) if pump_params is not None else None
+        ),
+        "turbine_admission_parameters":(
+            asdict(admission) if admission is not None else None
         ),
         "tie_parameters":asdict(fluid),
         "history":history,

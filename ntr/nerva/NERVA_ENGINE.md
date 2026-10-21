@@ -1792,6 +1792,69 @@ and rotor-inertia* verification cases, **not NASA historical
 NERVA hardware validation**, OpenMC neutron transport, or a
 fully converged expander-cycle model.
 
+## Pressure- and enthalpy-dependent turbine bleed driving the common rotor
+
+The opt-in `dynamic_turbine_admission.py` replaces the previous **fixed
+shaft-delivered turbine power** assumption in the rotor equation with a
+**warm-H2 turbine admission/nozzle model**. For every transient timestep,
+the *current* downstream/common-header CoolProp pressure and specific
+enthalpy determine the inlet hydrogen entropy, isentropic admission
+mass flux and exhaust expansion work. A bounded optimization of
+`rho(p,s_header)*sqrt[2*(h_header-h(p,s_header))]` over exhaust
+and inlet pressures selects a critical (choked) admission throat
+where physically applicable; otherwise the flow is unchoked at the
+exhaust pressure. This is a quasi-steady inviscid homogeneous-
+equilibrium approximation, not a measured NERVA admission passage.
+
+An **effective admission area** is required. An explicit convenience
+calibration matches the existing synthetic shaft-closed reference
+bleed flow. This area must NOT be described as the real NASA turbine
+geometry until independently sourced. Turbine specific work and
+rotor-delivered power are
+
+```text
+m_bleed = A_admission_effective * G_isen(P_header,h_header,P_exhaust)
+m_core_reference_remainder = m_total_engine_reference - m_bleed
+w_turbine = eta_turbine*[h_header - h(P_exhaust,s_header)]
+P_rotor_turbine = m_bleed*w_turbine*eta_mechanical
+h_exhaust = h_header - w_turbine
+P_mechanical_loss = m_bleed*w_turbine - P_rotor_turbine
+d(J*omega^2/2)/dt = P_rotor_turbine - P_pump
+```
+
+The coolant header still discharges the independent/reference
+**total** engine flow, now auditable as the sum of *changing
+bleed* and *changing core remainder*. The core/nozzle throat itself
+does **not** yet re-solve for the resulting changing main-rocket
+mass flow. The combined **coolant fluids + solids + rotor**
+first-law audit explicitly counts turbine exhaust H2 enthalpy and
+mechanical losses at the external energy boundary; it does not
+count turbine shaft power as arbitrary new external energy:
+
+```text
+d(E_H2_manifolds + E_tie_fluid + E_tie_solids + E_rotor)/dt =
+    m_pump*h_tank + Q_tie_nuclear + Q_nozzle_reflector
+    - m_core*h_header - m_bleed*h_exhaust - P_mechanical_loss
+```
+
+`python -m ntr.nerva.validate_dynamic_turbine_admission` tests
+reference consistency, pressure sensitivity, real-EOS choking,
+mechanical work, changing bleed flow and conservation. Add
+`--dynamic-turbine-bleed` to the established runner together with
+`--rotor-reference-speed-rad-s`,
+`--rotor-inertia-kg-m2`,
+`--upstream-manifold-volume-m3` and
+`--dynamic-nozzle-branch`. Its JSON includes bleed/core split,
+turbine power, exhaust enthalpy, losses and explicit
+`core_nozzle_choking_dynamically_resolved: false`.
+
+**Still not completed:** actual pump/turbine maps; non-equilibrium
+two-phase and choking physics; independent changing reactor-channel/
+nozzle mass-demand closure; full shaft/transient operating-point
+convergence; historical NASA geometry/materials and benchmarks; real
+OpenMC transport. The synthetic admission-area fit is deliberately
+*not* a historical NERVA design claim.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
