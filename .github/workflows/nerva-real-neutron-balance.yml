@@ -1,0 +1,69 @@
+name: NERVA real OpenMC full-core neutron conservation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nerva-real-neutron-balance.yml'
+      - 'ntr/nerva/core_neutron_balance.py'
+      - 'ntr/nerva/validate_core_neutron_balance.py'
+      - 'ntr/nerva/tallies.py'
+      - 'ntr/nerva/run_real_core_replicas.py'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  real-global-neutron-balance:
+    name: Real neutron absorption, multiplicative scatter, leakage and production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install actual OpenMC and evaluated neutron data
+        run: |
+          set -euo pipefail
+          mkdir -p build/nerva_core_neutron_balance
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' \
+            > build/nerva_core_neutron_balance/docker_repo_digests.json
+      - name: Real OpenMC eigenvalue neutron conservation with global leakage
+        run: |
+          set -euo pipefail
+          docker run --rm --cpus=2 --memory=6g \
+            -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              openmc --version
+              test -f "$OPENMC_CROSS_SECTIONS"
+              python -m ntr.nerva.validate_core_neutron_balance
+              python -m ntr.nerva.run_openmc_transport \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --assembly core --rings 3 \
+                --particles 3000 --batches 60 --inactive 20 \
+                --hydrogen-temperature-k 293.6059129982851 \
+                --diagnostic-energy-groups 8 --axial-mesh-bins 8 \
+                --heating-mesh-dimensions 8 8 8 \
+                --seed 13007 \
+                --output /repo/build/nerva_core_neutron_balance
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_core_neutron_balance/transport_provenance.json\")); assert p[\"statepoint\"][\"sha256\"]; print(\"Real statepoint:\",p[\"statepoint\"][\"path\"])"
+              statepoint="$(find /repo/build/nerva_core_neutron_balance -maxdepth 1 -name "statepoint.*.h5" -type f | head -n 1)"
+              test -n "$statepoint"
+              python -m ntr.nerva.core_neutron_balance \
+                --statepoint "$statepoint" \
+                --output /repo/build/nerva_core_neutron_balance/global_neutron_balance.json \
+                --strict
+            '
+      - name: Persist genuine global neutron accounting evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerva-openmc-real-global-neutron-conservation
+          path: build/nerva_core_neutron_balance/
+          if-no-files-found: warn
+          retention-days: 21
