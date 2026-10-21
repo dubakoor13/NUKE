@@ -58,8 +58,15 @@ def _verify_nuclear_data(xs: Path, config: NervaConfig, output: Path) -> dict:
             "OpenMC could not load evaluated neutron HDF5 data for "
             + ", ".join(sorted(invalid))
         )
+    (output.parent/"neutron_temperature_coverage_audit.json").write_text(
+        json.dumps(audit, indent=2)+"\n", encoding="utf-8"
+    )
     if audit["model_explicit_temperature_coverage_ok"] is not True:
-        raise RuntimeError("explicit core temperature not covered by evaluated XS")
+        raise RuntimeError(
+            "Requested core temperature lacks evaluated neutron XS; "
+            "see neutron_temperature_coverage_audit.json. "
+            "Never substitute room-temperature XS for hot NERVA operation."
+        )
 
     paths: dict[str, Path] = {}
     for entry in report.entries:
@@ -140,6 +147,15 @@ def parse_args():
     p.add_argument("--particles",type=int,default=300)
     p.add_argument("--batches",type=int,default=24)
     p.add_argument("--inactive",type=int,default=8)
+    p.add_argument(
+        "--hydrogen-temperature-k", type=float, default=293.6,
+        help=(
+            "Explicit coolant material temperature [K]. Default 293.6 K "
+            "is a COLD neutron-transport executable smoke test, NOT "
+            "NERVA operating-temperature physics. For real hot core "
+            "transport provide a multi-temperature evaluated XS library."
+        ),
+    )
     p.add_argument("--seeds",type=int,nargs="+",default=(13007,23011,33013,43019))
     return p.parse_args()
 
@@ -166,7 +182,8 @@ def main() -> int:
     output.mkdir(parents=True,exist_ok=True)
     cfg = NervaConfig(
         core_rings=args.rings,particles=args.particles,batches=args.batches,
-        inactive=args.inactive,heating_mesh_dimension=(8,8,8),
+        inactive=args.inactive,hydrogen_temperature_k=args.hydrogen_temperature_k,
+        heating_mesh_dimension=(8,8,8),
         axial_mesh_bins=8,diagnostic_energy_groups=8,
     )
     cfg.validate()
@@ -185,6 +202,7 @@ def main() -> int:
             sys.executable,"-m","ntr.nerva.run_openmc_transport",
             "--cross-sections",str(xs),
             "--assembly","core","--rings",str(args.rings),
+            "--hydrogen-temperature-k",str(args.hydrogen_temperature_k),
             "--particles",str(args.particles),
             "--batches",str(args.batches),"--inactive",str(args.inactive),
             "--heating-mesh-dimensions","8","8","8",
@@ -254,6 +272,9 @@ def main() -> int:
         "model_scope": "NERVA-derived core; not calibrated historical geometry",
         "assembly": "core",
         "rings":args.rings,
+        "hydrogen_temperature_K": args.hydrogen_temperature_k,
+        "cold_xs_smoke_test_only": args.hydrogen_temperature_k <= 300.,
+        "not_historical_nerva_operating_temperature": True,
         "particles_per_generation":args.particles,
         "batches":args.batches,"inactive_batches":args.inactive,
         "cross_sections_xml_sha256":manifest["cross_sections_sha256"],
