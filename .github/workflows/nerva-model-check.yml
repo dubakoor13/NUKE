@@ -293,6 +293,12 @@ jobs:
       - name: Check NERVA run-comparison CLI
         run: python -m ntr.nerva.compare_runs --help
 
+      - name: Validate NERVA conservative OpenMC mesh refinement projection
+        run: python -m ntr.nerva.validate_mesh_refinement
+
+      - name: Validate NERVA mesh convergence report and physical identity
+        run: python -m ntr.nerva.validate_mesh_refinement_report
+
       - name: Check NERVA numerical-convergence CLI
         run: python -m ntr.nerva.summarize_convergence --help
 
