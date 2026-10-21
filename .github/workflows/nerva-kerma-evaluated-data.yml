@@ -1,0 +1,58 @@
+name: NERVA actual evaluated neutron local KERMA nuclear-data coverage
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nerva-kerma-evaluated-data.yml'
+      - 'ntr/nerva/audit_kerma_coverage.py'
+      - 'ntr/nerva/validate_kerma_coverage.py'
+      - 'ntr/nerva/audit_nuclear_data_temperatures.py'
+      - 'ntr/nerva/nuclear_data.py'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  neutron-local-kerma:
+    name: Inspect genuine evaluated nuclide HDF5 for MT901 without inventing KERMA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use the same OpenMC and NNDC source as the real core smoke test
+        run: |
+          set -euo pipefail
+          mkdir -p build/nerva_evaluated_local_kerma
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' \
+            > build/nerva_evaluated_local_kerma/docker_repo_digests.json
+
+      - name: Inspect actual neutron-data files and source-specific MT901 reaction inventory
+        run: |
+          set -euo pipefail
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              test -f "$OPENMC_CROSS_SECTIONS"
+              openmc --version
+              python -m ntr.nerva.validate_kerma_coverage
+              python -m ntr.nerva.audit_kerma_coverage \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --output /repo/build/nerva_evaluated_local_kerma/kerma_mt901_coverage.json
+            '
+
+      - name: Retain actual evaluated nuclear-data evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerva-actual-evaluated-neutron-local-kerma-inventory
+          path: build/nerva_evaluated_local_kerma/
+          if-no-files-found: warn
+          retention-days: 21
