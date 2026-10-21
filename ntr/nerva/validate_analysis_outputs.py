@@ -141,6 +141,24 @@ def main() -> int:
         abs_tol=1.0e-3,
     )
 
+    # A spatial power map must use the physical deposition estimator
+    # corresponding to the statepoint transport physics. In coupled runs
+    # 'heating-local' misplaces the photon-deposited energy.
+    photons = power.get("photon_transport", False)
+    if not isinstance(photons, bool):
+        raise ValueError("power.photon_transport must be boolean")
+    expected_score = "heating" if photons else "heating-local"
+    score = power.get("power_normalization_score", "heating-local")
+    if score != expected_score:
+        raise ValueError(
+            "OpenMC thermal heating normalization does not match photon transport"
+        )
+    diagnostic_score = diagnostics.get("power_normalization_score", expected_score)
+    if diagnostic_score != expected_score:
+        raise ValueError("OpenMC diagnostic and normalized heating scores differ")
+    if diagnostics.get("photon_transport", photons) != photons:
+        raise ValueError("OpenMC diagnostic transport physics differs from power metadata")
+
     diagnostics_source_rate = _finite_number(
         diagnostics["source_rate_per_s"],
         "diagnostics.source_rate_per_s",
@@ -232,6 +250,17 @@ def main() -> int:
             raise ValueError(
                 "energy_deposition.mesh_heating_W must be positive"
             )
+        deposited_w = (
+            energy_deposition["mesh_heating_W"] if photons
+            else energy_deposition["mesh_heating_local_W"]
+        )
+        _assert_close(
+            _finite_number(deposited_w, "mode-selected mesh heating"),
+            normalized_power_w,
+            "OpenMC mode-selected deposited heat",
+            rel_tol=1.0e-6,
+            abs_tol=1.0e-3,
+        )
 
     material_fraction_sum = _fraction_sum(
         diagnostics["material_power_fractions"],
