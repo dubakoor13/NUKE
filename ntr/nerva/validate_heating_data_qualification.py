@@ -88,7 +88,7 @@ def main() -> int:
         file = Path(tmp)/"fixture.h5"
         mock_statepoint(file,local=0)
         report = inspect_statepoint(file)
-        assert report["source"] == "GENUINE_OPENMC_EIGENVALUE_HDF5"
+        assert report["source"] == "OPENMC_FORMAT_EIGENVALUE_HDF5_CONTENT"
         assert report["seed"] == 13007
         assert not report["thermal_power_normalization_allowed"]
         mock_statepoint(file,local=700000)
