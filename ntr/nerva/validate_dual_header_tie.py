@@ -9,8 +9,10 @@ Heating fields and model geometry are SYNTHETIC, not historical NERVA.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict,replace
+import json
 import math
+import sys
 from pathlib import Path
 import tempfile
 import numpy as np
@@ -35,6 +37,7 @@ from .validate_hot_lh2_cycle import hot_case
 from .validate_regenerative_cooling import network
 from .validate_turbine_bleed_cycle import sample_turbine
 from .validate_resolved_transient import write_synthetic_reconstructions
+from .run_dynamic_header_tie import main as run_dual_header_cli
 
 
 def rejects(fn):
@@ -195,6 +198,68 @@ def main()->int:
         assert abs(bigger.pump_new_pressure_pa-bigger.pump_old_pressure_pa)<(
             abs(first.pump_new_pressure_pa-first.pump_old_pressure_pa)
         )
+        # User-facing CLI must run the same two manifolds, EOS
+        # pressure-feedback roots and merged mass/energy checks.
+        config=Path(tmp)/"engine.json"
+        config.write_text(json.dumps({
+            "lh2_cycle":asdict(hot_case()),
+            "turbine":asdict(sample_turbine()),
+            "regenerative_cooling":asdict(network_case),
+        }),encoding="utf-8")
+        output=Path(tmp)/"dual_header_output"
+        argv=sys.argv
+        try:
+            sys.argv=[
+                "run_dynamic_header_tie",str(mesh),str(fuel),str(tie),
+                "--engine-config",str(config),
+                "--header-volume-m3","0.0001",
+                "--upstream-manifold-volume-m3","0.0001",
+                "--dynamic-nozzle-branch",
+                "--initial-solid-temperature-k","35",
+                "--supply-cell-volume-m3","0.0001",
+                "--return-cell-volume-m3","0.0001",
+                "--flow-area-m2","0.0002",
+                "--solid-capacity-j-k","3000",
+                "--supply-ua-w-k","0.4",
+                "--return-ua-w-k","0.4",
+                "--darcy-friction-factor","0.04",
+                "--turnaround-loss-coefficient","0.6",
+                "--dt-s",str(dt),"--steps","2",
+                "--output",str(output),
+            ]
+            assert run_dual_header_cli()==0
+        finally:
+            sys.argv=argv
+        report=json.loads(
+            (output/"dynamic_tie_header_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["status"]=="PASS"
+        assert report["upstream_manifold_h2_inventory_active"]
+        assert report["upstream_pump_header_mass_flow_conserved"]
+        assert report["dynamic_nozzle_branch_header_pressure_feedback_active"]
+        assert report["pump_head_and_pump_mass_flow_are_steady_references"]
+        assert not report["full_shaft_cycle_feedback_converged"]
+        assert not report["actual_openmc_transport_executed"]
+        assert len(report["history"])==2
+        assert all(
+            abs(row["total_system_mass_residual_kg_s"])<1e-8
+            and abs(row["total_system_energy_residual_j"])<1e-5
+            and row["upstream_manifold_pressure_pa"]>0
+            for row in report["history"]
+        )
+        assert (
+            report["history"][0]["upstream_manifold_pressure_pa"]!=
+            report["history"][1]["upstream_manifold_pressure_pa"]
+        )
+        with np.load(
+            output/"dynamic_tie_header_final_state.npz",allow_pickle=False
+        ) as fields:
+            assert float(fields["upstream_manifold_mass_kg"])>0
+            assert float(fields["upstream_manifold_pressure_pa"])>0
+            assert fields["tie_mass_kg"].shape==tie_init.mass_kg.shape
+
         # Invalid pressure range, unresolvable CFL and unsupported
         # configurations fail instead of inventing stored H2 mass.
         rejects(lambda:initial_pump_manifold(
