@@ -9,7 +9,9 @@ unsteady Euler momentum, OpenMC transport, or NASA hardware validation.
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 import math
+import sys
 from pathlib import Path
 import tempfile
 
@@ -26,6 +28,7 @@ from .pressure_driven_tie import (
 )
 from .lh2_feed_cycle import HydrogenEOS
 from .resolved_transient import read_resolved_heating
+from .run_inertial_tie import main as run_inertial_tie_cli
 from .validate_resolved_transient import write_synthetic_reconstructions
 
 
@@ -200,6 +203,61 @@ def main()->int:
         )
         assert abs(static.fluid.mass_balance_error_kg_s)<1e-9
         assert abs(static.fluid.energy_balance_error_j)<1e-5
+
+        # Public CLI must retain face momentum over consecutive
+        # steps and persist signed interface momentum/pressure audits.
+        output=Path(tmp)/"inertial_analysis"
+        old_argv=sys.argv
+        try:
+            sys.argv=[
+                "run_inertial_tie",
+                str(mesh),str(fuel),str(tie),
+                "--initial-pressure-pa",str(p0),
+                "--initial-quality","0.30",
+                "--initial-solid-temperature-k","50",
+                "--inlet-pressure-pa","600000",
+                "--outlet-pressure-pa","500000",
+                "--inlet-quality","0.30",
+                "--outlet-backflow-quality","0.30",
+                "--supply-cell-volume-m3","0.001",
+                "--return-cell-volume-m3","0.001",
+                "--solid-capacity-j-k","3000",
+                "--supply-ua-w-k","1",
+                "--return-ua-w-k","1",
+                "--interface-area-m2","1e-5",
+                "--discharge-coefficient","0.7",
+                "--face-inertial-length-m","0.05",
+                "--dt-s","0.001",
+                "--steps","2",
+                "--output",str(output),
+            ]
+            assert run_inertial_tie_cli()==0
+        finally:
+            sys.argv=old_argv
+        report=json.loads(
+            (output/"inertial_tie_report.json").read_text(encoding="utf-8")
+        )
+        assert report["status"]=="PASS"
+        assert not report["full_unsteady_momentum_euler_solved"]
+        assert not report["kinetic_energy_storage_included"]
+        assert not report["real_openmc_transport_executed"]
+        assert len(report["history"])==2
+        assert all(
+            abs(row["mass_residual_kg_s"])<1e-9
+            and abs(row["energy_residual_j"])<1e-5
+            and abs(row["momentum_pressure_residual_pa"])<1e-5
+            for row in report["history"]
+        )
+        with np.load(output/"inertial_tie_final_state.npz",
+                     allow_pickle=False) as saved:
+            assert saved["interface_mass_flow_kg_s"].shape==face.shape
+            assert np.all(saved["supply_mass_kg"]>0)
+            assert np.allclose(
+                saved["face_driving_pressure_pa"],
+                saved["face_drag_pressure_pa"]+
+                saved["face_acceleration_pressure_pa"],
+                atol=1e-5,rtol=1e-10,
+            )
 
         # Face integrator must reject invalid inputs or unresolvable
         # explicit CV mass stability without adjusting physics silently.
