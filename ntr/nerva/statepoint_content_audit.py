@@ -69,7 +69,7 @@ def audit_eigenvalue_statepoint_content(path: Path) -> dict:
             realizations = _integer_dataset(state,"n_realizations",minimum=2)
             generations = _integer_dataset(state,"generations_per_batch",minimum=1)
             if (current_batch > total_batches or inactive >= current_batch
-                    or realizations > current_batch - inactive):
+                    or realizations > (current_batch - inactive) * generations):
                 raise ValueError("OpenMC statepoint has inconsistent completed batch counts")
             if "k_combined" not in state:
                 raise ValueError("OpenMC eigenvalue combined k-effective is missing")
