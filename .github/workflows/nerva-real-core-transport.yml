@@ -9,6 +9,8 @@ on:
       - 'ntr/nerva/source_bank_convergence.py'
       - 'ntr/nerva/source_bank_trajectory.py'
       - 'ntr/nerva/source_resolution_audit.py'
+      - 'ntr/nerva/heating_data_qualification.py'
+      - 'ntr/nerva/validate_heating_data_qualification.py'
       - 'ntr/nerva/validate_source_resolution_audit.py'
       - 'ntr/nerva/validate_source_bank_trajectory.py'
       - 'ntr/nerva/validate_source_bank_convergence.py'
@@ -67,6 +69,7 @@ jobs:
               python -m ntr.nerva.validate_source_bank_convergence
               python -m ntr.nerva.validate_source_bank_trajectory
               python -m ntr.nerva.validate_source_resolution_audit
+              python -m ntr.nerva.validate_heating_data_qualification
               python -m ntr.nerva.run_real_core_replicas \
                 --rings 3 --particles 3000 --batches 120 --inactive 30 \
                 --source-bank-batches 40 60 80 100 120 \
@@ -76,6 +79,10 @@ jobs:
               python -m ntr.nerva.source_resolution_audit \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/source_resolution_audit.json
+              python -m ntr.nerva.heating_data_qualification \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --output /repo/build/nerva_real_core/heating_data_qualification.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/heating_data_qualification.json\")); assert p[\"all_real_statepoints_have_usable_neutron_local_heating\"] is False, \"Changed NNDC heating behavior: reevaluate data physics\"; print(\"Cold NNDC nuclear-heating support: FAIL (expected physical qualification)\")"
             '
 
       - name: Persist physical-statepoint evidence even when transport fails
