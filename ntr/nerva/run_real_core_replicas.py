@@ -270,8 +270,15 @@ def main() -> int:
         file = Path(sp_info["path"])
         if not file.is_file() or sp_info.get("sha256") != _sha256(file):
             raise RuntimeError("Real OpenMC statepoint bytes mismatch")
-        early_bank = run_directory / f"statepoint.{stages[0]}.h5"
-        late_bank = run_directory / f"statepoint.{stages[1]}.h5"
+        # OpenMC zero-pads intermediate statepoint numbers to the digit
+        # count of the requested final batch (e.g. 060 of 120).
+        filename_digits = len(str(args.batches))
+        early_bank = run_directory / (
+            f"statepoint.{stages[0]:0{filename_digits}d}.h5"
+        )
+        late_bank = run_directory / (
+            f"statepoint.{stages[1]:0{filename_digits}d}.h5"
+        )
         if (not early_bank.is_file() or not late_bank.is_file()
                 or late_bank.resolve() != file.resolve()):
             raise RuntimeError(
