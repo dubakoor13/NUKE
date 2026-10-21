@@ -163,10 +163,10 @@ def parse_args():
     p.add_argument("--cross-sections",type=Path,default=None,
                    help="OpenMC cross_sections.xml; otherwise OPENMC_CROSS_SECTIONS")
     p.add_argument("--output",type=Path,default=Path("build/nerva_real_core"))
-    p.add_argument("--rings",type=int,default=1)
-    p.add_argument("--particles",type=int,default=300)
-    p.add_argument("--batches",type=int,default=24)
-    p.add_argument("--inactive",type=int,default=8)
+    p.add_argument("--rings",type=int,default=3)
+    p.add_argument("--particles",type=int,default=1500)
+    p.add_argument("--batches",type=int,default=35)
+    p.add_argument("--inactive",type=int,default=10)
     p.add_argument(
         "--hydrogen-temperature-k", type=float, default=293.6059129982851,
         help=(
