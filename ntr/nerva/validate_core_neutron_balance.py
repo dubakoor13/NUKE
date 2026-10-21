@@ -51,14 +51,19 @@ def main()->int:
     )
     assert bad_fission["neutron_balance_screen_passed"]
     assert not bad_fission["nu_fission_vs_native_tracklength_k"]["screen_passed"]
+    assert bad_fission["nu_fission_vs_native_tracklength_k"]["screen_threshold"] < .01
 
-    # A high-variance sample must not be advertised as a physical solution:
-    # screen may be consistent but uncertainty is separately reported.
+    # A high-variance marginal SEM must NOT turn a real 0.05 balance
+    # violation into an accepted neutron conservation identity: strongly
+    # correlated scatter and nu-scatter inflate naive uncertainty bounds.
     noisy=_close_balance(
         {**base,"absorption":(.42,.12)},(.65,.11),(.014,.003)
     )
-    assert noisy["neutron_balance_screen_passed"]
+    assert not noisy["neutron_balance_screen_passed"]
     assert noisy["conservative_residual_standard_error_upper_bound"] > .2
+    assert not noisy["uncertainty_bound_below_closure_tolerance"]
+    assert noisy["screen_uses_strict_physical_closure_not_widened_by_score_covariance"]
+    assert isclose(noisy["screen_threshold_per_source"],.02)
 
     reject(lambda:_close_balance({**base,"nu-scatter":(-1.,0)},(.65,.003),(.014,.001)),
            "nonfinite/negative")
