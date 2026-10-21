@@ -8,8 +8,10 @@ Does not run OpenMC or establish NASA hardware fidelity.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict,replace
+import json
 import math
+import sys
 from pathlib import Path
 import tempfile
 
@@ -30,6 +32,7 @@ from .validate_hot_lh2_cycle import hot_case
 from .validate_regenerative_cooling import network
 from .validate_resolved_transient import write_synthetic_reconstructions
 from .validate_turbine_bleed_cycle import sample_turbine
+from .run_distributed_tie_engine_boundary import main as run_engine_boundary_cli
 
 
 def rejects(action) -> None:
@@ -164,6 +167,67 @@ def main()->int:
             coupling.steady_tie_mass_flow_reference_kg_s
         )
         assert abs(another.transient.total_energy_residual_j)<1e-5
+
+        # End-to-end user-facing CLI: solve shaft/pump network from
+        # serialized engine configuration, drive two actual Euler
+        # timesteps, and persist an honest non-converged feedback flag.
+        engine_config=Path(temp)/"engine.json"
+        engine_config.write_text(json.dumps({
+            "lh2_cycle":asdict(core),
+            "turbine":asdict(turbine),
+            "regenerative_cooling":asdict(net),
+        }),encoding="utf-8")
+        folder=Path(temp)/"shaft_tie_output"
+        old_argv=sys.argv
+        try:
+            sys.argv=[
+                "run_distributed_tie_engine_boundary",
+                str(mesh),str(fuel),str(tie),
+                "--engine-config",str(engine_config),
+                "--solid-temperature-k","35",
+                "--supply-cell-volume-m3","0.0001",
+                "--return-cell-volume-m3","0.0001",
+                "--flow-area-m2","0.0002",
+                "--solid-capacity-j-k","3000",
+                "--supply-ua-w-k","0.4",
+                "--return-ua-w-k","0.4",
+                "--darcy-friction-factor","0.04",
+                "--turnaround-loss-coefficient","0.6",
+                "--dt-s",str(dt),"--steps","2",
+                "--output",str(folder),
+            ]
+            assert run_engine_boundary_cli()==0
+        finally:
+            sys.argv=old_argv
+        report=json.loads(
+            (folder/"shaft_conditioned_tie_euler_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["status"]=="PASS"
+        assert report["engine_steady_shaft_cycle_solved"]
+        assert report["distributed_tie_euler_mass_momentum_total_energy_solved"]
+        assert report["coupling_direction"].startswith("one-way")
+        assert not report["full_engine_feedback_converged"]
+        assert not report["real_openmc_transport_executed"]
+        assert len(report["history"])==2
+        assert all(
+            abs(row["mass_residual_kg_s"])<1e-8 and
+            abs(row["momentum_residual_n"])<1e-4 and
+            abs(row["total_energy_residual_j"])<1e-5
+            for row in report["history"]
+        )
+        with np.load(
+            folder/"shaft_conditioned_tie_euler_state.npz",
+            allow_pickle=False
+        ) as fields:
+            assert fields["fluid_mass_kg"].shape==old.mass_kg.shape
+            assert fields["interface_mass_flux_kg_s"].shape==(
+                heating.tie_solid_w.shape[0],
+                2*heating.tie_solid_w.shape[1]+1,
+            )
+            assert np.all(fields["density_kg_m3"]>0)
+            assert np.all(np.isfinite(fields["pressure_pa"]))
 
         # Explicit transient condition rejects impossible CFL; no
         # hidden clipping or setting dynamic flux=steady branch flow.
