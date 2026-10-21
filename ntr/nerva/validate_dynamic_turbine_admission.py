@@ -5,8 +5,10 @@ shaft-closed operating point, NOT NASA hardware dimensions.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict,replace
+import json
 import math
+import sys
 from pathlib import Path
 import tempfile
 
@@ -29,6 +31,7 @@ from .distributed_tie_euler import (
 from .isochoric_tie import IsochoricTieParameters
 from .lh2_feed_cycle import HydrogenEOS
 from .resolved_transient import read_resolved_heating
+from .run_dynamic_header_tie import main as run_turbine_cli
 from .turbine_bleed_cycle import solve_turbine_bleed
 from .validate_hot_lh2_cycle import hot_case
 from .validate_regenerative_cooling import network
@@ -247,6 +250,68 @@ def main()->int:
         check(perturbed,initial,dt,net,params)
         assert perturbed.turbine.bleed_mass_flow_kg_s<first.turbine.bleed_mass_flow_kg_s
         assert perturbed.turbine.delivered_rotor_power_w<first.turbine.delivered_rotor_power_w
+
+        # End-to-end public CLI reproduces real-H2 admission/bleed,
+        # rotor power, exhaust energy and changing downstream header.
+        config=Path(td)/"engine.json"
+        config.write_text(json.dumps({
+            "lh2_cycle":asdict(core),
+            "turbine":asdict(turbine_config),
+            "regenerative_cooling":asdict(net),
+        }),encoding="utf-8")
+        output=Path(td)/"dynamic_turbine_results"
+        argv=sys.argv
+        try:
+            sys.argv=[
+                "run_dynamic_header_tie",str(mesh),str(fuel),str(tie),
+                "--engine-config",str(config),
+                "--header-volume-m3","0.0001",
+                "--upstream-manifold-volume-m3","0.0001",
+                "--dynamic-nozzle-branch",
+                "--rotor-reference-speed-rad-s","1200",
+                "--rotor-inertia-kg-m2","0.05",
+                "--dynamic-turbine-bleed",
+                "--initial-solid-temperature-k","35",
+                "--supply-cell-volume-m3","0.0001",
+                "--return-cell-volume-m3","0.0001",
+                "--flow-area-m2","0.0002",
+                "--solid-capacity-j-k","3000",
+                "--supply-ua-w-k","0.4",
+                "--return-ua-w-k","0.4",
+                "--darcy-friction-factor","0.04",
+                "--turnaround-loss-coefficient","0.6",
+                "--dt-s",str(dt),"--steps","2",
+                "--output",str(output),
+            ]
+            assert run_turbine_cli()==0
+        finally:
+            sys.argv=argv
+        report=json.loads(
+            (output/"dynamic_tie_header_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["status"]=="PASS"
+        assert report["dynamic_real_h2_turbine_bleed_active"]
+        assert not report["turbine_power_held_at_steady_shaft_reference"]
+        assert not report["core_nozzle_choking_dynamically_resolved"]
+        assert not report["historical_nasa_turbine_map_validated"]
+        assert not report["full_shaft_cycle_feedback_converged"]
+        assert len(report["history"])==2
+        assert all(
+            v["dynamic_turbine_bleed_flow_kg_s"]>0
+            and v["dynamic_turbine_delivered_power_w"]>0
+            and abs(v["combined_turbine_pump_open_energy_residual_j"])<1e-5
+            and abs(v["total_system_mass_residual_kg_s"])<1e-8
+            for v in report["history"]
+        )
+        assert (report["history"][0]["dynamic_turbine_bleed_flow_kg_s"]!=
+                report["history"][1]["dynamic_turbine_bleed_flow_kg_s"])
+        with np.load(
+            output/"dynamic_tie_header_final_state.npz",allow_pickle=False
+        ) as fields:
+            assert float(fields["dynamic_pump_mass_flow_kg_s"])>0
+            assert float(fields["rotor_angular_speed_rad_s"])>0
 
         rejects(lambda:evaluate_dynamic_turbine(
             replace(admission,effective_admission_area_m2=
