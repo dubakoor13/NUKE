@@ -88,6 +88,20 @@ def read_source_bank(
     if not math.isclose(total,count,rel_tol=1e-12,abs_tol=1e-8):
         raise ValueError("OpenMC source bank spatial histogram loses sites")
     frac=hist/total
+    # Exact repeated coordinates in OpenMC's resampled source bank expose
+    # population cloning. This is NOT an estimator of independent fission
+    # histories; descendants can be correlated even at distinct sites.
+    distinct_sites, inverse = np.unique(
+        xyz, axis=0, return_inverse=True
+    )
+    site_weight = np.bincount(
+        inverse, weights=weight, minlength=len(distinct_sites)
+    )
+    probabilities = site_weight / total
+    largest_site_fraction = float(np.max(probabilities))
+    inverse_simpson_sites = float(
+        1.0 / np.sum(probabilities * probabilities)
+    )
     centroid=np.average(xyz,axis=0,weights=weight)
     nonzero=frac[frac>0]
     entropy=float(-np.sum(nonzero*np.log(nonzero)))
@@ -95,6 +109,10 @@ def read_source_bank(
         "seed":seed,
         "completed_batch":batch,
         "source_sites":int(len(source)),
+        "exact_distinct_site_positions":int(len(distinct_sites)),
+        "distinct_position_fraction":float(len(distinct_sites)/len(source)),
+        "largest_replicated_position_weight_fraction":largest_site_fraction,
+        "inverse_simpson_distinct_position_count":inverse_simpson_sites,
         "source_weights":count,
         "spatial_entropy_nats":entropy,
         "spatial_centroid_cm":centroid.tolist(),
