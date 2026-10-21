@@ -113,7 +113,12 @@ def build_fuel_element_universe(
         openmc.Cell(
             name="outer ZrC coating",
             fill=materials["zrc"],
-            region=+inner_hex & -outer_hex,
+            # The enclosing HexLattice already clips this universe to its
+            # own hexagonal pitch. Re-applying the mathematically coincident
+            # outer prism leaves floating-point slivers at the lattice
+            # boundary where OpenMC loses neutrons (surfaces 8-12).
+            # Fill every point outside the inner fuel hex in this universe.
+            region=+inner_hex,
         )
     )
     return openmc.Universe(
@@ -203,7 +208,12 @@ def build_tie_tube_universe(
         openmc.Cell(
             name="tie-tube outer ZrC coating",
             fill=materials["zrc"],
-            region=+inner_hex & -outer_hex,
+            # The enclosing HexLattice already clips this universe to its
+            # own hexagonal pitch. Re-applying the mathematically coincident
+            # outer prism leaves floating-point slivers at the lattice
+            # boundary where OpenMC loses neutrons (surfaces 8-12).
+            # Fill every point outside the inner fuel hex in this universe.
+            region=+inner_hex,
         ),
     ]
 
