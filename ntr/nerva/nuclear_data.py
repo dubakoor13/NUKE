@@ -19,6 +19,7 @@ class LibraryEntry:
     materials: tuple[str, ...]
     path: str
     file_exists: bool
+    resolved_path: str
 
 
 @dataclass(frozen=True)
@@ -71,28 +72,49 @@ def resolve_cross_sections(
 
 
 def _library_entries(cross_sections: Path) -> tuple[LibraryEntry, ...]:
+    """Resolve library files exactly once, honoring OpenMC's <directory>.
+
+    For reproducible CLI runs, an explicit <directory> must be absolute.
+    OpenMC interprets a relative <directory> against its process working
+    directory, which may differ from the Python preflight's working directory
+    (model.run is launched in the export directory). Reject that ambiguity
+    rather than claiming files were verified at a different location.
+    """
     root = ET.parse(cross_sections).getroot()
-    base = cross_sections.parent
+    directory_node = root.find("directory")
+    if directory_node is None:
+        library_root = cross_sections.parent.resolve()
+    else:
+        text = (directory_node.text or "").strip()
+        if not text:
+            raise ValueError("cross_sections.xml contains empty <directory>")
+        library_root = Path(text).expanduser()
+        if not library_root.is_absolute():
+            raise ValueError(
+                "cross_sections.xml <directory> must be absolute for "
+                "unambiguous OpenMC transport preflight; "
+                "relative directories depend on OpenMC's working directory"
+            )
+        library_root = library_root.resolve()
 
     entries: list[LibraryEntry] = []
-    for node in root.findall(".//library"):
+    for node in root.findall("library"):
         data_type = node.attrib.get("type", "").strip()
-        materials = tuple(
-            item
-            for item in node.attrib.get("materials", "").split()
-            if item
-        )
+        materials = tuple(node.attrib.get("materials", "").split())
         raw_path = node.attrib.get("path", "").strip()
-        file_path = Path(raw_path)
-        if raw_path and not file_path.is_absolute():
-            file_path = base / file_path
-
+        if not raw_path:
+            raise ValueError("cross_sections.xml <library> missing path")
+        file_path = Path(raw_path).expanduser()
+        if not file_path.is_absolute():
+            file_path = library_root / file_path
+        file_path = file_path.resolve()
         entries.append(
             LibraryEntry(
                 data_type=data_type,
                 materials=materials,
                 path=raw_path,
-                file_exists=(not raw_path) or file_path.is_file(),
+                file_exists=file_path.is_file(),
+                resolved_path=str(file_path),
             )
         )
 
@@ -142,9 +164,9 @@ def inspect_nuclear_data(
     missing = tuple(sorted(required - neutron_materials))
 
     missing_files = tuple(
-        entry.path
+        entry.resolved_path
         for entry in entries
-        if entry.path and not entry.file_exists
+        if not entry.file_exists
     )
 
     photon_present = bool(photon_materials)

@@ -141,6 +141,24 @@ def main() -> int:
         abs_tol=1.0e-3,
     )
 
+    # A spatial power map must use the physical deposition estimator
+    # corresponding to the statepoint transport physics. In coupled runs
+    # 'heating-local' misplaces the photon-deposited energy.
+    photons = power.get("photon_transport", False)
+    if not isinstance(photons, bool):
+        raise ValueError("power.photon_transport must be boolean")
+    expected_score = "heating" if photons else "heating-local"
+    score = power.get("power_normalization_score", "heating-local")
+    if score != expected_score:
+        raise ValueError(
+            "OpenMC thermal heating normalization does not match photon transport"
+        )
+    diagnostic_score = diagnostics.get("power_normalization_score", expected_score)
+    if diagnostic_score != expected_score:
+        raise ValueError("OpenMC diagnostic and normalized heating scores differ")
+    if diagnostics.get("photon_transport", photons) != photons:
+        raise ValueError("OpenMC diagnostic transport physics differs from power metadata")
+
     diagnostics_source_rate = _finite_number(
         diagnostics["source_rate_per_s"],
         "diagnostics.source_rate_per_s",
@@ -152,6 +170,50 @@ def main() -> int:
         rel_tol=1.0e-12,
         abs_tol=0.0,
     )
+
+    # New normalized OpenMC outputs have a disjoint per-voxel first-law
+    # ledger. Historical fixture metadata may not yet contain it.
+    recoverable = power.get("recoverable_fission_power_W")
+    if recoverable is not None:
+        recoverable_w = _finite_number(
+            recoverable, "recoverable_fission_power_W"
+        )
+        if recoverable_w <= 0:
+            raise ValueError("OpenMC recoverable fission power must be positive")
+        _assert_close(
+            _finite_number(
+                power["deposited_to_recoverable_fission_power_ratio"],
+                "deposited-to-recoverable-fission ratio",
+            ),
+            normalized_power_w / recoverable_w,
+            "OpenMC independently reported recoverable energy ratio",
+            rel_tol=1e-10, abs_tol=1e-12,
+        )
+
+    budget = power.get("power_partition_audit")
+    if budget is not None:
+        if not isinstance(budget, dict) or budget.get("passed") is not True:
+            raise ValueError("OpenMC voxelwise thermal partition audit has not passed")
+        physical_power = _finite_number(budget["mesh_total_w"], "partition.mesh_total_w")
+        remaining = _finite_number(
+            budget["remaining_unassigned_material_power_w"],
+            "partition.remaining_unassigned_material_power_w",
+        )
+        components = budget["disjoint_components_w"]
+        assigned = sum(
+            _finite_number(components[key], "partition." + key)
+            for key in ("fuel_solid", "tie_solid", "fuel_hydrogen", "tie_hydrogen")
+        )
+        _assert_close(
+            assigned + remaining, physical_power,
+            "OpenMC selected deposition partition closure",
+            rel_tol=1e-6, abs_tol=1e-3,
+        )
+        _assert_close(
+            physical_power, normalized_power_w,
+            "OpenMC selected deposited power",
+            rel_tol=1e-6, abs_tol=1e-3,
+        )
 
     fuel_power_w = _finite_number(
         power["fuel_power_W"],
@@ -232,6 +294,17 @@ def main() -> int:
             raise ValueError(
                 "energy_deposition.mesh_heating_W must be positive"
             )
+        deposited_w = (
+            energy_deposition["mesh_heating_W"] if photons
+            else energy_deposition["mesh_heating_local_W"]
+        )
+        _assert_close(
+            _finite_number(deposited_w, "mode-selected mesh heating"),
+            normalized_power_w,
+            "OpenMC mode-selected deposited heat",
+            rel_tol=1.0e-6,
+            abs_tol=1.0e-3,
+        )
 
     material_fraction_sum = _fraction_sum(
         diagnostics["material_power_fractions"],

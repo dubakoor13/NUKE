@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import openmc
 
-from .power import EV_TO_J
+from .power import EV_TO_J, heating_score_for_transport
 
 
 _MATERIAL_ORDER = (
@@ -264,25 +264,24 @@ def main() -> int:
         raise ValueError("source_rate_per_s must be positive")
 
     with openmc.StatePoint(args.statepoint) as sp:
+        photon_transport = bool(sp.photon_transport)
+        heating_score = heating_score_for_transport(photon_transport)
+        if metadata.get("power_normalization_score", "heating-local") != heating_score:
+            raise ValueError(
+                "OpenMC diagnostic heating score differs from power normalization; "
+                "regenerate the mesh using this transport mode"
+            )
         mesh_tally = sp.get_tally(name="nerva_3d_neutronics")
-        heating, mesh = _mesh_score(
-            mesh_tally,
-            "heating-local",
+        local_heating, mesh = _mesh_score(mesh_tally, "heating-local")
+        local_heating_std, _ = _mesh_score(
+            mesh_tally, "heating-local", value="std_dev"
         )
-        heating_std, _ = _mesh_score(
-            mesh_tally,
-            "heating-local",
-            value="std_dev",
-        )
-        total_heating, _ = _mesh_score(
-            mesh_tally,
-            "heating",
-        )
+        total_heating, _ = _mesh_score(mesh_tally, "heating")
         total_heating_std, _ = _mesh_score(
-            mesh_tally,
-            "heating",
-            value="std_dev",
+            mesh_tally, "heating", value="std_dev"
         )
+        heating = total_heating if photon_transport else local_heating
+        heating_std = total_heating_std if photon_transport else local_heating_std
         absorption, _ = _mesh_score(
             mesh_tally,
             "absorption",
@@ -396,13 +395,10 @@ def main() -> int:
         )
         material_energy_values = {}
         material_energy_std = {}
-        for score in (
-            "flux",
-            "absorption",
-            "fission",
-            "nu-fission",
-            "heating-local",
-        ):
+        energy_scores = (
+            "flux", "absorption", "fission", "nu-fission", "heating-local"
+        ) + (("heating",) if photon_transport else ())
+        for score in energy_scores:
             values = np.asarray(
                 _tally_values(material_energy, score),
                 dtype=float,
@@ -423,7 +419,7 @@ def main() -> int:
                     f"material-energy {score} shape {values.shape} "
                     f"!= {(len(material_names), len(material_energy_bins))}"
                 )
-            if score == "heating-local":
+            if score in ("heating", "heating-local"):
                 values = values * EV_TO_J * source_rate
                 std = std * EV_TO_J * source_rate
             else:
@@ -497,7 +493,7 @@ def main() -> int:
         hydrogen_heating = (
             _tally_values(
                 hydrogen_spec,
-                "heating-local",
+                heating_score,
             ).reshape(-1)
             * EV_TO_J
             * source_rate
@@ -506,7 +502,7 @@ def main() -> int:
         axial_tally = sp.get_tally(name="nerva_axial_transport")
         axial_heating, axial_mesh = _mesh_score(
             axial_tally,
-            "heating-local",
+            heating_score,
         )
         axial_flux, _ = _mesh_score(
             axial_tally,
@@ -693,16 +689,10 @@ def main() -> int:
         )
         for m, material_name in enumerate(material_names):
             for e, (elow, ehigh) in enumerate(material_energy_bins):
-                for score in (
-                    "flux",
-                    "absorption",
-                    "fission",
-                    "nu-fission",
-                    "heating-local",
-                ):
+                for score in energy_scores:
                     units = (
                         "W"
-                        if score == "heating-local"
+                        if score in ("heating", "heating-local")
                         else (
                             "tracklength-cm/s"
                             if score == "flux"
@@ -855,16 +845,20 @@ def main() -> int:
             material_energy_values["nu-fission"]
         ),
         material_energy_heating_w=(
-            material_energy_values["heating-local"]
+            material_energy_values[heating_score]
         ),
     )
 
     material_power = {
         row["material"]: float(row["value"])
         for row in material_rows
-        if row["score"] == "heating-local"
+        if row["score"] == heating_score
     }
     material_power_total = sum(material_power.values())
+    material_local_heating_sum = sum(
+        float(row["value"]) for row in material_rows
+        if row["score"] == "heating-local"
+    )
 
     material_total_heating = {
         row["material"]: float(row["value"])
@@ -874,7 +868,7 @@ def main() -> int:
     material_total_heating_sum = sum(material_total_heating.values())
 
     mesh_local_heating_w = float(
-        np.sum(power_density) * cell_volume_cm3
+        np.sum(local_heating) * EV_TO_J * source_rate
     )
     mesh_total_heating_w = float(
         np.sum(total_heating_power_density) * cell_volume_cm3
@@ -900,6 +894,8 @@ def main() -> int:
         "statepoint": str(args.statepoint),
         "power_metadata": str(args.power_metadata),
         "source_rate_per_s": source_rate,
+        "photon_transport": photon_transport,
+        "power_normalization_score": heating_score,
         "keff": {
             "mean": keff_mean,
             "std_dev": keff_std,
@@ -937,7 +933,7 @@ def main() -> int:
             "heating_minus_local_fraction": (
                 nonlocal_heating_fraction
             ),
-            "material_heating_local_sum_W": material_power_total,
+            "material_heating_local_sum_W": material_local_heating_sum,
             "material_heating_sum_W": material_total_heating_sum,
             "interpretation": (
                 "heating-local deposits secondary photon energy locally; "

@@ -54,6 +54,9 @@ jobs:
       - name: Validate NERVA power normalization
         run: python -m ntr.nerva.validate_power
 
+      - name: Validate voxelwise OpenMC core heating conservation
+        run: python -m ntr.nerva.validate_heat_partition
+
       - name: Check statepoint postprocessor CLI
         run: python -m ntr.nerva.postprocess_statepoint --help
 
@@ -298,6 +301,9 @@ jobs:
 
       - name: Validate NERVA nuclear-data preflight parser
         run: python -m ntr.nerva.validate_nuclear_data
+
+      - name: Validate OpenMC core eigenvalue and source-entropy diagnostics (synthetic)
+        run: python -m ntr.nerva.validate_core_statepoint_diagnostics
 
       - name: Check NERVA nuclear-data preflight CLI
         run: python -m ntr.nerva.check_nuclear_data --help

@@ -44,15 +44,11 @@ def audit_temperature_coverage(
 
     path = resolve_cross_sections(cross_sections)
     entries = _library_entries(path)
-    base = path.parent
-
     neutron_paths: dict[str, Path] = {}
     for entry in entries:
-        if entry.data_type != "neutron" or not entry.path:
+        if entry.data_type != "neutron":
             continue
-        file_path = Path(entry.path)
-        if not file_path.is_absolute():
-            file_path = base / file_path
+        file_path = Path(entry.resolved_path)
         for material in entry.materials:
             neutron_paths[material] = file_path
 

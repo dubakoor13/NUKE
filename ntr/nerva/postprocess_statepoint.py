@@ -10,7 +10,8 @@ from pathlib import Path
 import numpy as np
 import openmc
 
-from .power import EV_TO_J, normalize_regular_mesh
+from .power import EV_TO_J, heating_score_for_transport, normalize_regular_mesh
+from .heat_partition import audit_heat_partition
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,6 +78,8 @@ def main() -> int:
     args.output.mkdir(parents=True, exist_ok=True)
 
     with openmc.StatePoint(args.statepoint) as statepoint:
+        photon_transport = bool(statepoint.photon_transport)
+        heating_score = heating_score_for_transport(photon_transport)
         tally = statepoint.get_tally(name="nerva_3d_neutronics")
         mesh_filter = tally.find_filter(openmc.MeshFilter)
         mesh = mesh_filter.mesh
@@ -91,27 +94,34 @@ def main() -> int:
         spacing = (upper_right - lower_left) / dimension
         cell_volume_cm3 = float(np.prod(spacing))
 
-        heating = _score_mesh_field(tally, "heating-local")
+        heating = _score_mesh_field(tally, heating_score)
         heating_std = _score_mesh_field(
             tally,
-            "heating-local",
+            heating_score,
             value="std_dev",
         )
         total_heating = _score_mesh_field(tally, "heating")
+        # OpenMC kappa-fission includes the recoverable energy produced by
+        # fission, not necessarily the energy deposited within this mesh.
+        # Older statepoints lack this additional diagnostic.
+        kappa_fission_ev = (
+            _score_mesh_field(tally, "kappa-fission")
+            if "kappa-fission" in tally.scores else None
+        )
         absorption = _score_mesh_field(tally, "absorption")
         fission = _score_mesh_field(tally, "fission")
         nu_fission = _score_mesh_field(tally, "nu-fission")
         flux = _score_mesh_field(tally, "flux")
 
         fuel_tally = statepoint.get_tally(name="nerva_3d_fuel_heating")
-        fuel_heating = _score_mesh_field(fuel_tally, "heating-local")
+        fuel_heating = _score_mesh_field(fuel_tally, heating_score)
 
         try:
             tie_tally = statepoint.get_tally(name="nerva_3d_tie_heating")
         except LookupError:
             tie_heating = np.zeros_like(fuel_heating)
         else:
-            tie_heating = _score_mesh_field(tie_tally, "heating-local")
+            tie_heating = _score_mesh_field(tie_tally, heating_score)
 
         try:
             fuel_h2_tally = statepoint.get_tally(
@@ -122,7 +132,7 @@ def main() -> int:
         else:
             fuel_h2_heating = _score_mesh_field(
                 fuel_h2_tally,
-                "heating-local",
+                heating_score,
             )
 
         try:
@@ -134,7 +144,7 @@ def main() -> int:
         else:
             tie_h2_heating = _score_mesh_field(
                 tie_h2_tally,
-                "heating-local",
+                heating_score,
             )
 
         try:
@@ -146,7 +156,7 @@ def main() -> int:
         else:
             tie_supply_h2_heating = _score_mesh_field(
                 tie_supply_h2_tally,
-                "heating-local",
+                heating_score,
             )
 
         try:
@@ -158,7 +168,7 @@ def main() -> int:
         else:
             tie_return_h2_heating = _score_mesh_field(
                 tie_return_h2_tally,
-                "heating-local",
+                heating_score,
             )
 
         normalized = normalize_regular_mesh(
@@ -339,6 +349,32 @@ def main() -> int:
         np.sum(tie_return_hydrogen_power_density) * cell_volume_cm3
     )
 
+    recoverable_fission_power_w = None
+    deposited_to_fission_ratio = None
+    if kappa_fission_ev is not None:
+        kappa_sum = float(np.sum(kappa_fission_ev, dtype=np.float64))
+        if not np.isfinite(kappa_sum) or kappa_sum <= 0:
+            raise ValueError("OpenMC recoverable fission tally must be positive finite")
+        recoverable_fission_power_w = float(
+            kappa_sum * EV_TO_J * normalized.source_rate_s
+        )
+        if not np.isfinite(recoverable_fission_power_w) or recoverable_fission_power_w <= 0:
+            raise ValueError("invalid OpenMC recoverable fission power")
+        deposited_to_fission_ratio = (
+            normalized.total_power_w / recoverable_fission_power_w
+        )
+
+    partition_audit = audit_heat_partition(
+        power_density,
+        fuel_power_density,
+        tie_power_density,
+        fuel_hydrogen_power_density,
+        tie_hydrogen_power_density,
+        tie_supply_hydrogen_power_density,
+        tie_return_hydrogen_power_density,
+        cell_volume_cm3,
+    )
+
     maximum_power_density = float(np.max(power_density))
     active_mask = power_density > 1.0e-9 * maximum_power_density
     mean_active_power_density = (
@@ -376,9 +412,28 @@ def main() -> int:
 
     metadata = {
         "statepoint": str(args.statepoint),
+        "photon_transport": photon_transport,
+        "power_normalization_score": heating_score,
+        "power_normalization_interpretation": (
+            "OpenMC heating with transported secondary photons"
+            if photon_transport
+            else "OpenMC heating-local with secondary photons deposited at birth"
+        ),
         "requested_power_MW": args.power_mw,
         "normalized_power_W": normalized.total_power_w,
         "source_rate_per_s": normalized.source_rate_s,
+        "reactor_power_input_definition": (
+            "normalized energy deposited within the scored reactor mesh; "
+            "gross recoverable fission power is an independent diagnostic"
+        ),
+        "recoverable_fission_power_W": recoverable_fission_power_w,
+        "deposited_to_recoverable_fission_power_ratio": deposited_to_fission_ratio,
+        "recoverable_fission_interpretation": (
+            "kappa-fission is not the spatial deposition tally; its ratio "
+            "to deposited heat includes capture heating and transport losses "
+            "and is not a direct photon leakage fraction"
+        ),
+        "power_partition_audit": partition_audit,
         "fuel_power_W": fuel_power_w,
         "fuel_power_fraction": fuel_power_w / normalized.total_power_w,
         "tie_power_W": tie_power_w,
@@ -442,6 +497,10 @@ def main() -> int:
     print(
         f"  direct tie-tube H2 heating: "
         f"{tie_hydrogen_power_w / 1.0e6:.6g} MW"
+    )
+    print(
+        f"  remaining unassigned material heat: "
+        f"{partition_audit['remaining_unassigned_fraction']:.6f} of reactor power"
     )
     print(f"  mesh max/mean-active power peaking: {mesh_power_peaking:.6f}")
     print(f"  mesh heating p95 relative error: {p95_relative_error:.6f}")

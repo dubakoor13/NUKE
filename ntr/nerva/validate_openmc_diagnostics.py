@@ -85,6 +85,7 @@ def main() -> int:
         "nu-fission",
         "heating",
         "heating-local",
+        "kappa-fission",
     } <= mesh_scores
 
     material_filter = tallies[
@@ -162,6 +163,32 @@ def main() -> int:
     )
     photon_tallies = {t.name for t in photon_model.tallies}
     assert "nerva_particle_heating" in photon_tallies
+    # All cell, mesh and Distribcell thermal partitions must score
+    # transported photon deposition if gamma tracking is enabled.
+    for tally in photon_model.tallies:
+        if "heating-local" in tally.scores:
+            assert "heating" in tally.scores, tally.name
+    assert "heating" not in tallies["nerva_3d_fuel_heating"].scores
+    assert trigger_tally.triggers[0].scores == ["heating-local"]
+    photon_trigger_model = build_model(
+        NervaConfig(
+            core_rings=3,
+            particles=100,
+            batches=12,
+            inactive=4,
+            photon_transport=True,
+            tally_rel_err_trigger=0.25,
+            trigger_max_batches=30,
+            trigger_batch_interval=2,
+        ),
+        assembly="core",
+    )
+    photon_trigger_tally = next(
+        t for t in photon_trigger_model.tallies
+        if t.name == "nerva_3d_neutronics"
+    )
+    assert photon_trigger_tally.triggers[0].scores == ["heating"]
+
 
     print("Expanded NERVA OpenMC diagnostics validation: PASS")
     print(f"  tallies: {len(tallies)}")
