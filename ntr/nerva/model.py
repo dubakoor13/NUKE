@@ -92,7 +92,11 @@ def build_model(
         materials=material_map,
     )
 
-    plot = openmc.SlicePlot(name=f"nerva_{assembly}_xy")
+    # OpenMC 0.16 introduced SlicePlot; the official transport Docker image
+    # still offers the v0.15 Plot class. The slice is for visualization only.
+    # This compatibility branch never changes neutronics or source physics.
+    plot_type = getattr(openmc, "SlicePlot", openmc.Plot)
+    plot = plot_type(name=f"nerva_{assembly}_xy")
     plot.basis = "xy"
     plot.origin = (0.0, 0.0, 0.0)
     width = 2.05 * radial_extent
