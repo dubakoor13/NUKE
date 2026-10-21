@@ -53,6 +53,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batches", type=int, default=80)
     parser.add_argument("--inactive", type=int, default=20)
     parser.add_argument("--drum-angle", type=float, default=0.0)
+    parser.add_argument(
+        "--statepoint-batches", nargs="+", type=int, default=None,
+        help=(
+            "Save actual fission-source HDF5 banks at these batch numbers "
+            "(including the last batch); permits source shape checks over time."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=None,
                         help="Explicit independent OpenMC random seed for statistical replicas.")
     parser.add_argument("--fuel-temperature-k", type=float,
@@ -211,9 +218,20 @@ def main() -> int:
     ]:
         raise RuntimeError("OpenMC temperature feedback outside available neutron XS temperature range")
 
+    if args.statepoint_batches is not None:
+        stages = sorted(set(args.statepoint_batches))
+        if (len(stages) != len(args.statepoint_batches)
+                or stages[0] <= 0 or stages[-1] != args.batches
+                or any(stage <= args.inactive for stage in stages)):
+            raise ValueError(
+                "statepoint batches must be unique active-batch numbers "
+                "and must include the final requested batch"
+            )
     if args.seed is not None and not 1 <= args.seed < 2**63:
         raise ValueError("OpenMC seed must be a positive 63-bit integer")
     model = build_model(config, assembly=args.assembly)
+    if args.statepoint_batches is not None:
+        model.settings.statepoint = {"batches": stages}
     if args.seed is not None:
         model.settings.seed = args.seed
     model.export_to_xml(directory=args.output)
@@ -233,6 +251,7 @@ def main() -> int:
             "seed": args.seed,
             "batches": config.batches,
             "inactive": config.inactive,
+            "statepoint_batches": args.statepoint_batches,
             "control_drum_angle_deg": config.control_drum_angle_deg,
             "fuel_temperature_k": config.fuel_temperature_k,
             "hydrogen_temperature_k": config.hydrogen_temperature_k,

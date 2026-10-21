@@ -24,6 +24,7 @@ from .config import NervaConfig
 from .nuclear_data import inspect_nuclear_data
 from .audit_nuclear_data_temperatures import audit_temperature_coverage
 from .statepoint_content_audit import audit_eigenvalue_statepoint_content
+from .source_bank_convergence import compare_independent_sources
 
 
 def _sha256(path: Path) -> str:
@@ -164,9 +165,17 @@ def parse_args():
                    help="OpenMC cross_sections.xml; otherwise OPENMC_CROSS_SECTIONS")
     p.add_argument("--output",type=Path,default=Path("build/nerva_real_core"))
     p.add_argument("--rings",type=int,default=3)
-    p.add_argument("--particles",type=int,default=1500)
-    p.add_argument("--batches",type=int,default=35)
-    p.add_argument("--inactive",type=int,default=10)
+    p.add_argument("--particles",type=int,default=3000)
+    p.add_argument("--batches",type=int,default=120)
+    p.add_argument("--inactive",type=int,default=30)
+    p.add_argument(
+        "--source-bank-batches", nargs=2, type=int, default=None,
+        metavar=("EARLY_ACTIVE_BATCH", "FINAL_BATCH"),
+        help=(
+            "Two saved post-inactive OpenMC statepoint batches. "
+            "Default: midpoint of active interval and final batch."
+        ),
+    )
     p.add_argument(
         "--hydrogen-temperature-k", type=float, default=293.6059129982851,
         help=(
@@ -207,6 +216,16 @@ def main() -> int:
         axial_mesh_bins=8,diagnostic_energy_groups=8,
     )
     cfg.validate()
+    stages = (
+        list(args.source_bank_batches)
+        if args.source_bank_batches is not None
+        else [(args.inactive + args.batches) // 2, args.batches]
+    )
+    if not args.inactive < stages[0] < stages[1] == args.batches:
+        raise ValueError(
+            "saved source banks require two ordered ACTIVE batches "
+            "ending at the final requested batch"
+        )
     manifest = _verify_nuclear_data(xs,cfg,output/"verified_xs_files.json")
     binary = subprocess.run(["openmc","--version"],capture_output=True,text=True)
     if binary.returncode:
@@ -216,6 +235,7 @@ def main() -> int:
     )
 
     all_runs = []
+    source_snapshots = []
     for seed in args.seeds:
         run_directory = output / f"seed_{seed}"
         cmd = [
@@ -228,7 +248,9 @@ def main() -> int:
             "--heating-mesh-dimensions","8","8","8",
             "--diagnostic-energy-groups","8",
             "--axial-mesh-bins","8",
-            "--seed",str(seed),"--output",str(run_directory),
+            "--seed",str(seed),
+            "--statepoint-batches",str(stages[0]),str(stages[1]),
+            "--output",str(run_directory),
         ]
         print("ACTUAL OPENMC NEUTRON TRANSPORT seed =",seed,flush=True)
         with (output/f"seed_{seed}.log").open("w",encoding="utf-8") as handle:
@@ -248,6 +270,22 @@ def main() -> int:
         file = Path(sp_info["path"])
         if not file.is_file() or sp_info.get("sha256") != _sha256(file):
             raise RuntimeError("Real OpenMC statepoint bytes mismatch")
+        # OpenMC zero-pads intermediate statepoint numbers to the digit
+        # count of the requested final batch (e.g. 060 of 120).
+        filename_digits = len(str(args.batches))
+        early_bank = run_directory / (
+            f"statepoint.{stages[0]:0{filename_digits}d}.h5"
+        )
+        late_bank = run_directory / (
+            f"statepoint.{stages[1]:0{filename_digits}d}.h5"
+        )
+        if (not early_bank.is_file() or not late_bank.is_file()
+                or late_bank.resolve() != file.resolve()):
+            raise RuntimeError(
+                "Real OpenMC run did not save both requested fission-source "
+                "snapshots; no stationarity analysis possible"
+            )
+        source_snapshots.append((early_bank, late_bank))
         if provenance.get("config",{}).get("seed") != seed:
             raise RuntimeError("OpenMC transport input seed mismatch")
         if provenance["nuclear_data"]["cross_sections_sha256"] != (
@@ -287,6 +325,18 @@ def main() -> int:
 
     if len({r["statepoint_sha256"] for r in all_runs}) != len(all_runs):
         raise RuntimeError("Duplicate real neutron transport statepoint contents")
+    shape_report = compare_independent_sources(
+        source_snapshots,
+        lower_cm=(
+            -cfg.core_radius_cm,-cfg.core_radius_cm,
+            -0.5*cfg.active_length_cm,
+        ),
+        upper_cm=(
+            cfg.core_radius_cm,cfg.core_radius_cm,
+            0.5*cfg.active_length_cm,
+        ),
+        bins=(4,4,4),
+    )
     summary = {
         "execution": "ACTUAL_OPENMC_TRANSPORT",
         "model_scope": "NERVA-derived core; not calibrated historical geometry",
@@ -297,14 +347,28 @@ def main() -> int:
         "not_historical_nerva_operating_temperature": True,
         "particles_per_generation":args.particles,
         "batches":args.batches,"inactive_batches":args.inactive,
+        "saved_source_bank_batches":stages,
         "cross_sections_xml_sha256":manifest["cross_sections_sha256"],
         "run_statistics":_aggregate(all_runs),
+        "independent_seed_source_bank_shape_diagnostics":shape_report,
         "runs":all_runs,
     }
     (output/"real_core_transport_summary.json").write_text(
         json.dumps(summary,indent=2,allow_nan=False)+"\n"
     )
     print(json.dumps(summary["run_statistics"],indent=2),flush=True)
+    print(
+        "Real OpenMC fission-source-bank across-seed and over-time "
+        "shape diagnostics: ",
+        json.dumps({
+            "mean_source_pairwise_TV":
+                shape_report["between_seed_mean_source_total_variation"],
+            "mean_early_late_TV":
+                shape_report["mean_early_to_late_source_total_variation"],
+            "source_convergence_proven":False,
+        },indent=2),
+        flush=True,
+    )
     return 0
 
 
