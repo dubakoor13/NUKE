@@ -338,6 +338,9 @@ jobs:
       - name: Validate time-resolved actual-source-bank trajectory numerics (synthetic)
         run: python -m ntr.nerva.validate_source_bank_trajectory
 
+      - name: Validate actual OpenMC local-heating numerical rejection of absent KERMA (synthetic)
+        run: python -m ntr.nerva.validate_heating_data_qualification
+
       - name: Validate nested-resolution fission-source TV and site-cloning numerics (synthetic)
         run: python -m ntr.nerva.validate_source_resolution_audit
 
