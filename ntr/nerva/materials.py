@@ -87,6 +87,8 @@ def build_materials(config: NervaConfig) -> dict[str, openmc.Material]:
     aluminum.add_element("Al", 1.0, percent_type="ao")
 
     if config.thermal_scattering_treatment == "evaluated-bound":
+        for solid in (reflector, graphite, zrh):
+            solid.temperature = config.bound_solid_temperature_k
         for key, tables in EVALUATED_BOUND_THERMAL_TABLES.items():
             target = {
                 "reflector": reflector,
