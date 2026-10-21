@@ -9,6 +9,8 @@ on:
       - 'ntr/nerva/source_bank_convergence.py'
       - 'ntr/nerva/source_bank_trajectory.py'
       - 'ntr/nerva/source_resolution_audit.py'
+      - 'ntr/nerva/source_energy_audit.py'
+      - 'ntr/nerva/validate_source_energy_audit.py'
       - 'ntr/nerva/heating_data_qualification.py'
       - 'ntr/nerva/validate_heating_data_qualification.py'
       - 'ntr/nerva/validate_source_resolution_audit.py'
@@ -69,6 +71,7 @@ jobs:
               python -m ntr.nerva.validate_source_bank_convergence
               python -m ntr.nerva.validate_source_bank_trajectory
               python -m ntr.nerva.validate_source_resolution_audit
+              python -m ntr.nerva.validate_source_energy_audit
               python -m ntr.nerva.validate_heating_data_qualification
               python -m ntr.nerva.run_real_core_replicas \
                 --rings 3 --particles 3000 --batches 120 --inactive 30 \
@@ -79,6 +82,9 @@ jobs:
               python -m ntr.nerva.source_resolution_audit \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/source_resolution_audit.json
+              python -m ntr.nerva.source_energy_audit \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --output /repo/build/nerva_real_core/source_energy_audit.json
               python -m ntr.nerva.heating_data_qualification \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/heating_data_qualification.json
