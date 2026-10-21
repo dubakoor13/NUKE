@@ -66,6 +66,12 @@ def main() -> int:
     print(f"  replicas: {summary.replica_count}")
     print(f"  p95 relative sample SEM: {summary.p95_active_relative_sem:.6g}")
     print(f"  max axial fraction SEM: {summary.max_axial_fraction_sem:.6g}")
+    print(f"  first-half axial-integral SEM (with covariance): "
+          f"{summary.axial_first_half_integral_sem:.6g}")
+    print(f"  second-half axial-integral SEM (with covariance): "
+          f"{summary.axial_last_half_integral_sem:.6g}")
+    print(f"  whole-core power-fraction SEM (must approach zero): "
+          f"{summary.axial_total_integral_sem:.6g}")
     print(f"  original-order half-split TV (diagnostic only): {summary.half_split_total_variation:.6g}")
     print(f"  worst balanced TV (exhaustive <=12): {summary.maximum_balanced_split_total_variation}")
     print(f"  tested balanced TV ({summary.balanced_split_method}): "
