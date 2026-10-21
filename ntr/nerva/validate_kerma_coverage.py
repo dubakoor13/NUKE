@@ -23,8 +23,8 @@ def reject(action, message):
 def main() -> int:
     rows = [
         {"nuclide": "U235", "local_kerma_mt901_present": True, "local_kerma_mt901_numerical_usable": True},
-        {"nuclide": "Zr90", "local_kerma_mt901_present": True},
-        {"nuclide": "C0", "local_kerma_mt901_present": True},
+        {"nuclide": "Zr90", "local_kerma_mt901_present": True, "local_kerma_mt901_numerical_usable": True},
+        {"nuclide": "C0", "local_kerma_mt901_present": True, "local_kerma_mt901_numerical_usable": True},
     ]
     good = assess_mt901_inventory(rows)
     assert good["local_heating_evaluated_kerma_inventory_complete"]
@@ -63,7 +63,7 @@ def main() -> int:
         [1e-5, 1e3, 2e7], [0., 0., 0.]
     ))
     assert not all_zero["local_kerma_mt901_numerical_usable"]
-    assert "identically zero" not in all_zero["per_temperature"][0]["issue"] or "zero" in all_zero["per_temperature"][0]["issue"]
+    assert "zero" in all_zero["per_temperature"][0]["issue"]
 
     missing_temp = data([1e-5, 1e3], [2., 3.])
     missing_temp.temperatures.append("1200K")
