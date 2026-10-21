@@ -173,6 +173,23 @@ def main() -> int:
 
     # New normalized OpenMC outputs have a disjoint per-voxel first-law
     # ledger. Historical fixture metadata may not yet contain it.
+    recoverable = power.get("recoverable_fission_power_W")
+    if recoverable is not None:
+        recoverable_w = _finite_number(
+            recoverable, "recoverable_fission_power_W"
+        )
+        if recoverable_w <= 0:
+            raise ValueError("OpenMC recoverable fission power must be positive")
+        _assert_close(
+            _finite_number(
+                power["deposited_to_recoverable_fission_power_ratio"],
+                "deposited-to-recoverable-fission ratio",
+            ),
+            normalized_power_w / recoverable_w,
+            "OpenMC independently reported recoverable energy ratio",
+            rel_tol=1e-10, abs_tol=1e-12,
+        )
+
     budget = power.get("power_partition_audit")
     if budget is not None:
         if not isinstance(budget, dict) or budget.get("passed") is not True:
