@@ -141,6 +141,9 @@ jobs:
       - name: Validate transient tie Euler and common-header two-way mass/enthalpy feedback
         run: python -m ntr.nerva.validate_dynamic_header_tie
 
+      - name: Validate dynamic nozzle-reflector pressure-conditioned branch and tie/header conservation
+        run: python -m ntr.nerva.validate_dynamic_parallel_header
+
       - name: Validate real-fluid tie heating and regenerative branch hydraulic fixed point
         run: python -m ntr.nerva.validate_cryogenic_tie_hydraulic_coupling
 
