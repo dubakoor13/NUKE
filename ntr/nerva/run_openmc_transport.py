@@ -24,6 +24,7 @@ from .geometry import (
     mixed_core_summary,
 )
 from .model import build_model
+from .core_statepoint_diagnostics import summarize_core_statepoint
 from .nuclear_data import inspect_nuclear_data, write_report
 from .periphery import reactor_summary
 
@@ -298,6 +299,18 @@ def main() -> int:
         "sha256": _sha256(statepoint),
         "size_bytes": statepoint.stat().st_size,
     }
+    # OpenMC completed an actual executable run: extract its eigenvalue
+    # and Shannon entropy observables, but do NOT assert NASA validation.
+    with openmc.StatePoint(statepoint) as result:
+        core_diagnostics = summarize_core_statepoint(result)
+    core_qa_path = args.output / "core_statepoint_diagnostics.json"
+    core_qa_path.write_text(
+        json.dumps(core_diagnostics, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    provenance["statepoint"]["core_diagnostics"] = str(core_qa_path)
+    provenance["statepoint"]["source_convergence_independently_demonstrated"] = False
+    provenance["statepoint"]["historical_nasa_benchmark_validated"] = False
     provenance_path.write_text(
         json.dumps(provenance, indent=2) + "\n",
         encoding="utf-8",
@@ -306,6 +319,7 @@ def main() -> int:
     print("OpenMC transport completed:")
     print(f"  statepoint: {statepoint}")
     print(f"  SHA-256: {provenance['statepoint']['sha256']}")
+    print(f"  core numerical diagnostics: {core_qa_path}")
     return 0
 
 
