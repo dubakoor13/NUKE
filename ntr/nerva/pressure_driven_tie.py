@@ -107,11 +107,17 @@ def advance_pressure_driven_tie(
     dt_s: float,
     *,
     eos: HydrogenEOS | None = None,
+    interface_mass_flow_kg_s: np.ndarray | None = None,
 ) -> PressureTieFlowStep:
     """One conservative explicit step with computed interface fluxes.
 
     Each flow is calculated ONCE and reused with opposite sign for both
     neighboring cells, ensuring global mass/energy telescoping.
+
+    An optional externally solved face-flux array permits an independent
+    finite-inertia momentum solver to drive exactly these same CV
+    balances. Fluxes are signed in the inlet -> supply -> return ->
+    outlet direction; no other path receives hidden source terms.
     """
     heating.validate()
     params.validate()
@@ -155,6 +161,13 @@ def advance_pressure_driven_tie(
     if not (math.isfinite(inlet_rho) and inlet_rho>0 and
             math.isfinite(outlet_rho) and outlet_rho>0):
         raise ValueError("invalid reservoir H2 densities")
+    if interface_mass_flow_kg_s is not None:
+        supplied=np.asarray(interface_mass_flow_kg_s,dtype=float)
+        if (supplied.shape!=(shape[0],2*nz+1)
+                or not np.all(np.isfinite(supplied))):
+            raise ValueError("supplied interface mass flows must be finite [tie,2*Nz+1]")
+    else:
+        supplied=None
     edge=np.empty((shape[0],2*nz+1))
     edge_h=np.empty_like(edge)
     max_dp_ratio=0.
@@ -172,17 +185,27 @@ def advance_pressure_driven_tie(
             frac=abs(dp)/max(pleft,pright)
             max_dp_ratio=max(max_dp_ratio,frac)
             if frac>params.max_fractional_pressure_drop:
-                raise ValueError("tie orifice pressure ratio outside screening model")
-            if dp>=0:
+                raise ValueError("tie interface pressure ratio outside screening model")
+            # In an inertial calculation the velocity/flow need not
+            # have the sign of instantaneous dp. Enthalpy is always
+            # upwind with respect to the ACTUAL signed mass flux.
+            face_mdot=(
+                float(supplied[j,k]) if supplied is not None else None
+            )
+            forward=(face_mdot>=0 if face_mdot is not None else dp>=0)
+            if forward:
                 density=float(inlet_rho if k==0 else rho[j,k-1])
                 upstream_h=float(inlet_enthalpy_j_kg if k==0 else h[j,k-1])
             else:
                 density=float(outlet_rho if k==2*nz else rho[j,k])
                 upstream_h=float(outlet_backflow_enthalpy_j_kg
                                  if k==2*nz else h[j,k])
-            edge[j,k]=(1. if dp>=0 else -1.)*(
-                params.discharge_coefficient*params.interface_area_m2*
-                math.sqrt(2.*density*abs(dp))
+            edge[j,k]=(
+                face_mdot if face_mdot is not None
+                else (1. if dp>=0 else -1.)*(
+                    params.discharge_coefficient*params.interface_area_m2*
+                    math.sqrt(2.*density*abs(dp))
+                )
             )
             edge_h[j,k]=upstream_h
 
@@ -296,4 +319,9 @@ def advance_pressure_driven_tie(
         max_local_mass_balance_error_kg_s=max_local_mass,
         max_local_energy_balance_error_w=max_local_energy,
         maximum_fractional_mass_exchange=frac_max,
+        momentum_law_kind=(
+            "externally solved signed face momentum flux"
+            if supplied is not None
+            else "quasisteady homogeneous-mixture orifice, no inertia"
+        ),
     )
