@@ -159,6 +159,11 @@ def main() -> int:
     ]
     if args.photon_transport:
         transport_command.append("--photon-transport")
+    else:
+        # This runner ALWAYS normalizes spatial neutron heat and feeds the
+        # thermal analysis. Unlike a transport-only smoke test, it must
+        # require physically available MT=901 local KERMA before OpenMC runs.
+        transport_command.append("--require-local-heating-data")
     if args.target_rel_error is not None:
         transport_command.extend(
             [
@@ -268,6 +273,12 @@ def main() -> int:
         ),
         "statepoint": str(statepoint),
         "transport_provenance": str(provenance),
+        "neutron_only_local_kerma_preflight_required": not args.photon_transport,
+        "local_kerma_physics_preflight": (
+            str(transport_dir / "local_kerma_physics_preflight.json")
+            if not args.photon_transport else None
+        ),
+        "nasa_nerva_core_physics_validated": False,
         "analysis_validation": str(
             analysis_dir / "analysis_validation.json"
         ),

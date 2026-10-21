@@ -8,6 +8,9 @@ on:
       - 'ntr/nerva/validate_kerma_coverage.py'
       - 'ntr/nerva/audit_nuclear_data_temperatures.py'
       - 'ntr/nerva/nuclear_data.py'
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/run_full_openmc_analysis.py'
+      - 'ntr/nerva/validate_local_heating_preflight.py'
   workflow_dispatch: {}
 
 permissions:
@@ -46,6 +49,22 @@ jobs:
               python -m ntr.nerva.audit_kerma_coverage \
                 --cross-sections "$OPENMC_CROSS_SECTIONS" \
                 --output /repo/build/nerva_evaluated_local_kerma/kerma_mt901_coverage.json
+              python -m ntr.nerva.validate_local_heating_preflight
+              # This same physical NNDC HDF5 inventory lacks MT901. The
+              # thermal-only input gate MUST fail before any OpenMC transport,
+              # while the genuine neutron-only reaction smoke test remains valid.
+              if python -m ntr.nerva.run_openmc_transport \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --assembly core --rings 3 --export-only \
+                --require-local-heating-data \
+                --output /repo/build/nerva_evaluated_local_kerma/rejected_thermal_run; then
+                echo "ERROR: neutron-only thermal preflight accepted missing MT901"
+                exit 1
+              fi
+              test -s /repo/build/nerva_evaluated_local_kerma/rejected_thermal_run/local_kerma_physics_preflight.json
+              grep -q "\"local_heating_evaluated_kerma_inventory_complete\": false" \
+                /repo/build/nerva_evaluated_local_kerma/rejected_thermal_run/local_kerma_physics_preflight.json
+              echo "PASS: actual evaluated NNDC nuclear data rejected for neutron-only reactor heat deposition"
             '
 
       - name: Retain actual evaluated nuclear-data evidence

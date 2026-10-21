@@ -28,6 +28,7 @@ from .geometry import (
 from .model import build_model
 from .core_statepoint_diagnostics import summarize_core_statepoint
 from .nuclear_data import inspect_nuclear_data, write_report
+from .audit_kerma_coverage import audit_kerma_coverage
 from .periphery import reactor_summary
 
 
@@ -71,6 +72,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hydrogen-density-g-cm3", type=float,
                         help="Uniform OpenMC hydrogen material density for snapshot feedback.")
     parser.add_argument("--photon-transport", action="store_true")
+    parser.add_argument(
+        "--require-local-heating-data",
+        action="store_true",
+        help=(
+            "For neutron-only thermal-power use, fail before transport unless "
+            "every required evaluated neutron nuclide supplies MT=901 local "
+            "KERMA. This is a necessary data coverage check, not physical "
+            "heating validation. Ordinary neutronics smoke runs do not require it."
+        ),
+    )
     parser.add_argument(
         "--thermal-scattering", choices=("free-gas", "evaluated-bound"),
         default="free-gas",
@@ -202,6 +213,11 @@ def main() -> int:
         trigger_batch_interval=args.trigger_batch_interval,
     )
     config.validate()
+    if args.photon_transport and args.require_local_heating_data:
+        raise ValueError(
+            "MT=901 preflight applies to neutron-only local heating; "
+            "coupled photon heating requires a separate physical data audit"
+        )
 
     report = inspect_nuclear_data(
         cross_sections=args.cross_sections,
@@ -222,6 +238,28 @@ def main() -> int:
 
     cross_sections = Path(report.cross_sections_xml)
     os.environ["OPENMC_CROSS_SECTIONS"] = str(cross_sections)
+
+    # Neutron-transport physics QA may still run with a library that lacks
+    # MT=901. A neutron-only THERMAL-POWER calculation may not: OpenMC's
+    # heating-local deposition requires actual evaluated local neutron KERMA.
+    # Fail before transport/export when this capability is explicitly
+    # requested. Persist per-nuclide file hashes and missing-MT evidence.
+    if args.require_local_heating_data:
+        local_kerma = audit_kerma_coverage(cross_sections, config=config)
+        kerma_path = args.output / "local_kerma_physics_preflight.json"
+        kerma_path.write_text(
+            json.dumps(local_kerma, indent=2, allow_nan=False) + chr(10),
+            encoding="utf-8",
+        )
+        if not local_kerma["local_heating_evaluated_kerma_inventory_complete"]:
+            raise RuntimeError(
+                "Neutron-only reactor heat calculation REJECTED: evaluated "
+                "local neutron KERMA MT=901 unavailable for required nuclides "
+                f"{local_kerma['nuclides_missing_or_unverified_mt901']}; "
+                f"inspect {kerma_path}. No substitution of ordinary heating "
+                "or kappa-fission is physically justified."
+            )
+
     thermal_audit = audit_bound_thermal_scattering(cross_sections, config)
     (args.output / "thermal_scattering_physics_audit.json").write_text(
         json.dumps(thermal_audit, indent=2) + "\n",
