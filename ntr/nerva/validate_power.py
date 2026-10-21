@@ -54,6 +54,34 @@ def main() -> int:
         assert np.isclose(fraction,selected[0]/np.sum(selected))
         assert not np.isclose(fraction, other[0]/np.sum(other))
 
+    # Invalid source/mesh statistics cannot enter the steady thermal solver.
+    from .power import source_rate_for_power
+    def rejected(action, needle):
+        try:
+            action()
+        except ValueError as exc:
+            assert needle in str(exc), str(exc)
+        else:
+            raise AssertionError(f"invalid OpenMC data accepted: {needle}")
+    rejected(lambda: source_rate_for_power(float("nan"), 1e6), "positive finite")
+    rejected(lambda: source_rate_for_power(10e6, float("inf")), "positive finite")
+    rejected(lambda: source_rate_for_power(10e6, 0), "positive finite")
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        noisy = heating.copy()
+        noisy[0] = bad
+        rejected(lambda: normalize_regular_mesh(
+            noisy, fission, flux, 5., requested_power
+        ), "nonfinite")
+    rejected(lambda: normalize_regular_mesh(
+        np.array([]), np.array([]), np.array([]), 5., requested_power
+    ), "nonempty")
+    rejected(lambda: normalize_regular_mesh(
+        heating, fission, flux, float("nan"), requested_power
+    ), "positive finite")
+    rejected(lambda: normalize_regular_mesh(
+        heating, np.array([-1., 1., 2., 3.]), flux, 5., requested_power
+    ), "negative OpenMC")
+
     print("NERVA tally normalization validation: PASS")
     print(f"  requested/recovered power: {requested_power:.6e} W")
     print(f"  source rate: {fields.source_rate_s:.6e} source/s")
