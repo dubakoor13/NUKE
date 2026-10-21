@@ -49,10 +49,10 @@ def read_source_bank(
         raise ValueError("source bank mesh bins must be 3 integers in [2,64]")
     with h5py.File(path,"r") as h:
         typ=h.attrs.get("filetype")
-        if typ is None or bytes(typ).rstrip(b"\\0") != b"statepoint":
+        if typ is None or bytes(typ).rstrip(b"\0") != b"statepoint":
             raise ValueError("source bank must belong to OpenMC statepoint")
         if (h.get("run_mode") is None
-                or bytes(h["run_mode"][()]).rstrip(b"\\0")!=b"eigenvalue"):
+                or bytes(h["run_mode"][()]).rstrip(b"\0")!=b"eigenvalue"):
             raise ValueError("source bank must come from eigenvalue transport")
         if int(h.attrs.get("source_present",0)) != 1:
             raise ValueError("OpenMC statepoint source_bank not saved")
