@@ -38,6 +38,8 @@ class ReplicaEnsembleResult:
     max_axial_fraction_sem: float
     half_split_total_variation: float
     maximum_balanced_split_total_variation: float | None
+    tested_balanced_split_total_variation: float
+    balanced_split_method: str
     balanced_splits_tested: int
     balanced_splits_exhaustive: bool
     maximum_leave_one_out_total_variation: float
@@ -227,6 +229,11 @@ def assess_replica_ensemble(
         max_axial_fraction_sem=max_axial,
         half_split_total_variation=half_tv,
         maximum_balanced_split_total_variation=worst_balanced,
+        tested_balanced_split_total_variation=split_metric,
+        balanced_split_method=(
+            "exhaustive_worst_balanced_partition"
+            if balanced_exhaustive else "deterministic_hash_partition"
+        ),
         balanced_splits_tested=tested_splits,
         balanced_splits_exhaustive=balanced_exhaustive,
         maximum_leave_one_out_total_variation=max_loo,
