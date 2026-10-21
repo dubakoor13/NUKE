@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import numpy as np
 
@@ -39,12 +40,15 @@ def source_rate_for_power(
     total_heating_ev_per_source: float,
 ) -> float:
     """Return source particles/s required to normalize heating to reactor power."""
-    if reactor_power_w <= 0.0:
-        raise ValueError("reactor_power_w must be positive")
-    if total_heating_ev_per_source <= 0.0:
-        raise ValueError("total heating tally must be positive")
-
-    return reactor_power_w / (total_heating_ev_per_source * EV_TO_J)
+    if not math.isfinite(reactor_power_w) or reactor_power_w <= 0:
+        raise ValueError("reactor_power_w must be positive finite")
+    if (not math.isfinite(total_heating_ev_per_source)
+            or total_heating_ev_per_source <= 0):
+        raise ValueError("total heating tally must be positive finite")
+    rate = reactor_power_w / (total_heating_ev_per_source * EV_TO_J)
+    if not math.isfinite(rate) or rate <= 0:
+        raise ValueError("normalized OpenMC source rate is nonfinite")
+    return rate
 
 
 def normalize_regular_mesh(
@@ -59,10 +63,19 @@ def normalize_regular_mesh(
     fission = np.asarray(fission_per_source, dtype=float)
     flux = np.asarray(flux_tracklength_per_source, dtype=float)
 
-    if heating.shape != fission.shape or heating.shape != flux.shape:
-        raise ValueError("heating, fission, and flux fields must have identical shapes")
-    if cell_volume_cm3 <= 0.0:
-        raise ValueError("cell_volume_cm3 must be positive")
+    if heating.size == 0 or heating.shape != fission.shape or heating.shape != flux.shape:
+        raise ValueError("heating, fission, and flux fields must have identical nonempty shapes")
+    if not math.isfinite(cell_volume_cm3) or cell_volume_cm3 <= 0.0:
+        raise ValueError("cell_volume_cm3 must be positive finite")
+    if (not np.isfinite(heating).all()
+            or not np.isfinite(fission).all()
+            or not np.isfinite(flux).all()):
+        raise ValueError("nonfinite OpenMC heating, fission, or flux tallies")
+    if np.any(fission < 0) or np.any(flux < 0):
+        raise ValueError("negative OpenMC reaction rate or tracklength")
+    scale = float(np.max(np.abs(heating)))
+    if scale <= 0 or float(np.min(heating)) < -1e-6 * scale:
+        raise ValueError("nonpositive or materially negative OpenMC deposited heating")
 
     total_heating = float(np.sum(heating))
     source_rate = source_rate_for_power(reactor_power_w, total_heating)
