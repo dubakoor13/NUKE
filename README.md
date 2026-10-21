@@ -1,5 +1,9 @@
 # OpenMC Monte Carlo Particle Transport Code
 
+## NUKE / NERVA development status
+
+This repository also contains a developing **NERVA nuclear-thermal propulsion simulation** under [`ntr/nerva/`](ntr/nerva/). See the [NERVA physics/numerics status and handoff](ntr/nerva/NERVA_STATUS_HANDOFF.md) for the verified scope, outstanding ~60–70% NASA-fidelity work estimate, evidence, and next tasks; [NERVA_ENGINE.md](ntr/nerva/NERVA_ENGINE.md) documents the physics modules. The status estimate is not an OpenMC certification or historical hardware validation. The original OpenMC project description and attribution below are retained.
+
 [![License](https://img.shields.io/badge/license-MIT-green)](https://docs.openmc.org/en/latest/license.html)
 [![GitHub Actions build status (Linux)](https://github.com/openmc-dev/openmc/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/openmc-dev/openmc/actions/workflows/ci.yml)
 [![Code Coverage](https://coveralls.io/repos/github/openmc-dev/openmc/badge.svg?branch=develop)](https://coveralls.io/github/openmc-dev/openmc?branch=develop)
