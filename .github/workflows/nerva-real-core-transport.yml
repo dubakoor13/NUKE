@@ -7,6 +7,8 @@ on:
       - 'ntr/nerva/run_real_core_replicas.py'
       - 'ntr/nerva/validate_real_core_replicas_statistics.py'
       - 'ntr/nerva/source_bank_convergence.py'
+      - 'ntr/nerva/source_bank_trajectory.py'
+      - 'ntr/nerva/validate_source_bank_trajectory.py'
       - 'ntr/nerva/validate_source_bank_convergence.py'
       - 'ntr/nerva/model.py'
       - 'ntr/nerva/run_openmc_transport.py'
@@ -61,9 +63,10 @@ jobs:
               echo "Evaluated neutron library: $OPENMC_CROSS_SECTIONS"
               python -m ntr.nerva.validate_real_core_replicas_statistics
               python -m ntr.nerva.validate_source_bank_convergence
+              python -m ntr.nerva.validate_source_bank_trajectory
               python -m ntr.nerva.run_real_core_replicas \
                 --rings 3 --particles 3000 --batches 120 --inactive 30 \
-                --source-bank-batches 60 120 \
+                --source-bank-batches 40 60 80 100 120 \
                 --hydrogen-temperature-k 293.6059129982851 \
                 --seeds 13007 23011 33013 43019 \
                 --output /repo/build/nerva_real_core
