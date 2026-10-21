@@ -17,6 +17,8 @@ import json
 import math
 from pathlib import Path
 
+from .statepoint_content_audit import audit_eigenvalue_statepoint_content
+
 
 @dataclass(frozen=True)
 class SnapshotQuality:
@@ -99,6 +101,9 @@ def audit_fresh_transport(
         raise RuntimeError("statepoint hash does not match transport provenance")
     if sp.get("size_bytes") != statepoint.stat().st_size:
         raise RuntimeError("statepoint size does not match transport provenance")
+    # A checksum is only an identity assertion. Inspect actual OpenMC
+    # eigenvalue physics and tally content before permitting feedback.
+    eigenvalue = audit_eigenvalue_statepoint_content(statepoint)
     nuclear = transport.get("nuclear_data")
     if not isinstance(nuclear, dict):
         raise RuntimeError("transport nuclear-data provenance missing")
@@ -112,6 +117,12 @@ def audit_fresh_transport(
     cfg = transport.get("config")
     if not isinstance(cfg, dict):
         raise RuntimeError("transport configuration missing")
+    if "photon_transport" not in cfg or not isinstance(cfg["photon_transport"], bool):
+        raise RuntimeError("transport provenance photon-transport mode missing")
+    if eigenvalue["photon_transport"] != cfg["photon_transport"]:
+        raise RuntimeError("actual OpenMC neutron/photon mode conflicts with transport provenance")
+    if cfg.get("seed") is not None and cfg["seed"] != eigenvalue["seed"]:
+        raise RuntimeError("actual OpenMC random seed conflicts with transport provenance")
     for name, expected in (
         ("fuel_temperature_k", fuel_temp),
         ("hydrogen_temperature_k", gas_temp),
@@ -132,6 +143,16 @@ def audit_fresh_transport(
                        "metadata requested MW")
     if not math.isclose(power_mw * 1e6, watts, rel_tol=1e-8):
         raise RuntimeError("metadata requested power differs from prescribed power")
+    if "power_normalization_score" not in metadata or (
+        metadata["power_normalization_score"] !=
+        ("heating" if eigenvalue["photon_transport"] else "heating-local")
+    ):
+        raise RuntimeError(
+            "OpenMC power normalization score differs from actual "
+            "neutron/photon transport mode"
+        )
+    if metadata.get("photon_transport") is not eigenvalue["photon_transport"]:
+        raise RuntimeError("OpenMC power metadata neutron/photon mode conflicts with statepoint")
     source_rate = _number(metadata.get("source_rate_per_s"), "source rate")
     mesh_p95 = _number(metadata.get("mesh_heating_p95_relative_error"),
                        "mesh p95 relative error", positive=False)
