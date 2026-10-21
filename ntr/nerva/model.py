@@ -50,7 +50,8 @@ def build_model(
     settings.photon_transport = config.photon_transport
     # Bind audited nearest-library tolerance to the actual transport.
     # Never rely on the default 10 K tolerance for evaluated bound physics.
-    if config.thermal_scattering_treatment == "evaluated-bound":
+    if (config.thermal_scattering_treatment == "evaluated-bound"
+            or config.bound_nearest_temperature_tolerance_k > 0):
         settings.temperature = {
             "method": "nearest",
             "tolerance": max(1.0e-6, config.bound_nearest_temperature_tolerance_k),
