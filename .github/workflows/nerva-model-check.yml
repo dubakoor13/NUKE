@@ -299,6 +299,12 @@ jobs:
       - name: Validate NERVA mesh convergence report and physical identity
         run: python -m ntr.nerva.validate_mesh_refinement_report
 
+      - name: Validate independent-seed mesh-refinement sampling uncertainty
+        run: python -m ntr.nerva.validate_mesh_refinement_statistics
+
+      - name: Check OpenMC mesh-refinement ensemble CLI
+        run: python -m ntr.nerva.run_openmc_mesh_refinement_ensemble --help
+
       - name: Check NERVA numerical-convergence CLI
         run: python -m ntr.nerva.summarize_convergence --help
 
