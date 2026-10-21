@@ -55,7 +55,7 @@ jobs:
               python -m ntr.nerva.audit_kerma_coverage \
                 --cross-sections "$OPENMC_CROSS_SECTIONS" \
                 --output /repo/build/nerva_evaluated_local_kerma/kerma_mt901_coverage.json
-              python -c "import json; r=json.load(open('/repo/build/nerva_evaluated_local_kerma/kerma_mt901_coverage.json')); assert not r['local_heating_evaluated_kerma_inventory_complete']; assert len(r['nuclides'])==29; assert all(row['local_kerma_mt901_numerical_usable'] is False for row in r['nuclides']); print('PASS: 29/29 required evaluated MT901 numerical coefficient tables unusable')"
+              python -c "import json; r=json.load(open(\"/repo/build/nerva_evaluated_local_kerma/kerma_mt901_coverage.json\")); assert not r[\"local_heating_evaluated_kerma_inventory_complete\"]; assert len(r[\"nuclides\"]) == 29; assert all(x[\"local_kerma_mt901_numerical_usable\"] is False for x in r[\"nuclides\"]); print(\"PASS: 29/29 neutron isotope MT901 numeric coefficient inventories unusable\")"
 
               python -m ntr.nerva.validate_local_heating_preflight
               # This same physical NNDC HDF5 inventory lacks MT901. The
