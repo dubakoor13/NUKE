@@ -62,6 +62,26 @@ def _verify_nuclear_data(xs: Path, config: NervaConfig, output: Path) -> dict:
         json.dumps(audit, indent=2)+"\n", encoding="utf-8"
     )
     if audit["model_explicit_temperature_coverage_ok"] is not True:
+        print(
+            "NON-NEGOTIABLE NEUTRON-DATA TEMPERATURE COVERAGE FAILURE:",
+            flush=True,
+        )
+        for row in audit["nuclides"]:
+            explicit = [
+                item["requested_temperature_K"]
+                for item in row["requested_by_material"]
+                if item["requested_temperature_K"] is not None
+            ]
+            if explicit:
+                print(
+                    f"  nuclide={row['nuclide']} "
+                    f"requested_K={explicit} "
+                    f"available_range_K=({row['available_min_K']},"
+                    f"{row['available_max_K']}) "
+                    f"xs={row['hdf5_path']} "
+                    f"load_error={row['load_error']}",
+                    flush=True,
+                )
         raise RuntimeError(
             "Requested core temperature lacks evaluated neutron XS; "
             "see neutron_temperature_coverage_audit.json. "
