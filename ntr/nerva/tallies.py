@@ -133,6 +133,7 @@ def build_tallies(
         "absorption",
         "fission",
         "nu-fission",
+        "kappa-fission",  # gross recoverable fission energy, not deposited heat
         "heating",
         "heating-local",
     ]
