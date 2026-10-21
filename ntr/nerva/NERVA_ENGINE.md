@@ -1367,6 +1367,72 @@ feedback of this new solver to the complete shaft/turbine/nozzle
 operating point or to actual OpenMC neutron kinetics. Do not claim a
 NASA-validated NERVA model from these tests.
 
+## Distributed cryogenic tie momentum and kinetic-inclusive total energy
+
+`distributed_tie_euler.py` provides an independent **1D Euler
+finite-volume** model for the existing normalized tie-solid and H2
+source reconstruction. It advances the routed supply + one physical
+turnaround + counterflow return as 2*Nz fluid control volumes and
+a shared solid per axial slice. Unlike the lumped interface inertance
+model, every fluid cell carries the three conservative variables
+
+```text
+U = [rho, rho*v, rho*(u + v²/2)]
+F = [rho*v, rho*v² + p, rho*v*(h + v²/2)]
+h = u + p/rho
+
+U_new = U_old - (dt*A/V)*(F_right - F_left) + dt*S/V
+```
+
+CoolProp hydrogen provides `p(rho,u)`, temperature and equilibrium
+quality. **Single-phase** sound speed comes directly from the EOS;
+**two-phase** sound speed is an explicitly assumed homogeneous-
+equilibrium, isentropic finite-difference derivative
+`c² = (∂p/∂rho)_s`, because CoolProp does not provide a unique
+unqualified two-phase sound speed. Derivative failure rejects the
+state; this closure does not describe slip or non-equilibrium waves.
+Each face uses ONE shared local
+Lax-Friedrichs/Rusanov numerical flux with signal speed
+`max(|v_L|+c_L, |v_R|+c_R)`; mass, momentum and total energy
+therefore have telescoping internal fluxes. The equations explicitly
+preserve hydrogen kinetic energy in the global first-law audit.
+
+The optional prescribed Darcy wall-friction and turnaround losses are
+momentum source terms **only**: when fluid velocity decreases,
+the lost kinetic energy is converted into internal energy rather
+than lost from total energy. Solid-to-H2 wall transfer and direct
+H2 nuclear deposition add energy to fluid cells, while the tied
+solid loses that same wall power. The timestep gate requires an
+acoustic CFL below a configured bound (default 0.45); nonpositive
+hydrogen mass and EOS violations are rejected. Input masses,
+flow areas, friction and wall UAs are NOT historical dimensions.
+
+Run regression with:
+`python -m ntr.nerva.validate_distributed_tie_euler`.
+
+For a source NPZ analysis, the standalone command is
+`python -m ntr.nerva.run_distributed_tie_euler --help`.
+It takes mesh/fuel/tie reconstructed power maps, upstream and
+downstream reservoir pressure and saturated H2 quality, fixed
+supply/return cell volumes, common passage area, solid capacity,
+wall UAs, optional Darcy/turnaround loss factors, timestep and
+number of steps. It writes total-energy/momentum/mass NPZ fields
+and first-law/momentum/mass residual histories to a strict JSON
+report. The repository's existing one-way and Picard coupling
+modes remain unchanged.
+
+**Important scope:** This is a first-order 1D compressible
+homogeneous-equilibrium *screening* solver, not two-fluid dynamics,
+experimentally calibrated NERVA tie-tube hydraulics or a complete
+3D turnaround model. The Rusanov flux is numerically diffusive;
+the end boundaries are stationary prescribed-state ghost reservoirs
+rather than pump/nozzle characteristic boundary matching. It lacks
+thermal-structural swelling, wall-boiling HTC/CHF, non-equilibrium
+evaporation, interfacial slip, actual OpenMC neutron kinetics,
+dynamic engine shaft feedback and NASA experimental comparisons.
+Numerical mass/momentum/total-energy consistency is necessary but
+not sufficient for hardware-fidelity predictions.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
