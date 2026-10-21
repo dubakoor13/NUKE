@@ -1433,6 +1433,69 @@ dynamic engine shaft feedback and NASA experimental comparisons.
 Numerical mass/momentum/total-energy consistency is necessary but
 not sufficient for hardware-fidelity predictions.
 
+## Engine-conditioned distributed tie Euler reservoir boundaries
+
+The opt-in `distributed_tie_engine_boundary.py` bridges a **solved
+shaft-closed LH2 pump/turbine/nozzle + balanced four-leg regenerative
+network** with the independently evolved distributed H2 tie-tube Euler
+control volumes. Unlike prescribing arbitrary tie-tube reservoir
+temperatures or forcing a transient mass flux equal to the
+steady hydraulic branch split, it extracts the exact steady reference
+conditions from the same engine solution:
+
+```text
+tie Euler inlet:
+    pressure = cooling.legs[2].inlet_pressure_pa
+    h_reservoir = cooling.legs[2].inlet_stagnation_enthalpy_j_kg
+
+tie Euler return/outlet:
+    pressure = cooling.legs[3].outlet_pressure_pa
+    h_reservoir = cooling.legs[3].outlet_stagnation_enthalpy_j_kg
+
+steady reference branch flow = cooling.tie_tube_mass_flow_kg_s
+```
+
+These are **stationary ghost reservoirs** in the Euler Rusanov
+numerical flux. The inlet/outlet fluxes are determined by transient
+local pressure waves and density; they are not overwritten with the
+steady solved flow. The model reports inlet and outlet reference
+mismatches and H2 inventory accumulation, verifying
+
+```text
+d(sum m_H2)/dt = sum(mdot_in,Euler - mdot_out,Euler)
+```
+
+as well as the existing global momentum and kinetic-inclusive
+total-energy first-law residuals. The Rusanov **total-energy**
+boundary flux includes pressure work, kinetic transport and
+numerical diffusion, so it MUST NOT be replaced with a
+steady `mdot*h` source when closing transient energy.
+
+Run the validation:
+`python -m ntr.nerva.validate_distributed_tie_engine_boundary`.
+
+The public command
+`python -m ntr.nerva.run_distributed_tie_engine_boundary --help`
+takes the normalized OpenMC-format mesh/fuel/tie reconstructions,
+a JSON with `lh2_cycle`, `turbine` and `regenerative_cooling`
+(as in `run_turbine_bleed_cycle.py`), time step, physical CV
+volumes, passage area, solid heat capacities/UA and friction.
+It independently solves the shaft cycle, advances the Euler tie
+transient and emits EOS/flux fields and an auditable JSON history
+with explicit `full_engine_feedback_converged: false`.
+
+**Remaining physical gap:** This is **one-way boundary conditioning**.
+A full transient operating-point solve must feed the Euler-computed
+tie mass flow, return enthalpy and pressure waves into pump/head,
+regenerative parallel junction, turbine bleed and nozzle flow
+equations, then iterate all physical boundaries and heat sources.
+The steady reference heating may not match the externally supplied
+synthetic nuclear tie power. This module does NOT claim a converged
+two-way thermo-hydraulic shaft cycle or historical NERVA performance.
+Two-phase slip/critical-flow/boiling HTC/CHF, authentic hardware
+geometry, real OpenMC transport and NASA experimental validation
+remain unresolved.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit

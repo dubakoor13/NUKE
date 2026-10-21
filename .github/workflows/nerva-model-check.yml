@@ -135,6 +135,9 @@ jobs:
       - name: Validate distributed compressible H2 tie Euler momentum and total energy
         run: python -m ntr.nerva.validate_distributed_tie_euler
 
+      - name: Validate distributed H2 tie Euler boundaries from shaft-closed regenerative network
+        run: python -m ntr.nerva.validate_distributed_tie_engine_boundary
+
       - name: Validate real-fluid tie heating and regenerative branch hydraulic fixed point
         run: python -m ntr.nerva.validate_cryogenic_tie_hydraulic_coupling
 
