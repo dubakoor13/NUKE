@@ -239,6 +239,9 @@ jobs:
       - name: Validate physics-based NERVA engine solver
         run: python -m ntr.nerva.validate_nerva_engine
 
+      - name: Validate OpenMC exact thermal epithermal fast energy group statistics
+        run: python -m ntr.nerva.validate_neutron_energy_groups
+
       - name: Validate expanded NERVA OpenMC diagnostics
         run: python -m ntr.nerva.validate_openmc_diagnostics
 

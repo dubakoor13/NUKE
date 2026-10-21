@@ -12,6 +12,7 @@ import numpy as np
 import openmc
 
 from .power import EV_TO_J, heating_score_for_transport
+from .neutron_energy_groups import spectral_fractions, ENERGY_LIMITS_EV
 from .source_history_statistics import (
     analyze_correlated_history,
     batch_average_generation_k,
@@ -180,34 +181,8 @@ def _spectral_fractions(
     energy_bins_ev: np.ndarray,
     spectrum: np.ndarray,
 ) -> dict[str, float]:
-    values = np.asarray(spectrum, dtype=float).reshape(-1)
-    bins = np.asarray(energy_bins_ev, dtype=float)
-
-    if bins.ndim != 2 or bins.shape[1] != 2:
-        raise ValueError("EnergyFilter bins must have shape (N, 2)")
-    if len(values) != len(bins):
-        raise ValueError("spectrum length does not match energy bins")
-
-    total = float(np.sum(values))
-    if total <= 0.0:
-        return {
-            "thermal_below_0p625_eV": 0.0,
-            "epithermal_0p625eV_to_100keV": 0.0,
-            "fast_above_100keV": 0.0,
-        }
-
-    upper = bins[:, 1]
-    lower = bins[:, 0]
-
-    thermal = float(np.sum(values[upper <= 0.625]))
-    fast = float(np.sum(values[lower >= 1.0e5]))
-    epi = max(0.0, total - thermal - fast)
-
-    return {
-        "thermal_below_0p625_eV": thermal / total,
-        "epithermal_0p625eV_to_100keV": epi / total,
-        "fast_above_100keV": fast / total,
-    }
+    """Use exact EnergyFilter-boundary accounting without invented spectra."""
+    return spectral_fractions(energy_bins_ev, spectrum)
 
 
 def _peaking_metrics(power_density: np.ndarray) -> dict[str, float]:
@@ -965,6 +940,17 @@ def main() -> int:
                 else 0.0
             )
             for key, value in material_power.items()
+        },
+        "neutron_spectrum_definition": {
+            "thermal_upper_boundary_eV": ENERGY_LIMITS_EV[1],
+            "fast_lower_boundary_eV": ENERGY_LIMITS_EV[2],
+            "filter_minimum_energy_eV": float(energy_bins[0, 0]),
+            "filter_maximum_energy_eV": float(energy_bins[-1, 1]),
+            "fraction_normalization": (
+                "Fraction of neutron fluence tallied inside OpenMC EnergyFilter "
+                "range; not a fraction of all energies outside the filter"
+            ),
+            "boundary_mixed_bins_accepted": False,
         },
         "fuel_flux_spectral_fractions": _spectral_fractions(
             energy_bins,

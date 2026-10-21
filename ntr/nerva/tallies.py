@@ -6,6 +6,7 @@ import numpy as np
 import openmc
 
 from .config import NervaConfig
+from .neutron_energy_groups import diagnostic_energy_edges
 
 
 _TIE_SOLID_CELL_NAMES = {
@@ -81,12 +82,12 @@ def _attach_heating_trigger(
 
 
 def _energy_edges(config: NervaConfig) -> np.ndarray:
-    """Log-spaced neutron-energy bins from thermal to 20 MeV."""
-    return np.logspace(
-        -5.0,
-        np.log10(2.0e7),
-        config.diagnostic_energy_groups + 1,
-    )
+    """EnergyFilter bins with exact 0.625-eV and 100-keV boundaries.
+
+    Uniform logspace bins cross the diagnostic spectrum class cutoffs
+    and would misclassify an entire straddling flux tally bin.
+    """
+    return diagnostic_energy_edges(config.diagnostic_energy_groups)
 
 
 def _vacuum_surfaces(
