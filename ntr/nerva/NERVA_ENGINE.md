@@ -1311,6 +1311,62 @@ wall expansion, or neutronic reactivity. Older validated solvers
 are untouched. The source fields in CI remain synthetic and do
 not constitute an OpenMC neutron-transport benchmark.
 
+## Finite-inertance cryogenic tie interface-momentum screening model
+
+`inertial_tie.py` adds one *dynamic* signed mass-flow degree of
+freedom for every hydraulic interface (inlet, axial supply, single
+turnaround, axial return, outlet) to the `pressure_driven_tie.py`
+CoolProp real-fluid finite-volume solver. At each interface, its
+short inertial segment has effective length `L`, area `A`, and
+quadratic pressure-drop coefficient `K = Cd^{-2}`:
+
+```text
+(L/A) d(mdot)/dt = p_left - p_right
+                   - K*mdot*abs(mdot)/(2*rho_upwind*A^2)
+```
+
+The inertia is discretized in backward Euler using OLD pressures
+and EOS density, but NEW signed momentum flux in the nonlinear
+drag term. The drag root is solved analytically and audited as a
+pressure residual. The same NEW face fluxes feed the existing
+conservative explicit fixed-volume equations:
+
+```text
+m_new = m_old + dt * (mdot_in - mdot_out)
+(m*u)_new = (m*u)_old + dt*(mdot_in*h_upwind
+                             - mdot_out*h_upwind
+                             + Q_wall + Q_direct_H2)
+```
+
+This numerical arrangement permits a nonzero flow against a sudden
+opposing pressure gradient because of face inertia. The steady-flow
+limit of the lumped law is the existing orifice relation
+`mdot = sign(dp)*Cd*A*sqrt(2*rho_upwind*abs(dp))`.
+A pressure-equilibrium tolerance prevents CoolProp EOS inversion
+roundoff from producing spurious microflow. The existing explicit
+cell-mass Courant and excessive pressure-jump guards remain active.
+
+Run tests: `python -m ntr.nerva.validate_inertial_tie`.
+A public runner, `python -m ntr.nerva.run_inertial_tie --help`,
+accepts the reconstructed mesh/fuel/tie NPZ files and declared
+H2 reservoir conditions, solid capacities, wall UAs, hydraulic
+restriction coefficients, inertial length, and timestep. It writes
+each timestep's momentum/pressure residual, energy and mass residual,
+and final EOS/face-flux arrays. The inputs are synthetic in CI and
+are not historically calibrated.
+
+**Important physical limits:** This is a *lumped interface inertia*
+model, not the full distributed compressible two-phase Euler momentum
+equation. Cellwise convective acceleration, acoustic wave dynamics,
+fluid/face kinetic-energy storage, slip, choked two-phase critical flow,
+boiling HTC/CHF, gravity and thermal-mechanical expansion are omitted.
+Its mass and *internal* energy ledger closes for the stated reduced
+equations, but it is NOT a total-energy conservation audit including
+the kinetic energy changing in the momentum states. There is no
+feedback of this new solver to the complete shaft/turbine/nozzle
+operating point or to actual OpenMC neutron kinetics. Do not claim a
+NASA-validated NERVA model from these tests.
+
 ## Opt-in subcritical homogeneous-equilibrium two-phase H2 pressure losses
 
 \`regenerative_cooling.py\` now implements an explicit
