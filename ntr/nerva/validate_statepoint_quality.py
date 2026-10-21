@@ -13,6 +13,10 @@ import math
 from pathlib import Path
 import tempfile
 
+import h5py
+import numpy as np
+
+from .statepoint_content_audit import audit_eigenvalue_statepoint_content
 from .statepoint_quality import audit_fresh_transport
 
 
@@ -23,6 +27,29 @@ def _write(path: Path, value: dict) -> None:
 
 def _sha(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def _write_synthetic_openmc_hdf5(path: Path) -> None:
+    """An HDF5 STRUCTURE fixture, never an actual Monte Carlo statepoint."""
+    with h5py.File(path, "w") as h:
+        h.attrs["filetype"] = np.bytes_("statepoint")
+        h.attrs["version"] = np.array([18, 2], dtype=np.int32)
+        h.attrs["tallies_present"] = np.int32(1)
+        h.attrs["photon_transport"] = np.int32(0)
+        h.create_dataset("run_mode", data=np.bytes_("eigenvalue"))
+        for key, value in (
+            ("n_batches", 80),
+            ("current_batch", 80),
+            ("n_inactive", 20),
+            ("n_particles", 4000),
+            ("n_realizations", 60),
+            ("generations_per_batch", 1),
+            ("seed", 1234),
+        ):
+            h.create_dataset(key, data=value)
+        h.create_dataset("k_combined", data=np.array([0.97, 0.006]))
+        group = h.create_group("tallies")
+        group.attrs["n_tallies"] = np.int32(5)
 
 
 def expect_rejected(run, *, keyword: str) -> None:
@@ -40,7 +67,14 @@ def main() -> int:
         root = Path(tmp)
         sp = root / "transport"/"statepoint.80.h5"
         sp.parent.mkdir()
-        sp.write_bytes(b"TEST-FIXTURE-NOT-A-REAL-OPENMC-HDF5-STATEPOINT")
+        _write_synthetic_openmc_hdf5(sp)
+        original_statepoint_bytes = sp.read_bytes()
+        structure = audit_eigenvalue_statepoint_content(sp)
+        assert structure["n_batches"] == 80
+        assert structure["inactive_batches"] == 20
+        assert structure["active_realizations"] == 60
+        assert structure["keff"] == 0.97
+        assert not structure["photon_transport"]
         cross = root/"library"/"cross_sections.xml"
         cross.parent.mkdir()
         cross.write_text("<cross_sections />", encoding="utf-8")
@@ -59,6 +93,8 @@ def main() -> int:
                 "fuel_temperature_k": 600.,
                 "hydrogen_temperature_k": 350.,
                 "hydrogen_density_g_cm3": 0.001,
+                "photon_transport": False,
+                "seed": 1234,
             },
             "nuclear_data": {
                 "cross_sections_xml": str(cross.resolve()),
@@ -72,6 +108,8 @@ def main() -> int:
             "normalized_power_W": 1e6,
             "source_rate_per_s": 3.2e17,
             "mesh_heating_p95_relative_error": 0.11,
+            "power_normalization_score": "heating-local",
+            "photon_transport": False,
         }
         qa = {
             "analysis_root": str(analysis.resolve()),
@@ -123,7 +161,45 @@ def main() -> int:
         # Tampered OpenMC statepoint bytes.
         sp.write_bytes(b"CHANGED-BYTES")
         expect_rejected(run, keyword="statepoint hash")
-        sp.write_bytes(b"TEST-FIXTURE-NOT-A-REAL-OPENMC-HDF5-STATEPOINT")
+        sp.write_bytes(original_statepoint_bytes)
+        reset()
+
+        # The checksum alone CANNOT certify a physical eigenvalue result.
+        # Refresh the metadata hash after corrupting the HDF5 contents and
+        # prove the new HDF5-content gate still refuses thermal feedback.
+        def run_corrupted(mutator, needle):
+            sp.write_bytes(original_statepoint_bytes)
+            with h5py.File(sp, "r+") as h:
+                mutator(h)
+            updated_transport = deepcopy(transport)
+            updated_transport["statepoint"]["sha256"] = _sha(sp)
+            updated_transport["statepoint"]["size_bytes"] = sp.stat().st_size
+            _write(transport_path, updated_transport)
+            expect_rejected(run, keyword=needle)
+
+        run_corrupted(
+            lambda h: h["run_mode"].__setitem__((), np.bytes_("fixed source")),
+            "eigenvalue",
+        )
+        run_corrupted(
+            lambda h: h["k_combined"].__setitem__(0, float("nan")),
+            "k-effective",
+        )
+        run_corrupted(
+            lambda h: h["n_inactive"].__setitem__((), 80),
+            "batch counts",
+        )
+        run_corrupted(
+            lambda h: h.attrs.__setitem__("tallies_present", 0),
+            "no recorded tallies",
+        )
+        sp.write_bytes(b"FAKE-BYTES-NOT-HDF5")
+        updated_transport = deepcopy(transport)
+        updated_transport["statepoint"]["sha256"] = _sha(sp)
+        updated_transport["statepoint"]["size_bytes"] = sp.stat().st_size
+        _write(transport_path, updated_transport)
+        expect_rejected(run, keyword="readable")
+        sp.write_bytes(original_statepoint_bytes)
         reset()
 
         # Tampered source XML or swapped source XS: abort.
@@ -137,6 +213,10 @@ def main() -> int:
              {"statepoint": str(bogus)}, "power metadata"),
             ("wrong normalization", meta, meta_path,
              {"normalized_power_W": 2e6}, "normalized heating"),
+            ("wrong energy estimator", meta, meta_path,
+             {"power_normalization_score": "heating"}, "normalization score"),
+            ("wrong deposited-energy transport mode", meta, meta_path,
+             {"photon_transport": True}, "photon mode"),
             ("high MC noise", meta, meta_path,
              {"mesh_heating_p95_relative_error": 0.4},
              "uncertainty disagree"),
@@ -148,6 +228,12 @@ def main() -> int:
              {"status": "FAIL"}, "does not pass"),
             ("incomplete QA", qa, qa_path,
              {"checks": {"power": False}}, "incomplete"),
+            ("wrong transport photon mode", transport, transport_path,
+             {"config": {**transport["config"], "photon_transport": True}},
+             "neutron/photon mode"),
+            ("wrong transport RNG seed", transport, transport_path,
+             {"config": {**transport["config"], "seed": 9999}},
+             "random seed"),
             ("wrong fuel material temperature", transport, transport_path,
              {"config": {**transport["config"],"fuel_temperature_k": 800.}},
              "fuel_temperature_k"),
@@ -179,7 +265,8 @@ def main() -> int:
         altered["mesh_heating_p95_relative_error"]=float("nan")
         _write(meta_path,altered)
         expect_rejected(run,keyword="finite")
-    print("NERVA OpenMC statepoint lineage and Monte Carlo uncertainty QA: PASS")
+    print("NERVA OpenMC HDF5 eigenvalue, tally integrity and Monte Carlo quality: PASS")
+    print("  input HDF5 constructed synthetically; actual OpenMC run: NO")
     return 0
 
 
