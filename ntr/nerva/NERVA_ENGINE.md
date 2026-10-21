@@ -1,5 +1,7 @@
 # Physics-based NERVA engine solver
 
+**Project status and next-iteration handoff (2026-10-21):** [NERVA_STATUS_HANDOFF.md](NERVA_STATUS_HANDOFF.md). This distinguishes verified synthetic numerical tests from historical NASA model validation, and tracks the approximately 60–70% remaining full-fidelity work estimate.
+
 The preferred NERVA engine-performance path is now:
 
 ```text
