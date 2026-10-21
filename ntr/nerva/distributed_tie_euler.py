@@ -124,8 +124,33 @@ def _state_properties(
         raise ValueError("invalid compressible hydrogen state")
     p=eos.get("P","Dmass",rho,"Umass",u)
     t=eos.get("T","Dmass",rho,"Umass",u)
-    c=eos.get("A","Dmass",rho,"Umass",u)
     quality=eos.get("Q","Dmass",rho,"Umass",u)
+    if 0.<quality<1.:
+        # CoolProp intentionally leaves two-phase sound speed
+        # undefined because it depends on phase dynamics. For THIS
+        # explicitly homogeneous-equilibrium Euler model use the
+        # isentropic EQUILIBRIUM derivative c^2=(dP/dRho)|s.
+        # This is not a slip, frozen-phase or measured sound speed.
+        entropy=eos.get("Smass","Dmass",rho,"Umass",u)
+        c=None
+        for fractional in (1e-4,5e-4,2e-3):
+            dr=fractional*rho
+            try:
+                pplus=eos.get("P","Dmass",rho+dr,"Smass",entropy)
+                pminus=eos.get("P","Dmass",rho-dr,"Smass",entropy)
+            except (RuntimeError,ValueError):
+                continue
+            csq=(pplus-pminus)/(2.*dr)
+            if math.isfinite(csq) and csq>0:
+                c=math.sqrt(csq)
+                break
+        if c is None:
+            raise ValueError(
+                "two-phase H2 equilibrium sound speed cannot be "
+                "constructed from positive isentropic EOS derivative"
+            )
+    else:
+        c=eos.get("A","Dmass",rho,"Umass",u)
     if not (math.isfinite(p) and math.isfinite(t) and math.isfinite(c)
             and p>0 and t>0 and c>0):
         raise ValueError("invalid H2 thermodynamic/sound-speed state")
