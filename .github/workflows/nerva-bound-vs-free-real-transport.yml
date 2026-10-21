@@ -1,0 +1,83 @@
+name: NERVA real OpenMC free-gas versus evaluated bound scattering physics
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nerva-bound-vs-free-real-transport.yml'
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/run_real_core_replicas.py'
+      - 'ntr/nerva/compare_real_bound_scattering.py'
+      - 'ntr/nerva/materials.py'
+      - 'ntr/nerva/model.py'
+      - 'ntr/nerva/config.py'
+      - 'ntr/nerva/audit_bound_thermal_scattering.py'
+      - 'ntr/nerva/audit_nuclear_data_temperatures.py'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  actual-neutron-scattering-physics:
+    name: Actual OpenMC matched-material free versus evaluated bound neutron scattering
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull evaluated NNDC data and OpenMC C++ binary
+        run: |
+          set -euo pipefail
+          mkdir -p build/nerva_bound_vs_free
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' \
+            > build/nerva_bound_vs_free/docker_repo_digests.json
+
+      - name: Execute eight real C++ eigenvalue runs, fixed physical core
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --cpus=2 --memory=6g \
+            -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              openmc --version
+              test -f "$OPENMC_CROSS_SECTIONS"
+
+              echo "REAL OPENMC FREE-GAS CONTROL: 4 independent seeds"
+              python -m ntr.nerva.run_real_core_replicas \
+                --rings 3 --particles 1500 --batches 80 --inactive 20 \
+                --hydrogen-temperature-k 293.6059129982851 \
+                --bound-solid-temperature-k 295.99644373136465 \
+                --bound-nearest-temperature-tolerance-k 3.0 \
+                --thermal-scattering free-gas \
+                --seeds 13007 23011 33013 43019 \
+                --output /repo/build/nerva_bound_vs_free/free
+
+              echo "REAL OPENMC BOUND S(alpha,beta): 4 disjoint independent seeds"
+              python -m ntr.nerva.run_real_core_replicas \
+                --rings 3 --particles 1500 --batches 80 --inactive 20 \
+                --hydrogen-temperature-k 293.6059129982851 \
+                --bound-solid-temperature-k 295.99644373136465 \
+                --bound-nearest-temperature-tolerance-k 3.0 \
+                --thermal-scattering evaluated-bound \
+                --seeds 53003 63007 73009 83003 \
+                --output /repo/build/nerva_bound_vs_free/bound
+
+              python -m ntr.nerva.compare_real_bound_scattering \
+                --free /repo/build/nerva_bound_vs_free/free \
+                --bound /repo/build/nerva_bound_vs_free/bound \
+                --output /repo/build/nerva_bound_vs_free/physical_neutron_scattering_comparison.json
+            '
+      - name: Retain genuine neutron physics HDF5 and isotope temperature evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerva-genuine-openmc-bound-vs-free-neutron-scattering
+          path: build/nerva_bound_vs_free/
+          if-no-files-found: warn
+          retention-days: 21

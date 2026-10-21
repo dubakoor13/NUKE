@@ -55,6 +55,35 @@ def main():
     assert not materials["fuel"]._sab
     assert not materials["hydrogen"]._sab
     assert len(required_bound_scattering_tables(physics)) == 4
+    # Correct OpenMC v0.15 nearest-temperature physics is explicitly
+    # auditable for both the free-gas control and the bound-scattering run.
+    paired_free=replace(
+        cold, bound_solid_temperature_k=295.99644373136465,
+        bound_nearest_temperature_tolerance_k=3.0,
+    )
+    paired_bound=replace(
+        physics, bound_solid_temperature_k=295.99644373136465,
+        bound_nearest_temperature_tolerance_k=3.0,
+    )
+    free_solids=build_materials(paired_free)
+    bound_solids=build_materials(paired_bound)
+    for key in ("reflector","graphite","zrh"):
+        assert free_solids[key].temperature == bound_solids[key].temperature
+        assert not free_solids[key]._sab
+        assert bound_solids[key]._sab
+    from .model import build_model
+    free_model=build_model(paired_free,assembly="core")
+    bound_model=build_model(paired_bound,assembly="core")
+    assert free_model.settings.temperature == bound_model.settings.temperature
+    assert free_model.settings.temperature["method"] == "nearest"
+    assert free_model.settings.temperature["tolerance"] == 3.
+    for bad in (float("nan"),-1.,5.01):
+        reject(
+            lambda v=bad: replace(
+                physics,bound_nearest_temperature_tolerance_k=v
+            ).validate(),"tolerance",
+        )
+
 
     reject(
         lambda: replace(cold, thermal_scattering_treatment="invented").validate(),

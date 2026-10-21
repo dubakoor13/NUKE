@@ -65,6 +65,7 @@ def audit_temperature_coverage(
             "available_min_K": None,
             "available_max_K": None,
             "explicit_requested_temperatures_in_range": None,
+            "explicit_requested_temperatures_within_nearest_tolerance": None,
             "load_error": None,
         }
 
@@ -105,6 +106,16 @@ def audit_temperature_coverage(
                     temperatures[0] <= value <= temperatures[-1]
                     for value in explicit
                 )
+                tol = (
+                    max(1e-6, config.bound_nearest_temperature_tolerance_k)
+                    if (config.thermal_scattering_treatment == "evaluated-bound"
+                        or config.bound_nearest_temperature_tolerance_k > 0)
+                    else 10.0
+                )
+                row["explicit_requested_temperatures_within_nearest_tolerance"] = all(
+                    min(abs(x-value) for x in temperatures) <= tol + 1e-9
+                    for value in explicit
+                )
 
                 for item in row["requested_by_material"]:
                     value = item["requested_temperature_K"]
@@ -131,12 +142,19 @@ def audit_temperature_coverage(
     ]
     explicit_coverage_ok = all(
         row["load_error"] is None
-        and row["explicit_requested_temperatures_in_range"] is not False
+        and row["explicit_requested_temperatures_within_nearest_tolerance"] is True
         for row in explicit_rows
     )
 
     return {
         "cross_sections_xml": str(path),
+        "neutron_temperature_method": "nearest",
+        "neutron_temperature_tolerance_K": (
+            max(1e-6, config.bound_nearest_temperature_tolerance_k)
+            if (config.thermal_scattering_treatment == "evaluated-bound"
+                or config.bound_nearest_temperature_tolerance_k > 0)
+            else 10.0
+        ),
         "model_explicit_temperature_coverage_ok": explicit_coverage_ok,
         "nuclides": rows,
         "interpretation": (

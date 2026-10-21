@@ -58,6 +58,12 @@ def audit_bound_thermal_scattering(
             "sha256": None,
             "actual_hdf5_kernel_loaded": False,
             "requested_temperature_covered": False,
+            "strict_tabulated_temperature_covered": False,
+            "nearest_tabulated_temperature_K": None,
+            "nearest_temperature_offset_K": None,
+            "configured_nearest_temperature_tolerance_K": max(
+                1.0e-6, config.bound_nearest_temperature_tolerance_k
+            ),
             "accepted": False,
             "error": None,
         }
@@ -90,12 +96,19 @@ def audit_bound_thermal_scattering(
                     for data in iter(lambda: stream.read(1024*1024), b""):
                         digest.update(data)
                 row["sha256"] = digest.hexdigest()
-                row["requested_temperature_covered"] = bool(
-                    temperatures[0] - 1e-7 <= temp <= temperatures[-1] + 1e-7
+                nearest = min(temperatures,key=lambda k: abs(k - temp))
+                offset = nearest - temp
+                tol = row["configured_nearest_temperature_tolerance_K"]
+                row["nearest_tabulated_temperature_K"] = nearest
+                row["nearest_temperature_offset_K"] = offset
+                row["strict_tabulated_temperature_covered"] = bool(
+                    temperatures[0] <= temp <= temperatures[-1]
                 )
+                row["requested_temperature_covered"] = abs(offset) <= tol + 1e-9
                 if not row["requested_temperature_covered"]:
                     raise ValueError(
-                        "requested temperature outside evaluated thermal-kernel range"
+                        "requested temperature exceeds explicit OpenMC "
+                        "nearest evaluated thermal-kernel tolerance"
                     )
                 row["accepted"] = True
             except (OSError, KeyError, ValueError, TypeError, AttributeError) as error:
@@ -116,6 +129,14 @@ def audit_bound_thermal_scattering(
             and not row["requested_temperature_covered"]
         ],
         "requested_solid_temperature_K": temp,
+        "openmc_temperature_method": "nearest",
+        "openmc_max_nearest_tolerance_K": max(
+            1.0e-6, config.bound_nearest_temperature_tolerance_k
+        ),
+        "any_evaluated_temperature_approximated": any(
+            row["accepted"] and abs(row["nearest_temperature_offset_K"]) > 1e-6
+            for row in rows
+        ),
         "required_tables": list(requested),
         "tables": rows,
         "interpretation": (
