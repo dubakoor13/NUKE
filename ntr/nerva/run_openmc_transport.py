@@ -18,6 +18,7 @@ from .config import NervaConfig
 from .audit_nuclear_data_temperatures import (
     audit_temperature_coverage,
 )
+from .audit_bound_thermal_scattering import audit_bound_thermal_scattering
 from .geometry import (
     cluster_summary,
     geometry_summary,
@@ -69,6 +70,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hydrogen-density-g-cm3", type=float,
                         help="Uniform OpenMC hydrogen material density for snapshot feedback.")
     parser.add_argument("--photon-transport", action="store_true")
+    parser.add_argument(
+        "--thermal-scattering", choices=("free-gas", "evaluated-bound"),
+        default="free-gas",
+        help="Evaluated bound thermal neutron scattering, or explicit free-gas surrogate.",
+    )
+    parser.add_argument(
+        "--bound-solid-temperature-k", type=float,
+        help="Required temperature for Be, graphite and ZrH evaluated bound kernels.",
+    )
     parser.add_argument(
         "--heating-mesh-dimensions", nargs=3, type=int, default=(48, 48, 24),
         metavar=("NX", "NY", "NZ"),
@@ -162,6 +172,8 @@ def main() -> int:
 
     config = NervaConfig(
         core_rings=args.rings,
+        thermal_scattering_treatment=args.thermal_scattering,
+        bound_solid_temperature_k=args.bound_solid_temperature_k,
         fuel_temperature_k=args.fuel_temperature_k,
         hydrogen_temperature_k=(args.hydrogen_temperature_k if args.hydrogen_temperature_k is not None
                                 else NervaConfig.hydrogen_temperature_k),
@@ -200,6 +212,17 @@ def main() -> int:
 
     cross_sections = Path(report.cross_sections_xml)
     os.environ["OPENMC_CROSS_SECTIONS"] = str(cross_sections)
+    thermal_audit = audit_bound_thermal_scattering(cross_sections, config)
+    (args.output / "thermal_scattering_physics_audit.json").write_text(
+        json.dumps(thermal_audit, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if (config.thermal_scattering_treatment == "evaluated-bound"
+            and not thermal_audit["ready"]):
+        raise RuntimeError(
+            "evaluated bound neutron scattering preflight failed; "
+            "check thermal_scattering_physics_audit.json"
+        )
 
     temperature_audit = audit_temperature_coverage(
         cross_sections=cross_sections,
@@ -255,6 +278,8 @@ def main() -> int:
             "control_drum_angle_deg": config.control_drum_angle_deg,
             "fuel_temperature_k": config.fuel_temperature_k,
             "hydrogen_temperature_k": config.hydrogen_temperature_k,
+            "thermal_scattering_treatment": config.thermal_scattering_treatment,
+            "bound_solid_temperature_k": config.bound_solid_temperature_k,
             "hydrogen_density_g_cm3": config.hydrogen_density_g_cm3,
             "photon_transport": config.photon_transport,
             "heating_mesh_dimension": list(config.heating_mesh_dimension),
