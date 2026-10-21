@@ -57,6 +57,8 @@ class NervaConfig:
     # OpenMC diagnostics / transport controls. These increase observability
     # only; they do not alter enrichment, geometry, or control settings.
     photon_transport: bool = False
+    # Only mesh TALLY discretization: geometry and materials remain unchanged.
+    heating_mesh_dimension: tuple[int, int, int] = (48, 48, 24)
     diagnostic_energy_groups: int = 80
     axial_mesh_bins: int = 96
     entropy_mesh_xy: int = 16
@@ -185,6 +187,21 @@ class NervaConfig:
             raise ValueError("inactive batches must be less than total batches")
         if self.particles < 100:
             raise ValueError("particles should be at least 100")
+        dims = self.heating_mesh_dimension
+        if (
+            not isinstance(dims, (tuple, list))
+            or len(dims) != 3
+            or any(
+                isinstance(dim, bool)
+                or not isinstance(dim, int)
+                or not 4 <= dim <= 256
+                for dim in dims
+            )
+        ):
+            raise ValueError(
+                "heating_mesh_dimension must contain three integers "
+                "between 4 and 256"
+            )
         if self.diagnostic_energy_groups < 8:
             raise ValueError("diagnostic_energy_groups must be >= 8")
         if self.axial_mesh_bins < 8:
