@@ -178,9 +178,9 @@ class NervaConfig:
             or not 0.0 <= self.bound_nearest_temperature_tolerance_k <= 5.0
         ):
             raise ValueError("bound nearest temperature tolerance must be within 0..5 K")
-        if (self.thermal_scattering_treatment == "free-gas"
-                and self.bound_nearest_temperature_tolerance_k != 0.0):
-            raise ValueError("nearest temperature tolerance only applies to evaluated-bound")
+        # Temperature tolerance is also allowed in the free-gas control
+        # so both sides of a controlled neutron-scattering comparison use
+        # exactly the same solver temperature method and material conditions.
         if self.thermal_scattering_treatment not in ("free-gas", "evaluated-bound"):
             raise ValueError(
                 "thermal_scattering_treatment must be 'free-gas' or "
