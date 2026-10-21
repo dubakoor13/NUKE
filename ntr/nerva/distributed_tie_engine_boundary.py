@@ -59,8 +59,6 @@ class DistributedTieEngineBoundaryStep:
     transient_mass_conservation_residual_kg_s: float
     transient_total_energy_conservation_residual_j: float
     transient_momentum_conservation_residual_n: float
-    upstream_pressure_boundary_residual_pa: float
-    downstream_pressure_boundary_residual_pa: float
     transient_flow_matches_steady_engine: bool = False
     full_engine_feedback_converged: bool = False
     external_openmc_transport_executed: bool = False
