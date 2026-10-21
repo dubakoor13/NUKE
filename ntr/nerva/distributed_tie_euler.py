@@ -170,6 +170,61 @@ def _reservoir(
     return rho,0.,u,pressure,t,c,q
 
 
+def _right_open_outflow_ghost(
+    eos: HydrogenEOS, p_static_pa: float,
+    density_interior: float, u_interior: float,
+    velocity_interior: float, p_interior: float,
+    sound_speed_interior: float,
+    backflow_reservoir: tuple[float,float,float,float,float,float,float],
+) -> tuple[float,float,float,float,float,float,float]:
+    """Subsonic outlet: prescribe static P, extrapolate interior entropy.
+
+    A *stationary* hot-header reservoir ghost has a radically different
+    density from an initially cold liquid in the outlet cell. Rusanov
+    diffusion then invents enormous pressure-wave mass flux even for
+    outward flow. At subsonic outflow the incoming characteristic
+    carries STATIC pressure, while the outgoing entropy/flow
+    characteristics originate in the tie interior. Use an isentropic
+    EOS density at external p and the locally extrapolated acoustic
+    velocity v + (p_i-p_b)/(rho_i*c_i).
+
+    If the characteristic estimate indicates reversed inflow, apply
+    the genuine backflow reservoir H2 enthalpy instead. This is a
+    linearized acoustic outlet treatment, not an exact multi-phase
+    characteristic boundary or a validated hot-header junction.
+    """
+    if any(not math.isfinite(x) for x in (
+        p_static_pa,density_interior,u_interior,
+        velocity_interior,p_interior,sound_speed_interior,
+    )):
+        raise ValueError("invalid boundary H2 primitive field")
+    if p_static_pa<=0 or density_interior<=0 or sound_speed_interior<=0:
+        raise ValueError("nonpositive H2 outlet boundary state")
+    jump=p_interior-p_static_pa
+    if abs(jump)<=1e-8*max(1.,p_interior,p_static_pa):
+        jump=0.
+    velocity=velocity_interior+jump/(
+        density_interior*sound_speed_interior
+    )
+    if velocity < -1e-7:
+        return backflow_reservoir
+    entropy=eos.get(
+        "Smass","Dmass",density_interior,"Umass",u_interior
+    )
+    ghost_density=eos.get(
+        "Dmass","P",p_static_pa,"Smass",entropy
+    )
+    ghost_u=eos.get(
+        "Umass","P",p_static_pa,"Smass",entropy
+    )
+    _,temp,sound,quality,_,_= _state_properties(
+        eos,ghost_density,ghost_u,velocity,
+    )
+    return (
+        ghost_density,velocity,ghost_u,p_static_pa,temp,sound,quality
+    )
+
+
 def initial_distributed_tie_state(
     heating: ResolvedHeating, params: DistributedTieParameters,
     initial_pressure_pa: float, initial_specific_enthalpy_j_kg: float,
@@ -283,7 +338,17 @@ def advance_distributed_tie(
                 amax=max(abs(vl)+cl,cr)
                 R=ucv[0];FR=physical[0]
             elif i==nc:
-                rr,vr,ur,pr,tr,cr,qr=right_res
+                # Outflow takes the INTERIOR thermodynamic entropy
+                # and the engine/common-header STATIC pressure.
+                # The hot reservoir enthalpy is used ONLY for real
+                # backflow; otherwise a stationary hot ghost would
+                # produce massive artificial Rusanov density diffusion.
+                rr,vr,ur,pr,tr,cr,qr=_right_open_outflow_ghost(
+                    eos,outlet_pressure_pa,
+                    float(rho[j,-1]),float(internal[j,-1]),
+                    float(vel[j,-1]),float(p[j,-1]),float(c[j,-1]),
+                    right_res,
+                )
                 R=np.array((rr,rr*vr,rr*(ur+0.5*vr*vr)))
                 FR=np.array((rr*vr,rr*vr*vr+pr,
                              rr*vr*(ur+pr/rr+0.5*vr*vr)))
