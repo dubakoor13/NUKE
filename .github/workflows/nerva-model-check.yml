@@ -150,6 +150,9 @@ jobs:
       - name: Validate live LH2 pump head and rotor energy with dual hydrogen manifolds
         run: python -m ntr.nerva.validate_dynamic_pump_shaft
 
+      - name: Validate live warm H2 turbine bleed admission and conservative pump rotor power
+        run: python -m ntr.nerva.validate_dynamic_turbine_admission
+
       - name: Validate real-fluid tie heating and regenerative branch hydraulic fixed point
         run: python -m ntr.nerva.validate_cryogenic_tie_hydraulic_coupling
 
