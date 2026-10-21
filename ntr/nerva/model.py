@@ -48,6 +48,13 @@ def build_model(
     settings.inactive = config.inactive
     settings.particles = config.particles
     settings.photon_transport = config.photon_transport
+    # Bind audited nearest-library tolerance to the actual transport.
+    # Never rely on the default 10 K tolerance for evaluated bound physics.
+    if config.thermal_scattering_treatment == "evaluated-bound":
+        settings.temperature = {
+            "method": "nearest",
+            "tolerance": max(1.0e-6, config.bound_nearest_temperature_tolerance_k),
+        }
 
     half_length = 0.5 * config.active_length_cm
     source_radius = max(0.5, 0.8 * source_region_radius)
