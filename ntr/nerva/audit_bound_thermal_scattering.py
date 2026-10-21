@@ -111,3 +111,33 @@ def audit_bound_thermal_scattering(
             "temperature fields, criticality or any historical reactor benchmark."
         ),
     }
+
+def main() -> int:
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cross-sections", type=Path, default=None)
+    parser.add_argument("--solid-temperature-k", type=float, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    config = NervaConfig(
+        thermal_scattering_treatment="evaluated-bound",
+        bound_solid_temperature_k=args.solid_temperature_k,
+    )
+    report = audit_bound_thermal_scattering(args.cross_sections, config)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2) + "\n")
+    print("Evaluated S(alpha,beta) physical-kernel readiness:", report["ready"])
+    for row in report["tables"]:
+        print(
+            row["table"], "physical HDF5 ready:", row["accepted"],
+            "evaluated T [K]:", row["evaluated_temperatures_K"],
+            "error:", row["error"],
+        )
+    print("Report:", args.output)
+    return 0 if report["ready"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
