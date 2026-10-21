@@ -120,3 +120,38 @@ def analyze_correlated_history(
                     abs(shift) / math.sqrt(variance_of_difference)
                 )
     return output
+
+
+def batch_average_generation_k(
+    k_generation: np.ndarray,
+    *,
+    batches: int,
+    generations_per_batch: int = 1,
+) -> np.ndarray:
+    """Make exactly one per-batch k sample from per-generation estimators.
+
+    OpenMC k_generation can have batches*generations_per_batch values.
+    Dropping the first n_inactive GENERATIONS rather than inactive BATCHES
+    corrupts the active statistical interval when generations_per_batch > 1.
+    """
+    if not isinstance(batches, (int, np.integer)) or batches < 1:
+        raise ValueError("invalid OpenMC batch count")
+    if (not isinstance(generations_per_batch, (int, np.integer))
+            or generations_per_batch < 1):
+        raise ValueError("invalid OpenMC generations-per-batch")
+    values = np.asarray(k_generation, dtype=float)
+    if values.size == 0:
+        return np.asarray([], dtype=float)
+    if (values.ndim == 1
+            and values.size == batches * generations_per_batch):
+        matrix = values.reshape(batches, generations_per_batch)
+    elif values.ndim == 2 and values.shape == (batches, generations_per_batch):
+        matrix = values
+    else:
+        raise ValueError(
+            "OpenMC k_generation shape incompatible with "
+            "batches and generations_per_batch"
+        )
+    if not np.isfinite(matrix).all():
+        raise ValueError("nonfinite OpenMC k_generation")
+    return np.mean(matrix, axis=1)
