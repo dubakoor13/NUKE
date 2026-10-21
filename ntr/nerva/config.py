@@ -48,6 +48,7 @@ class NervaConfig:
     # Existing cold NNDC test library lacks those kernels; free-gas
     # remains explicitly a surrogate, never "NASA validated".
     thermal_scattering_treatment: str = "free-gas"
+    bound_solid_temperature_k: float | None = None
     reflector_density_g_cm3: float = 1.85
     zrc_density_g_cm3: float = 6.5
     graphite_density_g_cm3: float = 1.70
@@ -171,6 +172,17 @@ class NervaConfig:
             raise ValueError(
                 "thermal_scattering_treatment must be 'free-gas' or "
                 "'evaluated-bound'; missing evaluated data cannot be approximated"
+            )
+        if self.bound_solid_temperature_k is not None and (
+            not math.isfinite(self.bound_solid_temperature_k)
+            or self.bound_solid_temperature_k <= 0
+        ):
+            raise ValueError("bound solid temperature must be positive finite K")
+        if (self.thermal_scattering_treatment == "evaluated-bound"
+                and self.bound_solid_temperature_k is None):
+            raise ValueError(
+                "evaluated-bound thermal scattering requires explicit "
+                "bound_solid_temperature_k and matching evaluated S(a,b)"
             )
         if self.fuel_temperature_k is not None and (
             not math.isfinite(self.fuel_temperature_k) or self.fuel_temperature_k <= 0
