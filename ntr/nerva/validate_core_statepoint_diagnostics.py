@@ -39,6 +39,22 @@ def main() -> int:
     assert math.isclose(result["source_entropy_active_window_shift"], 0)
     assert not result["source_convergence_independently_demonstrated"]
     assert not result["historical_nasa_benchmark_validated"]
+    assert result["source_entropy_serial_correlation"]["active_count"] == 40
+    assert result["source_entropy_serial_correlation"]["convergence_proven"] is False
+    assert result["per_batch_keff_serial_correlation"] is None
+
+    # Two generation estimates per batch must be grouped *before*
+    # excluding 20 inactive batches (40 generation records).
+    fake_two_gen = SimpleNamespace(**{
+        **vars(fake),
+        "generations_per_batch": 2,
+        "k_generation": np.array(
+            [0.98, 1.02] * 60,
+        ),
+    })
+    two = summarize_core_statepoint(fake_two_gen)
+    assert two["per_batch_keff_serial_correlation"]["active_count"] == 40
+    assert two["per_batch_keff_serial_correlation"]["convergence_proven"] is False
 
     for changed in (
         {"run_mode": "fixed source"},

@@ -10,6 +10,11 @@ import math
 
 import numpy as np
 
+from .source_history_statistics import (
+    analyze_correlated_history,
+    batch_average_generation_k,
+)
+
 
 def _finite_scalar(value: object, name: str, *, positive: bool = False) -> float:
     try:
@@ -65,6 +70,26 @@ def summarize_core_statepoint(statepoint: object) -> dict:
         else:
             entropy_error = "Too few active entropy samples for two windows"
 
+    entropy_correlation = (
+        analyze_correlated_history(values, inactive=inactive)
+        if values is not None
+        else None
+    )
+    k_history = getattr(statepoint, "k_generation", None)
+    k_correlation = None
+    if k_history is not None:
+        k_batched = batch_average_generation_k(
+            k_history,
+            batches=batches,
+            generations_per_batch=int(
+                getattr(statepoint, "generations_per_batch", 1)
+            ),
+        )
+        if k_batched.size:
+            k_correlation = analyze_correlated_history(
+                k_batched, inactive=inactive
+            )
+
     seeds = getattr(statepoint, "seed", None)
     return {
         "schema_version": 1,
@@ -80,12 +105,16 @@ def summarize_core_statepoint(statepoint: object) -> dict:
         "source_entropy_active_window_shift": drift,
         "source_entropy_latest_window_std": late_spread,
         "source_entropy_note": entropy_error,
+        "source_entropy_serial_correlation": entropy_correlation,
+        "per_batch_keff_serial_correlation": k_correlation,
         "source_convergence_independently_demonstrated": False,
         "historical_nasa_benchmark_validated": False,
         "interpretation": (
             "Descriptive statistical observables from this OpenMC statepoint, "
             "NOT a proof of source convergence, criticality calibration, "
             "reactor design suitability, or historical NASA benchmark agreement. "
-            "Use multiple independent seeds and source/mesh sensitivity studies."
+            "Use multiple independent seeds and source/mesh sensitivity studies. "
+            "Reported autocorrelation time and effective sample count are "
+            "heuristic numerical diagnostics, not uncertainty-certified acceptance."
         ),
     }
