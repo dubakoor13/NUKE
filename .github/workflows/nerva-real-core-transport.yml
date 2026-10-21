@@ -53,6 +53,7 @@ jobs:
               python -m ntr.nerva.validate_real_core_replicas_statistics
               python -m ntr.nerva.run_real_core_replicas \
                 --rings 1 --particles 300 --batches 24 --inactive 8 \
+                --hydrogen-temperature-k 293.6 \
                 --seeds 13007 23011 33013 43019 \
                 --output build/nerva_real_core
             '
