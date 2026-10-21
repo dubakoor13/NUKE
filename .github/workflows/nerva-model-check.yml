@@ -359,6 +359,9 @@ jobs:
       - name: Validate four-seed core neutron absorption and nu-fission reaction ensemble statistics
         run: python -m ntr.nerva.validate_core_reaction_ensemble
 
+      - name: Validate genuine-format disjoint active-generation neutron reaction accounting
+        run: python -m ntr.nerva.validate_core_reaction_history
+
       - name: Validate source-particle population sensitivity statistics and provenance
         run: python -m ntr.nerva.validate_source_population_sensitivity
 
