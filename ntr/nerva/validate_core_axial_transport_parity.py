@@ -73,7 +73,8 @@ def fake_neutron_statepoint(path: Path, *, clip: bool = False,
             tally.create_dataset("results", data=data)
     (path.parent / "geometry.xml").write_text(
         '<geometry><surface type="z-plane" boundary="vacuum" coeffs="-66"/>'
-        '<surface type="z-plane" boundary="vacuum" coeffs="66"/></geometry>',
+        '<surface type="z-plane" boundary="vacuum" coeffs="66"/>'
+        '<surface type="z-cylinder" boundary="vacuum" coeffs="0 0 2"/></geometry>',
         encoding="utf-8",
     )
 
