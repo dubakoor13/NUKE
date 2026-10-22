@@ -74,7 +74,7 @@ def main() -> int:
 
         # Near-unity eigenvalue is NOT sufficient to claim reactor physics.
         for seed,file in zip(seeds,files):
-            fake(file,seed,base=.995)
+            fake(file,seed,base=.9995)
         near=evaluate_criticality_condition([
             read_executed_multiplication(p) for p in files
         ])
@@ -136,7 +136,7 @@ def main() -> int:
         # Actual final HDF5 cannot be swapped while preserving the
         # original SHA256 transport evidence.
         with h5py.File(files[0],"r+") as h:
-            h["k_combined"][0]=0.3
+            h["n_particles"][...]=2999
         reject(audit,"provenance mismatch")
         fake(files[0],seeds[0])
         save()
