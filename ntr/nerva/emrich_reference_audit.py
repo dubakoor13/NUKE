@@ -166,11 +166,28 @@ def audit_real_emrich_pdf(path: Path, *, repo_root: Path) -> dict:
         raise ValueError(
             "PDF chapter headings out of order or conflated with front matter"
         )
+    # Multiple independently located body headings determine the exact
+    # front-matter offset between the 2023 PRINTED page and PDF viewer page.
+    # Never silently apply this offset if evidence is sparse/inconsistent.
+    offsets=[
+        found[str(number)][0]-printed
+        for number,_,printed,_,_ in CHAPTERS
+        if number is not None and printed is not None and found[str(number)]
+    ]
+    offsets_consistent=(len(offsets)>=5 and len(set(offsets))==1)
+    observed_offset=offsets[0] if offsets_consistent else None
     chapters = []
     for num, title, printed, linked, purpose in CHAPTERS:
         key = str(num) if num is not None else "appendix_iii"
         pages = found[key]
         candidates = [p for p in pages if p>=21]
+        inferred=(
+            printed+observed_offset
+            if not candidates and printed is not None and observed_offset is not None
+            else None
+        )
+        if inferred is not None and not (1<=inferred<=len(reader.pages)):
+            raise ValueError("printed-to-PDF offset implies nonexistent source page")
         chapter = {
             "chapter":num if num is not None else "Appendix III",
             "chapter_heading":title,
@@ -178,6 +195,11 @@ def audit_real_emrich_pdf(path: Path, *, repo_root: Path) -> dict:
             "real_repository_pdf_page_candidates_1_based":candidates,
             "first_pdf_page_1_based_if_detected":candidates[0] if candidates else None,
             "page_heading_verified_in_actual_pdf":bool(candidates),
+            "pdf_page_inferred_from_consistent_printed_offset":inferred,
+            "inferred_page_has_extractable_text":(
+                bool(normalized(all_texts[inferred-1])) if inferred else None
+            ),
+            "requires_visual_heading_check":bool(inferred),
             "existing_nuke_files_to_review":list(linked),
             "scientific_validation_use":purpose,
             "chapter_content_and_equations_critically_reviewed":False,
@@ -202,6 +224,10 @@ def audit_real_emrich_pdf(path: Path, *, repo_root: Path) -> dict:
         "critical_chapter_headings_found":sorted(found_critical),
         "critical_chapter_headings_required":sorted(CRITICAL_CHAPTERS),
         "chapter_headings_in_increasing_pdf_order":True,
+        "observed_verified_printed_to_pdf_page_offset":observed_offset,
+        "number_of_independently_consistent_printed_to_pdf_page_offsets":(
+            len(offsets) if offsets_consistent else 0
+        ),
         "chapter_location_crosswalk":chapters,
         "all_referenced_nuke_paths_exist":True,
         "nuke_calculations_benchmarked_against_emrich_exercises":False,
@@ -236,7 +262,8 @@ def main() -> int:
         print(
             "Emrich",row["chapter"],"printed",
             row["publisher_second_edition_printed_start_page"],
-            "actual PDF page",row["first_pdf_page_1_based_if_detected"]
+            "heading-found PDF page",row["first_pdf_page_1_based_if_detected"],
+            "inferred only",row["pdf_page_inferred_from_consistent_printed_offset"]
         )
     print("NERVA historical test-point validation: NOT ESTABLISHED")
     return 0
