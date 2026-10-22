@@ -325,6 +325,8 @@ jobs:
 
       - name: Reject untraceable executed-material nuclear-heating physics
         run: python -m ntr.nerva.validate_executed_material_kerma_qualification
+      - name: Validate native neutron tracklength against physically placed OpenMC materials
+        run: python -m ntr.nerva.validate_real_core_material_transport_support
 
       - name: Validate physical MT901 local-neutron-heating preflight wiring
         run: python -m ntr.nerva.validate_local_heating_preflight
