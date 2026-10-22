@@ -23,6 +23,8 @@ on:
       - 'ntr/nerva/core_reaction_history.py'
       - 'ntr/nerva/core_reaction_estimator_agreement.py'
       - 'ntr/nerva/core_neutron_leakage_history.py'
+      - 'ntr/nerva/core_axial_transport_parity.py'
+      - 'ntr/nerva/validate_core_axial_transport_parity.py'
       - 'ntr/nerva/core_neutron_economy_validation.py'
       - 'ntr/nerva/neutron_economy_uncertainty.py'
       - 'ntr/nerva/validate_neutron_economy_uncertainty.py'
@@ -116,6 +118,7 @@ jobs:
               python -m ntr.nerva.validate_core_reaction_estimator_agreement
               python -m ntr.nerva.validate_core_neutron_leakage_history
               python -m ntr.nerva.validate_core_neutron_economy_validation
+              python -m ntr.nerva.validate_core_axial_transport_parity
               python -m ntr.nerva.validate_neutron_economy_uncertainty
               python -m ntr.nerva.validate_core_fission_yield_energy
               python -m ntr.nerva.validate_nuclear_data
@@ -190,6 +193,14 @@ jobs:
               # independent-seed means; correlated eigenvalue batches are NOT
               # miscounted as independent statistical samples.
               python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/core_neutron_economy_physical_validation.json\")); u=p[\"correlated_independent_seed_uncertainty\"]; assert u[\"independent_seed_count\"]==p[\"independent_seed_count\"]==4; assert u[\"statistics\"]==\"FOUR_INDEPENDENT_OPENMC_SEED_MEANS_CORRELATED_NEUTRON_ECONOMY\"; assert sorted(u[\"seeds\"])==sorted(x[\"seed\"] for x in p[\"per_seed\"]); assert len(u[\"between_seed_sample_covariance\"])==6; assert u[\"maximum_absolute_per_seed_neutron_balance_residual\"]<1e-7; assert u[\"joint_neutron_balance_covariance_standard_error\"]<1e-7; assert not u[\"formal_monte_carlo_confidence_coverage_established\"]; assert not u[\"source_bank_stationarity_validated\"]; print(\"Real HDF5 four-seed correlated neutron-balance and paired-tally uncertainty: PASS; source stationarity NOT established\")"
+              # Cross-check *actual* neutron flux/fission and nu-fission
+              # in two independently binned meshes spanning the SAME
+              # HDF5/geometry physical volume in five disjoint active
+              # windows. Axial reflection asymmetry is observed, not tuned.
+              python -m ntr.nerva.core_axial_transport_parity \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --output /repo/build/nerva_real_core/core_axial_transport_parity.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/core_axial_transport_parity.json\")); assert p[\"verified_genuine_statepoint_checkpoints\"]==20; assert p[\"independent_seed_count\"]==4; assert p[\"disjoint_active_windows_per_seed\"]==5; assert p[\"physical_axial_mesh_reaction_conservation_passed\"]; assert not p[\"source_bank_spatial_stationarity_validated\"]; assert all(0<=w[\"scores\"][\"nu-fission\"][\"axial_mirror_total_variation\"]<=1 for seed in p[\"per_seed\"] for w in seed[\"windows\"]); print(\"REAL neutron 3D-vs-axial transport conservation and source parity diagnostics: PASS (no source-convergence claim)\")"
               python -m ntr.nerva.core_fission_yield_energy \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/core_fission_yield_energy.json
