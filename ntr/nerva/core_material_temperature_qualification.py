@@ -26,7 +26,9 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import numpy as np
+import openmc.data
 
+from .nuclear_data import _library_entries
 from .audit_nuclear_data_temperatures import audit_temperature_coverage
 from .config import NervaConfig
 
@@ -37,6 +39,55 @@ def _sha(path: Path) -> str:
         for chunk in iter(lambda:f.read(1<<20),b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _load_executed_bound_kernel_evidence(index: Path, materials: list[dict]) -> dict:
+    """Load real evaluated S(alpha,beta,T) HDF5 for actually exported materials.
+
+    Kernel *names* in materials.xml are not evidence that the referenced
+    thermal evaluations exist or cover the physical material temperature.
+    This is a read-only audit: no synthetic kernels or data interpolation.
+    """
+    requested = {
+        name for material in materials
+        for name in material["bound_thermal_scattering_tables"]
+    }
+    if not requested:
+        return {}
+    found = {}
+    for entry in _library_entries(index):
+        if entry.data_type != "thermal":
+            continue
+        for name in entry.materials:
+            if name in requested:
+                if name in found:
+                    raise ValueError("duplicate evaluated bound thermal kernel: " + name)
+                found[name] = entry
+    result = {}
+    for name in sorted(requested):
+        entry = found.get(name)
+        if entry is None or not entry.file_exists:
+            raise ValueError("missing evaluated bound thermal HDF5 kernel: " + name)
+        file = Path(entry.resolved_path)
+        try:
+            data = openmc.data.ThermalScattering.from_hdf5(file)
+            if data.name != name:
+                raise ValueError("thermal HDF5 kernel identity mismatch: " + name)
+            values = data.kTs.values() if isinstance(data.kTs, dict) else data.kTs
+            temperatures = sorted(
+                float(kT / openmc.data.K_BOLTZMANN) for kT in values
+            )
+            if (not temperatures or any(
+                    not math.isfinite(t) or t <= 0 for t in temperatures
+            ) or len(temperatures) != len(set(temperatures))):
+                raise ValueError("invalid evaluated bound kernel temperatures: " + name)
+        except (OSError, KeyError, TypeError, AttributeError) as exc:
+            raise ValueError("unloadable evaluated bound thermal HDF5: " + name) from exc
+        result[name] = {
+            "temperatures_K": temperatures,
+            "hdf5_sha256": _sha(file),
+        }
+    return result
 
 
 def _executed_material_inventory(path: Path) -> list[dict]:
@@ -108,6 +159,7 @@ def evaluate_executed_neutron_temperatures(
     setting: dict,
     *,
     nearest_tolerance_K: float=10.,
+    evaluated_bound_kernels: dict[str, dict] | None = None,
 ) -> dict:
     """Independent scored physical-material vs evaluated HDF5 data reduction.
 
@@ -118,6 +170,8 @@ def evaluate_executed_neutron_temperatures(
             or nearest_tolerance_K<=0 or nearest_tolerance_K>20):
         raise ValueError("invalid physical neutron temperature audit tolerance")
     rows=[]
+    evaluated_bound_kernels = ({} if evaluated_bound_kernels is None
+                               else evaluated_bound_kernels)
     total_explicit=0
     missing_nuclide=set()
     all_within=True
@@ -154,6 +208,38 @@ def evaluate_executed_neutron_temperatures(
             or "zirconium-hydride" in name
         )
         has_bound=bool(material["bound_thermal_scattering_tables"])
+        bound_evidence=[]
+        for table in material["bound_thermal_scattering_tables"]:
+            kernel=evaluated_bound_kernels.get(table)
+            grid=kernel.get("temperatures_K",[]) if isinstance(kernel,dict) else []
+            valid_grid=(
+                isinstance(grid,list) and bool(grid)
+                and all(isinstance(t,(int,float)) and math.isfinite(t) and t>0
+                        for t in grid)
+                and grid==sorted(set(grid))
+            )
+            nearest=(min(grid,key=lambda t:abs(t-temp))
+                     if valid_grid and temp is not None else None)
+            covered=(
+                nearest is not None
+                and grid[0] <= temp <= grid[-1]
+                and abs(nearest-temp) <= nearest_tolerance_K+1e-9
+            )
+            bound_evidence.append({
+                "table":table,
+                "evaluated_hdf5_sha256": (
+                    kernel.get("hdf5_sha256") if isinstance(kernel,dict) else None
+                ),
+                "evaluated_temperatures_K":grid if valid_grid else [],
+                "nearest_evaluated_temperature_K":nearest,
+                "executed_material_temperature_covered":bool(covered),
+            })
+        missing_bound=(
+            (is_moderator and not has_bound)
+            or (has_bound and not all(
+                x["executed_material_temperature_covered"] for x in bound_evidence
+            ))
+        )
         row={**material,
             "evaluated_isotope_temperature_evidence":isotopes,
             "all_explicit_isotope_temperatures_covered":(
@@ -162,7 +248,8 @@ def evaluate_executed_neutron_temperatures(
                         for r in isotopes)
             ),
             "moderator_or_reflector_solid_declared":is_moderator,
-            "bound_scattering_qualification_missing":is_moderator and not has_bound,
+            "evaluated_bound_kernel_temperature_evidence":bound_evidence,
+            "bound_scattering_qualification_missing":missing_bound,
         }
         rows.append(row)
     if missing_nuclide:
@@ -197,7 +284,8 @@ def evaluate_executed_neutron_temperatures(
             x for flag,x in (
                 (not all_explicit, "physical material temperatures missing from executed XML"),
                 (not multi_temperature_any, "only one evaluated nuclear-data temperature per isotope"),
-                (not all_solid_bound, "bound moderator/reflector scattering physics not qualified"),
+                (not all_solid_bound,
+                 "bound solid scattering HDF5 data or executed material temperature not qualified"),
                 (not all_within, "requested explicit material temperatures not covered by evaluated data"),
                 (setting.get("solver_temperature_default_is_implicit") is True,
                  "implicit OpenMC temperature default not physically certified"),
@@ -293,8 +381,12 @@ def audit_actual_core_neutron_temperature(summary_path: Path,
     nuclides={name for material in primary for name in material["nuclides"]}
     if set(temperatures)!=nuclides:
         raise ValueError("actually exported reactor nuclides differ from evaluated data audit")
-    physical=evaluate_executed_neutron_temperatures(primary,temperatures,settings)
+    bound_kernels=_load_executed_bound_kernel_evidence(index,primary)
+    physical=evaluate_executed_neutron_temperatures(
+        primary,temperatures,settings,evaluated_bound_kernels=bound_kernels
+    )
     physical.update({
+        "evaluated_bound_kernel_hdf5_evidence":bound_kernels,
         "analysis":"ACTUAL_OPENMC_NUCLEAR_DATA_AND_EXPORTED_MATERIAL_TEMPERATURE_QUALIFICATION",
         "real_transport_summary_sha256":_sha(path),
         "cross_sections_xml_sha256":_sha(index),
