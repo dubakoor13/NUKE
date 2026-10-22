@@ -1,0 +1,57 @@
+name: NERVA actual externally driven fission-neutron branching (cold core)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nerva-source-driven-fission.yml'
+      - 'ntr/nerva/fixed_source_fission_branching.py'
+      - 'ntr/nerva/run_fixed_source_fission_branching.py'
+      - 'ntr/nerva/validate_fixed_source_fission_branching.py'
+      - 'ntr/nerva/run_fixed_source_core.py'
+      - 'ntr/nerva/fixed_source_core_physics.py'
+      - 'ntr/nerva/model.py'
+      - 'ntr/nerva/tallies.py'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  genuine-branching:
+    name: Independent four-seed non-eigenvalue fission neutron balance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Obtain official real OpenMC 0.15.3 and evaluated NNDC nuclear data
+        run: docker pull openmc/openmc:v0.15.3
+      - name: Execute both actual nonbranching and fission-daughter neutron transport modes
+        run: |
+          set -euo pipefail
+          mkdir -p build/nerva_fission_branching
+          docker run --rm --cpus=2 --memory=6g \
+            -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert openmc.__version__ == \"0.15.3\"; assert not openmc.__file__.startswith(\"/repo/\")"
+              openmc --version
+              test -f "$OPENMC_CROSS_SECTIONS"
+              python -m ntr.nerva.validate_fixed_source_core_physics
+              python -m ntr.nerva.validate_fixed_source_fission_branching
+              python -m ntr.nerva.run_fixed_source_fission_branching \
+                --seeds 13007 23011 33013 43019 \
+                --particles 3000 --batches 30 \
+                --output /repo/build/nerva_fission_branching
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_fission_branching/real_source_driven_fission_multiplication_validation.json\")); assert p[\"independent_seed_count\"]==4; assert p[\"mean_fission_daughter_neutrons_per_external_source\"]>0; assert p[\"four_seed_analog_whole_core_neutron_conservation_verified\"]; assert all(x[\"fission_daughters_enabled\"][\"absolute_balance_residual\"]<1e-6 for x in p[\"seed_modes\"]); assert not p[\"reactor_criticality_or_power_normalization_qualified\"]; print(\"Real fission-on and fission-off neutron source conservation: PASS; criticality NOT inferred\")"
+            '
+      - name: Retain real OpenMC statepoints, physical XML, source-balance metrics and execution logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerva-actual-fission-branching-four-seed-evidence
+          path: build/nerva_fission_branching/
+          if-no-files-found: warn
+          retention-days: 14
