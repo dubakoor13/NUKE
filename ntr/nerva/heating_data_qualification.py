@@ -17,6 +17,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 import h5py
 import numpy as np
@@ -189,6 +190,117 @@ def evaluate_heating_scores(mesh: dict[str, float],
     }
 
 
+
+def _verify_complete_core_heating_tally_support(state, statepoint_path: Path) -> dict:
+    """Verify actual tally filters span every material and the vacuum core.
+
+    Identically clipped mesh and material tallies can agree numerically
+    without representing whole-reactor heating. The executed statepoint
+    filter/mesh HDF5 and exported geometry/material XML must independently
+    identify a whole-core domain before any heat-deposition closure is used.
+    """
+    folder = statepoint_path.parent
+    geometry_path = folder / "geometry.xml"
+    materials_path = folder / "materials.xml"
+    if not geometry_path.is_file() or not materials_path.is_file():
+        raise ValueError("executed OpenMC geometry/material XML required for whole-core heating")
+
+    materials_root = ET.parse(materials_path).getroot()
+    if materials_root.tag != "materials":
+        raise ValueError("invalid executed OpenMC materials XML")
+    material_ids = [int(node.attrib["id"])
+                    for node in materials_root.findall("material")]
+    if (len(material_ids) < 2 or any(i <= 0 for i in material_ids)
+            or len(set(material_ids)) != len(material_ids)):
+        raise ValueError("invalid executed OpenMC physical material IDs")
+
+    geometry_root = ET.parse(geometry_path).getroot()
+    if geometry_root.tag != "geometry":
+        raise ValueError("invalid executed OpenMC geometry XML")
+    vacuum = [node for node in geometry_root.findall("surface")
+              if node.attrib.get("boundary") == "vacuum"]
+    radial = [node for node in vacuum
+              if node.attrib.get("type") == "z-cylinder"]
+    axial = [node for node in vacuum
+             if node.attrib.get("type") == "z-plane"]
+    if len(radial) != 1 or len(axial) != 2 or len(vacuum) != 3:
+        raise ValueError("unsupported actual core vacuum boundary for whole-core mesh")
+    cx, cy, radius = (float(x) for x in radial[0].attrib["coeffs"].split())
+    zlimits = sorted(float(node.attrib["coeffs"]) for node in axial)
+    if (not all(math.isfinite(v) for v in (cx, cy, radius, *zlimits))
+            or radius <= 0 or zlimits[1] <= zlimits[0]):
+        raise ValueError("invalid executed OpenMC core vacuum surfaces")
+
+    tallies = state["tallies"]
+    def named_tally(name: str):
+        found = [g for g in tallies.values()
+                 if isinstance(g, h5py.Group) and "name" in g
+                 and _name_bytes(g["name"][()]) == name]
+        if len(found) != 1:
+            raise ValueError("missing or duplicate heating tally filter identity: " + name)
+        return found[0]
+
+    def resolved_filter(tally, expected_type: str):
+        filters = np.asarray(tally["filters"][()], dtype=np.int64)
+        if (filters.shape != (1,) or int(tally["n_filters"][()]) != 1):
+            raise ValueError("heating tally must have exactly one complete-core filter")
+        key = "filter " + str(int(filters[0]))
+        f = tallies["filters"].get(key)
+        if f is None or _name_bytes(f["type"][()]) != expected_type:
+            raise ValueError("incorrect physical heating tally filter type")
+        if _name_bytes(tally["estimator"][()]) != "tracklength":
+            raise ValueError("inconsistent heating tally estimators")
+        if [_name_bytes(x) for x in tally["nuclides"][()]] != ["total"]:
+            raise ValueError("heating tallies must represent total nuclide population")
+        return f
+
+    mesh_tally = named_tally(REQUIRED_MESH)
+    mesh_filter = resolved_filter(mesh_tally, "mesh")
+    mesh_id = int(mesh_filter["bins"][()])
+    mesh = tallies["meshes"].get("mesh " + str(mesh_id))
+    if (mesh is None or _name_bytes(mesh["name"][()]) != "nerva_core_mesh"
+            or _name_bytes(mesh["type"][()]) != "regular"):
+        raise ValueError("heating mesh must reference the executed whole-core regular mesh")
+    dims = np.asarray(mesh["dimension"][()], dtype=np.int64)
+    lower = np.asarray(mesh["lower_left"][()], dtype=float)
+    upper = np.asarray(mesh["upper_right"][()], dtype=float)
+    if (dims.shape != (3,) or np.any(dims <= 0)
+            or lower.shape != (3,) or upper.shape != (3,)
+            or not np.isfinite(lower).all() or not np.isfinite(upper).all()
+            or np.any(upper <= lower)):
+        raise ValueError("invalid executed whole-core tally mesh geometry")
+    n_mesh = int(np.prod(dims))
+    if (int(mesh_filter["n_bins"][()]) != n_mesh
+            or int(mesh_tally["results"].shape[0]) != n_mesh):
+        raise ValueError("heating mesh tally does not resolve its reported physical bins")
+    # Full bounding box of the radial vacuum cylinder and axial end planes.
+    eps = 1e-7
+    if (lower[0] > cx - radius + eps or upper[0] < cx + radius - eps
+            or lower[1] > cy - radius + eps or upper[1] < cy + radius - eps
+            or lower[2] > zlimits[0] + eps or upper[2] < zlimits[1] - eps):
+        raise ValueError("heating tally mesh clips the executed physical core")
+
+    material_tally = named_tally(REQUIRED_MATERIAL)
+    material_filter = resolved_filter(material_tally, "material")
+    covered = [int(v) for v in np.asarray(material_filter["bins"][()]).reshape(-1)]
+    if (len(covered) != len(set(covered)) or set(covered) != set(material_ids)
+            or int(material_filter["n_bins"][()]) != len(material_ids)
+            or int(material_tally["results"].shape[0]) != len(material_ids)):
+        raise ValueError("material heating tally does not include every executed material")
+
+    return {
+        "whole_core_heating_tally_spatial_and_material_coverage_verified": True,
+        "executed_mesh_dimensions": dims.tolist(),
+        "executed_mesh_lower_left_cm": lower.tolist(),
+        "executed_mesh_upper_right_cm": upper.tolist(),
+        "executed_vacuum_radial_radius_cm": radius,
+        "executed_vacuum_axial_bounds_cm": zlimits,
+        "executed_material_ids_in_heating_tally": sorted(covered),
+        "executed_geometry_xml_sha256": digest(geometry_path),
+        "executed_materials_xml_sha256": digest(materials_path),
+    }
+
+
 def inspect_statepoint(path: Path) -> dict:
     path = Path(path)
     if not path.is_file():
@@ -218,12 +330,16 @@ def inspect_statepoint(path: Path) -> dict:
             tallies, REQUIRED_MATERIAL, ("heating", "heating-local"),
             expected_active_batches=active,
         )
+        whole_core_support = _verify_complete_core_heating_tally_support(
+            state, path
+        )
         report = evaluate_heating_scores(
             mesh, material,
             mesh_local_sem_upper_bound=mesh_sem["heating-local"],
             material_local_sem_upper_bound=material_sem["heating-local"],
         )
     report.update({
+        **whole_core_support,
         "source": "OPENMC_FORMAT_EIGENVALUE_HDF5_CONTENT",
         "executable_origin_proven_by_hdf5_contents_alone": False,
         "statepoint_sha256": digest(path),
