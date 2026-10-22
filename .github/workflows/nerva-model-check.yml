@@ -388,6 +388,9 @@ jobs:
       - name: Validate measured neutron fate leakage, absorption and banked-fission economy
         run: python -m ntr.nerva.validate_core_neutron_economy_validation
 
+      - name: Validate independent-seed correlated neutron balance and paired estimators
+        run: python -m ntr.nerva.validate_neutron_economy_uncertainty
+
       - name: Validate fission-event and neutron-yield energy-group physical integrity
         run: python -m ntr.nerva.validate_core_fission_yield_energy
 
