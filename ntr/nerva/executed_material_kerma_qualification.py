@@ -1,7 +1,8 @@
 """Trace genuine evaluated MT901 local KERMA coverage to EXECUTED OpenMC materials.
 
-Read the actual four-seed eigenvalue statepoints, their exported materials.xml,
-and an independently HDF5-inspected evaluated-neutron MT901 inventory. Numerical
+Read actual four-seed eigenvalue statepoints, exported materials.xml AND
+geometry.xml including root-universe and hex-lattice reachability, and an
+independently HDF5-inspected evaluated-neutron MT901 inventory. Numerical
 MT901 absence is a physical *data-coverage blocker*, never zero physical heat.
 
 No reactor parameter changes, fabricated KERMA, energy substitution, thermal
@@ -48,6 +49,93 @@ def _real_materials(path: Path) -> list[dict]:
     return sorted(materials, key=lambda x: x["material_id"])
 
 
+
+def _real_reachable_material_ids(geometry_xml: Path, defined_ids: set[int]) -> tuple[set[int], dict[int, list[str]]]:
+    """Trace actual OpenMC root universe through lattice/filled-universe graph.
+
+    Merely listing a material in materials.xml does NOT put it in a reactor:
+    material-filled cells must be reachable from the geometric root. Count
+    geometric *placements*, not all defined nuclear material resources.
+    An unsupported graph is rejected, never silently counted as physical.
+    """
+    root = ET.parse(geometry_xml).getroot()
+    if root.tag != "geometry":
+        raise ValueError("not executed OpenMC geometry.xml")
+    cells_by_universe: dict[int, list[ET.Element]] = {}
+    for c in root.findall("cell"):
+        u = int(c.attrib["universe"])
+        if u <= 0:
+            raise ValueError("nonphysical OpenMC universe ID")
+        cells_by_universe.setdefault(u, []).append(c)
+    if not cells_by_universe:
+        raise ValueError("no executed OpenMC geometry cells")
+
+    lattices: dict[int, set[int]] = {}
+    referenced_universes: set[int] = set()
+    for lattice in root:
+        if lattice.tag not in ("hex_lattice", "lattice"):
+            continue
+        lid = int(lattice.attrib["id"])
+        if lid in lattices:
+            raise ValueError("duplicate OpenMC lattice")
+        universes = lattice.findtext("universes")
+        if not universes or not universes.strip():
+            raise ValueError("empty lattice universe placement")
+        members = {int(x) for x in universes.split()}
+        outside = lattice.findtext("outer")
+        if outside is not None:
+            members.add(int(outside.strip()))
+        if any(x <= 0 for x in members):
+            raise ValueError("invalid hex-lattice universe placement")
+        lattices[lid] = members
+        referenced_universes.update(members)
+    for cells in cells_by_universe.values():
+        for c in cells:
+            if "fill" in c.attrib:
+                fill = int(c.attrib["fill"])
+                if fill not in lattices:
+                    referenced_universes.add(fill)
+    roots = set(cells_by_universe) - referenced_universes
+    if len(roots) != 1:
+        raise ValueError("cannot uniquely identify physical root OpenMC universe")
+
+    reachable: set[int] = set()
+    active_mids: set[int] = set()
+    named_cells: dict[int, list[str]] = {}
+    pending = list(roots)
+    while pending:
+        universe = pending.pop()
+        if universe in reachable:
+            continue
+        if universe not in cells_by_universe:
+            raise ValueError("reachable OpenMC geometry universe undefined")
+        reachable.add(universe)
+        for c in cells_by_universe[universe]:
+            has_material = "material" in c.attrib
+            has_fill = "fill" in c.attrib
+            if has_material and has_fill:
+                raise ValueError("OpenMC cell has both material and universe fill")
+            if has_material:
+                value = c.attrib["material"]
+                if value == "void":
+                    continue
+                ids = [int(x) for x in value.split()]
+                if not ids or any(mid <= 0 or mid not in defined_ids for mid in ids):
+                    raise ValueError("executed geometry references missing physical material")
+                for mid in ids:
+                    active_mids.add(mid)
+                    named_cells.setdefault(mid, []).append(c.attrib.get("name", ""))
+            if has_fill:
+                fill = int(c.attrib["fill"])
+                if fill in lattices:
+                    pending.extend(lattices[fill])
+                else:
+                    pending.append(fill)
+    if not active_mids:
+        raise ValueError("actual OpenMC root contains no physically instantiated materials")
+    return active_mids, {mid: sorted(set(names)) for mid,names in named_cells.items()}
+
+
 def evaluate_executed_core_mt901(summary_file: Path, inventory_file: Path) -> dict:
     summary_file = Path(summary_file)
     inventory_file = Path(inventory_file)
@@ -91,6 +179,8 @@ def evaluate_executed_core_mt901(summary_file: Path, inventory_file: Path) -> di
         raise ValueError("requires >=4 separately executed OpenMC seeds")
     seen_seeds = set()
     executed = None
+    declared = None
+    reachable_ids = None
     physical_xmls = []
     for run in runs:
         seed = run.get("seed")
@@ -104,13 +194,29 @@ def evaluate_executed_core_mt901(summary_file: Path, inventory_file: Path) -> di
         xml = statepoint.parent / "materials.xml"
         if not xml.is_file():
             raise ValueError("missing executed OpenMC materials XML")
+        geometry = statepoint.parent / "geometry.xml"
+        if not geometry.is_file():
+            raise ValueError("missing executed OpenMC geometry XML")
         materials = _real_materials(xml)
+        mids = {m["material_id"] for m in materials}
+        active_ids, cell_names = _real_reachable_material_ids(geometry, mids)
+        actual = [
+            {**m, "reachable_executed_cells": cell_names[m["material_id"]]}
+            for m in materials if m["material_id"] in active_ids
+        ]
         if executed is None:
-            executed = materials
-        elif materials != executed:
-            raise ValueError("physical material/nuclide definitions changed across seeds")
-        physical_xmls.append({"seed": seed, "materials_xml_sha256": _sha(xml),
-                              "statepoint_sha256": run["statepoint_sha256"]})
+            executed = actual
+            declared = materials
+            reachable_ids = active_ids
+        elif materials != declared or actual != executed:
+            raise ValueError("physical material/nuclide or geometry reachability changed across seeds")
+        physical_xmls.append({
+            "seed": seed,
+            "materials_xml_sha256": _sha(xml),
+            "geometry_xml_sha256": _sha(geometry),
+            "actual_reachable_material_ids": sorted(active_ids),
+            "statepoint_sha256": run["statepoint_sha256"],
+        })
 
     required_nuclides = sorted({n for mat in executed for n in mat["nuclides"]})
     missing_isotopes = [n for n in required_nuclides if n not in index]
@@ -143,6 +249,13 @@ def evaluate_executed_core_mt901(summary_file: Path, inventory_file: Path) -> di
         "transport_summary_sha256": _sha(summary_file),
         "real_independent_seed_count": len(seen_seeds),
         "physical_material_count": len(executed),
+        "declared_material_count": len(declared),
+        "uninstantiated_declared_material_count": len(declared) - len(executed),
+        "executed_reachable_material_ids": sorted(reachable_ids),
+        "uninstantiated_declared_materials": [
+            {"material_id":m["material_id"],"material_name":m["material_name"]}
+            for m in declared if m["material_id"] not in reachable_ids
+        ],
         "required_executed_neutron_nuclide_count": len(required_nuclides),
         "required_executed_neutron_nuclides_missing_index": missing_isotopes,
         "material_regions_without_complete_evaluated_mt901": [
@@ -155,8 +268,9 @@ def evaluate_executed_core_mt901(summary_file: Path, inventory_file: Path) -> di
         "thermal_power_normalization_allowed": False,
         "nasa_nerva_core_energy_deposition_validated": False,
         "interpretation": (
-            "Computed against the actual OpenMC material XML and actual HDF5 "
-            "inventory, not a configuration surrogate. Missing evaluated "
+            "Computed against actual root-reachable OpenMC geometry and material "
+            "XML plus HDF5 isotope inventory, never counting defined-but-unused "
+            "materials as instantiated core physics. Missing evaluated "
             "MT901 prevents neutron-only local energy-deposition physics; "
             "zeros in heating-local tallies are NOT evidence of zero actual "
             "reactor power. A nonzero MT901 in some future library is necessary "
@@ -175,7 +289,9 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n",
                            encoding="utf-8")
-    print("Executed physical materials:", report["physical_material_count"])
+    print("Defined nuclear materials:", report["declared_material_count"])
+    print("Actually instantiated geometry materials:", report["physical_material_count"])
+    print("Defined but unreachable materials:",report["uninstantiated_declared_materials"])
     print("Actual evaluated neutron isotope inputs:",
           report["required_executed_neutron_nuclide_count"])
     print("Material regions without physical local-neutron KERMA:",
