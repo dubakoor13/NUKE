@@ -180,7 +180,7 @@ def evaluate_criticality_condition(runs: list[dict], *,
         "cold_model_may_be_claimed_a_critical_operating_nerva_core":False,
         "nuclear_reactor_physical_criticality_validated":False,
         "fission_source_stationarity_demonstrated":False,
-        "openmc_statistical_sem_is_geneaologically_independent":False,
+        "openmc_statistical_sem_is_genealogically_independent":False,
         "interpretation":(
             "Four actually executed cold neutron-only eigenvalue calculations "
             "and the native collision/absorption/tracklength estimators were "
