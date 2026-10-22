@@ -24,6 +24,8 @@ on:
       - 'ntr/nerva/core_reaction_estimator_agreement.py'
       - 'ntr/nerva/core_neutron_leakage_history.py'
       - 'ntr/nerva/core_neutron_economy_validation.py'
+      - 'ntr/nerva/neutron_economy_uncertainty.py'
+      - 'ntr/nerva/validate_neutron_economy_uncertainty.py'
       - 'ntr/nerva/validate_core_neutron_economy_validation.py'
       - 'ntr/nerva/core_fission_yield_energy.py'
       - 'ntr/nerva/core_material_temperature_qualification.py'
@@ -114,6 +116,7 @@ jobs:
               python -m ntr.nerva.validate_core_reaction_estimator_agreement
               python -m ntr.nerva.validate_core_neutron_leakage_history
               python -m ntr.nerva.validate_core_neutron_economy_validation
+              python -m ntr.nerva.validate_neutron_economy_uncertainty
               python -m ntr.nerva.validate_core_fission_yield_energy
               python -m ntr.nerva.validate_nuclear_data
               python -m ntr.nerva.validate_core_material_temperature_qualification
