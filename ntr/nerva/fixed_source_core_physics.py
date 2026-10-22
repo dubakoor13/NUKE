@@ -101,7 +101,10 @@ def read_fixed_source_balance(statepoint: Path) -> dict:
             raise ValueError("requires actual neutron-only fixed-source OpenMC statepoint")
         seed = int(h["seed"][()])
         batch = int(h["current_batch"][()])
-        inactive = int(h["n_inactive"][()])
+        # Native fixed-source OpenMC omits n_inactive entirely because
+        # there is no iterative fission-source equilibration. The exported
+        # settings.xml has independently required inactive=0.
+        inactive = int(h["n_inactive"][()]) if "n_inactive" in h else 0
         n = int(h["n_realizations"][()])
         pop = int(h["n_particles"][()])
         if seed < 1 or n < 2 or inactive != 0 or n != batch or pop < 100:
