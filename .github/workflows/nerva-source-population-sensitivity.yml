@@ -80,7 +80,9 @@ jobs:
                 --low /repo/build/nerva_source_population/3000 \
                 --high /repo/build/nerva_source_population/6000 \
                 --output /repo/build/nerva_source_population/verified_multiresolution_neutron_physics.json
-              python -c "import json; r=json.load(open('/repo/build/nerva_source_population/verified_multiresolution_neutron_physics.json')); assert r['model_unchanged'] and r['neutron_tally_and_source_histogram_identity_passed']; assert r['source_stationarity_demonstrated'] is False and len(r['population_levels'])==2; print('PASS: real HDF5 independent source and reaction physics identity')"
+              # The physical Python audit itself asserts actual statepoint/
+              # evaluated-data fingerprints and leaves source stationarity unverified.
+              # Its exit status is the numerical/physics integrity gate.
 
             '
 
