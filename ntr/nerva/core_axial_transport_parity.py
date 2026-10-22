@@ -131,16 +131,26 @@ def read_axial_transport_checkpoint(path: Path) -> dict:
     geom = path.parent / "geometry.xml"
     try:
         root = ET.parse(geom).getroot()
-        planes = sorted(
-            float(node.attrib["coeffs"]) for node in root.findall("surface")
-            if node.attrib.get("type") == "z-plane"
-            and node.attrib.get("boundary") == "vacuum"
-        )
+        vacuum = [node for node in root.findall("surface")
+                  if node.attrib.get("boundary") == "vacuum"]
+        planes = sorted(float(node.attrib["coeffs"]) for node in vacuum
+                        if node.attrib.get("type") == "z-plane")
+        radial = [node for node in vacuum
+                  if node.attrib.get("type") == "z-cylinder"]
+        cylinder = ([float(v) for v in radial[0].attrib["coeffs"].split()]
+                    if len(radial) == 1 else [])
     except (OSError, ET.ParseError, KeyError, ValueError) as exc:
         raise ValueError("missing executed OpenMC axial vacuum geometry") from exc
     if (root.tag != "geometry" or len(planes) != 2
-            or not np.allclose(planes, (lo[2], hi[2]), rtol=0, atol=1e-7)):
-        raise ValueError("neutron mesh fails to cover both physical axial vacuum planes")
+            or len(radial) != 1 or len(vacuum) != 3
+            or len(cylinder) != 3
+            or not np.isfinite(cylinder).all() or cylinder[2] <= 0
+            or not np.allclose(planes, (lo[2], hi[2]), rtol=0, atol=1e-7)
+            or lo[0] > cylinder[0] - cylinder[2] + 1e-7
+            or hi[0] < cylinder[0] + cylinder[2] - 1e-7
+            or lo[1] > cylinder[1] - cylinder[2] + 1e-7
+            or hi[1] < cylinder[1] + cylinder[2] - 1e-7):
+        raise ValueError("neutron meshes fail to cover physical axial/radial vacuum geometry")
     return {
         "seed": seed, "batch": batch, "inactive": inactive,
         "active": active, "particles": population, "sha256": _sha(path),
