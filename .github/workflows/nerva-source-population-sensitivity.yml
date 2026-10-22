@@ -6,6 +6,11 @@ on:
       - '.github/workflows/nerva-source-population-sensitivity.yml'
       - 'ntr/nerva/source_population_sensitivity.py'
       - 'ntr/nerva/validate_source_population_sensitivity.py'
+      - 'ntr/nerva/population_source_physics.py'
+      - 'ntr/nerva/validate_population_source_physics.py'
+      - 'ntr/nerva/core_reaction_ensemble.py'
+      - 'ntr/nerva/source_resolution_audit.py'
+      - 'ntr/nerva/source_energy_audit.py'
       - 'ntr/nerva/run_real_core_replicas.py'
       - 'ntr/nerva/source_bank_trajectory.py'
   workflow_dispatch: {}
@@ -49,6 +54,7 @@ jobs:
               openmc --version
               test -f "$OPENMC_CROSS_SECTIONS"
               python -m ntr.nerva.validate_source_population_sensitivity
+              python -m ntr.nerva.validate_population_source_physics
 
               echo "REAL neutron source population sensitivity: 3000"
               python -m ntr.nerva.run_real_core_replicas \
@@ -70,6 +76,12 @@ jobs:
                 --low /repo/build/nerva_source_population/3000 \
                 --high /repo/build/nerva_source_population/6000 \
                 --output /repo/build/nerva_source_population/comparison.json
+              python -m ntr.nerva.population_source_physics \
+                --low /repo/build/nerva_source_population/3000 \
+                --high /repo/build/nerva_source_population/6000 \
+                --output /repo/build/nerva_source_population/verified_multiresolution_neutron_physics.json
+              python -c "import json; r=json.load(open('/repo/build/nerva_source_population/verified_multiresolution_neutron_physics.json')); assert r['model_unchanged'] and r['neutron_tally_and_source_histogram_identity_passed']; assert r['source_stationarity_demonstrated'] is False and len(r['population_levels'])==2; print('PASS: real HDF5 independent source and reaction physics identity')"
+
             '
 
       - name: Preserve actual evaluated-data and OpenMC statepoint evidence
