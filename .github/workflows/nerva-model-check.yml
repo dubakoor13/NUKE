@@ -365,6 +365,9 @@ jobs:
       - name: Validate source-particle population sensitivity statistics and provenance
         run: python -m ntr.nerva.validate_source_population_sensitivity
 
+      - name: Validate real-format population-dependent fission source and neutron reaction physics identities
+        run: python -m ntr.nerva.validate_population_source_physics
+
       - name: Validate OpenMC source-relaxation inactive-batch numerical integrity (synthetic)
         run: python -m ntr.nerva.validate_inactive_source_sensitivity
 
