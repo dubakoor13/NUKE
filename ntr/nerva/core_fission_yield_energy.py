@@ -58,9 +58,7 @@ def _tally(tallies, name: str, estimator: str, filters: tuple[str,...],
             or int(t["n_realizations"][()])!=active
             or int(t["n_filters"][()])!=len(filters)):
         raise ValueError("wrong OpenMC neutron estimator or active tally realization count")
-    ids=list(map(int,np.atleast_1d(t["filters"][()])))
-    if not filters:
-        ids=[]
+    ids=(list(map(int,np.atleast_1d(t["filters"][()]))) if filters else [])
     if len(ids)!=len(filters):
         raise ValueError("unexpected physical material and incident-energy filters")
     bins=[]
