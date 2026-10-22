@@ -80,6 +80,67 @@ def main()->int:
         assert not result["hot_operating_temperature_neutron_physics_qualified"]
         assert not result["nasa_nerva_historical_criticality_or_hot_core_benchmark_validated"]
 
+        # Named S(alpha,beta) assignments are NOT evidence of a real,
+        # temperature-qualified evaluated HDF5 scattering kernel.
+        warm=deepcopy(mats)
+        for row in warm:
+            row["explicit_material_temperature_K"]=600.
+        warm[0]["bound_thermal_scattering_tables"]=["c_Graphite"]
+        warm[3]["bound_thermal_scattering_tables"]=["c_Be"]
+        warm[4]["bound_thermal_scattering_tables"]=["c_Graphite"]
+        warm[5]["bound_thermal_scattering_tables"]=["c_Zr_in_ZrH"]
+        multi={key:[600.,900.] for key in temp}
+        physical_setting={"solver_temperature_default_is_implicit":False}
+        named_only=evaluate_executed_neutron_temperatures(
+            warm,multi,physical_setting
+        )
+        assert not named_only["hot_operating_temperature_neutron_physics_qualified"]
+        assert not named_only["thermal_solid_bound_scattering_qualifications_present"]
+
+        verified={
+            name:{"temperatures_K":[600.,900.],"hdf5_sha256":"fixture"}
+            for name in ("c_Graphite","c_Be","c_Zr_in_ZrH")
+        }
+        covered=evaluate_executed_neutron_temperatures(
+            warm,multi,physical_setting,evaluated_bound_kernels=verified
+        )
+        assert covered["thermal_solid_bound_scattering_qualifications_present"]
+        assert covered["hot_operating_temperature_neutron_physics_qualified"]
+        assert not covered["nasa_nerva_historical_criticality_or_hot_core_benchmark_validated"]
+        assert all(
+            t["executed_material_temperature_covered"]
+            for mat in covered["physical_materials"]
+            for t in mat["evaluated_bound_kernel_temperature_evidence"]
+        )
+        missing_kernel=deepcopy(verified)
+        missing_kernel.pop("c_Be")
+        result=evaluate_executed_neutron_temperatures(
+            warm,multi,physical_setting,evaluated_bound_kernels=missing_kernel
+        )
+        assert not result["hot_operating_temperature_neutron_physics_qualified"]
+        assert not result["thermal_solid_bound_scattering_qualifications_present"]
+        wrong_temperature=deepcopy(verified)
+        wrong_temperature["c_Graphite"]["temperatures_K"]=[700.,900.]
+        result=evaluate_executed_neutron_temperatures(
+            warm,multi,physical_setting,evaluated_bound_kernels=wrong_temperature
+        )
+        assert not result["hot_operating_temperature_neutron_physics_qualified"]
+        assert not result["thermal_solid_bound_scattering_qualifications_present"]
+
+        # A temperature just outside the tabulated data domain remains
+        # unqualified, even if it is closer than the nearest-table tolerance.
+        not_bracketed=deepcopy(multi)
+        not_bracketed["U235"]=[604.,900.]
+        outside=evaluate_executed_neutron_temperatures(
+            warm,not_bracketed,physical_setting,evaluated_bound_kernels=verified
+        )
+        assert not outside["hot_operating_temperature_neutron_physics_qualified"]
+        assert not outside["all_explicit_material_temperatures_inside_nearest_evaluated_tolerance"]
+        fuel_u235=[x for x in outside["physical_materials"][0][
+            "evaluated_isotope_temperature_evidence"] if x["nuclide"]=="U235"][0]
+        assert fuel_u235["explicit_temperature_within_evaluated_range"] is False
+        assert fuel_u235["explicit_temperature_nearest_table_covered"] is False
+
         wrong=deepcopy(mats)
         wrong[0]["explicit_material_temperature_K"]=1250.0
         report=evaluate_executed_neutron_temperatures(wrong,temp,settings)
