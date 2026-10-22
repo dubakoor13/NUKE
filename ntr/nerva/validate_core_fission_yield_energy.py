@@ -46,7 +46,7 @@ def _file(path, seed, batch, rates, *, corrupt_type=False,
         for ident,name,values in (
             (81,"material",mats),
             (82,"energy",energy_edges),
-            *((83,"material",[19,21]),) if bad_materials else ()
+            *(((83,"material",[19,21]),) if bad_materials else ())
         ):
             f=filt.create_group(f"filter {ident}")
             f.create_dataset("type",data=np.bytes_(name))
