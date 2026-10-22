@@ -135,6 +135,26 @@ def _executed_material_inventory(path: Path) -> list[dict]:
     return sorted(output,key=lambda row:row["material_id"])
 
 
+def _root_reachable_temperature_materials(
+    defined: list[dict], geometry_xml: Path
+) -> tuple[list[dict], set[int]]:
+    """Count only physically placed OpenMC isotope/thermal environments.
+
+    Reachability is the executed root-universe and filled-hex-lattice
+    graph, not the presence of a material entry in materials.xml.
+    """
+    ids, cells = _real_reachable_material_ids(
+        Path(geometry_xml), {m["material_id"] for m in defined}
+    )
+    placed = [
+        {**m, "reachable_executed_cells": cells[m["material_id"]]}
+        for m in defined if m["material_id"] in ids
+    ]
+    if len(placed) != len(ids) or not placed:
+        raise ValueError("root-reachable neutron material inventory inconsistent")
+    return placed, ids
+
+
 def _settings_temperature(path: Path) -> dict:
     root=ET.parse(path).getroot()
     if root.tag != "settings":
@@ -352,7 +372,7 @@ def evaluate_executed_neutron_temperatures(
         ],
         "nasa_nerva_historical_criticality_or_hot_core_benchmark_validated":False,
         "interpretation":(
-            "This reads actually EXECUTED reactor materials and settings, and "
+            "This reads only root-reachable EXECUTED reactor materials and settings, and "
             "the genuine evaluated HDF5 neutron temperature inventory. "
             "Missing material temperatures mean solver defaults, NOT "
             "a qualified fuel/reflector temperature field. Cold neutron "
@@ -417,13 +437,7 @@ def audit_actual_core_neutron_temperature(summary_path: Path,
         ).hexdigest())
         material=_executed_material_inventory(statepoint.parent/"materials.xml")
         geometry=statepoint.parent/"geometry.xml"
-        active_ids,physical_cells=_real_reachable_material_ids(
-            geometry,{m["material_id"] for m in material}
-        )
-        placed=[
-            {**m,"reachable_executed_cells":physical_cells[m["material_id"]]}
-            for m in material if m["material_id"] in active_ids
-        ]
+        placed,active_ids=_root_reachable_temperature_materials(material,geometry)
         physical_settings=_settings_temperature(settings_xml)
         if primary is None:
             primary=placed
