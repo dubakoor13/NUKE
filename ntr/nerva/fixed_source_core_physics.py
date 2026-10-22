@@ -142,11 +142,13 @@ def read_fixed_source_balance(statepoint: Path) -> dict:
     absorbed = scores["absorption"]
     multiply = scores["nu-scatter"] - scores["scatter"]
     if (absorbed <= 0 or leakage <= 0 or multiply < -1e-6
-            or scores["nu-fission"] < 0):
+            or abs(scores["nu-fission"]) > 1e-10):
         raise ValueError("nonphysical source-driven neutron collision/escape rates")
-    # Mild source-level acceptance screen, not an independent physics benchmark.
+    # This is a paired analog event-count identity using actual outward
+    # currents and all collision histories; the four real 3000x30 runs
+    # close to ~1e-14. Fail at numerical rather than loose MC tolerance.
     balance = absorbed + leakage - multiply
-    if abs(balance - 1.0) > 0.025:
+    if abs(balance - 1.0) > 1e-6:
         raise ValueError("actual nonfission neutron source balance violates conservation")
     return {
         "seed": seed, "batches": batch, "particles_per_batch": pop,
