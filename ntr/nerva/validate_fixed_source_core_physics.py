@@ -35,7 +35,7 @@ def fixture(where: Path, *, wrong_leakage: bool = False,
         h.attrs["tallies_present"] = 1
         for k, value in (("run_mode", np.bytes_("fixed source")),
                          ("seed", 13007), ("current_batch", 30),
-                         ("n_inactive", 0), ("n_realizations", 30),
+                         ("n_realizations", 30),
                          ("n_particles", 3000)):
             h.create_dataset(k, data=value)
         group = h.create_group("tallies")
