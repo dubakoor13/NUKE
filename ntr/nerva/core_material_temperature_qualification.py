@@ -192,7 +192,9 @@ def evaluate_executed_neutron_temperatures(
                 distinct.add(float(t))
             nearest=(min(available,key=lambda t:abs(t-temp))
                      if available and temp is not None else None)
-            close=(abs(nearest-temp)<=nearest_tolerance_K+1e-9
+            within_range=(available[0]<=temp<=available[-1]
+                          if available and temp is not None else None)
+            close=(within_range and abs(nearest-temp)<=nearest_tolerance_K+1e-9
                    if nearest is not None else None)
             if temp is not None and close is not True:
                 all_within=False
@@ -200,6 +202,7 @@ def evaluate_executed_neutron_temperatures(
                 "nuclide":name,
                 "evaluated_temperatures_K":available,
                 "nearest_evaluated_temperature_K":nearest,
+                "explicit_temperature_within_evaluated_range":within_range,
                 "explicit_temperature_nearest_table_covered":close,
             })
         name=material["material_name"].lower()
