@@ -65,7 +65,7 @@ def main() -> int:
     assert changed["classical_split_chain_rhat_lower_bounded_at_one"]>1.1
     reject(lambda:evaluate_split_chain_k(sequences[:3]),"at least four")
     reject(lambda:evaluate_split_chain_k(sequences[:3]+[sequences[3][:70]]),"matched")
-    reject(lambda:evaluate_split_chain_k([np.ones(100)]*4),"constant")
+    reject(lambda:evaluate_split_chain_k([np.ones(100)]*4),"unidentifiable")
     reject(lambda:evaluate_split_chain_k(
         [np.r_[sequences[0][:-1],np.nan]]+sequences[1:]),"matched")
 
@@ -124,7 +124,7 @@ def main() -> int:
         fake(early,seeds[0],40)
         with h5py.File(early,"r+") as h:
             h["current_batch"][...]=41
-        reject(audit,"checkpoint identity mismatch")
+        reject(audit,"invalid real OpenMC eigenvalue")
         fake(early,seeds[0],40)
         with h5py.File(early,"r+") as h:
             h["k_generation"][3]=np.nan
