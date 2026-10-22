@@ -14,6 +14,8 @@ from .tallies import build_tallies
 def build_model(
     config: NervaConfig | None = None,
     assembly: str = "core",
+    *,
+    eigenvalue_entropy_mesh: bool = True,
 ) -> openmc.Model:
     """Construct a NERVA-derived core, cluster, mixed core, or full reactor assembly."""
     if config is None:
@@ -69,23 +71,24 @@ def build_model(
 
     # Shannon source-entropy mesh for eigenvalue source-convergence
     # diagnostics. This changes observability, not reactor design.
-    entropy_mesh = openmc.RegularMesh(name="nerva_entropy_mesh")
-    entropy_mesh.dimension = (
-        config.entropy_mesh_xy,
-        config.entropy_mesh_xy,
-        config.entropy_mesh_z,
-    )
-    entropy_mesh.lower_left = (
-        -source_region_radius,
-        -source_region_radius,
-        -half_length,
-    )
-    entropy_mesh.upper_right = (
-        source_region_radius,
-        source_region_radius,
-        half_length,
-    )
-    settings.entropy_mesh = entropy_mesh
+    if eigenvalue_entropy_mesh:
+        entropy_mesh = openmc.RegularMesh(name="nerva_entropy_mesh")
+        entropy_mesh.dimension = (
+            config.entropy_mesh_xy,
+            config.entropy_mesh_xy,
+            config.entropy_mesh_z,
+        )
+        entropy_mesh.lower_left = (
+            -source_region_radius,
+            -source_region_radius,
+            -half_length,
+        )
+        entropy_mesh.upper_right = (
+            source_region_radius,
+            source_region_radius,
+            half_length,
+        )
+        settings.entropy_mesh = entropy_mesh
 
     if config.tally_rel_err_trigger is not None:
         settings.trigger_active = True

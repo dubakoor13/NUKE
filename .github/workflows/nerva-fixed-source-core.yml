@@ -1,0 +1,56 @@
+name: NERVA genuine fixed-source neutron attenuation (cold core)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nerva-fixed-source-core.yml'
+      - 'ntr/nerva/fixed_source_core_physics.py'
+      - 'ntr/nerva/run_fixed_source_core.py'
+      - 'ntr/nerva/validate_fixed_source_core_physics.py'
+      - 'ntr/nerva/model.py'
+      - 'ntr/nerva/geometry.py'
+      - 'ntr/nerva/materials.py'
+      - 'ntr/nerva/tallies.py'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  fixed-source-actual-transport:
+    name: Independently seeded OpenMC neutron attenuation without fission daughters
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull official OpenMC 0.15.3 and evaluated NNDC neutron data
+        run: docker pull openmc/openmc:v0.15.3
+      - name: Execute actual physical neutron transport across the unmodified cold core
+        run: |
+          set -euo pipefail
+          mkdir -p build/nerva_fixed_source
+          docker run --rm --cpus=2 --memory=6g \
+            -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\"); print(openmc.__version__)"
+              openmc --version
+              test -f "$OPENMC_CROSS_SECTIONS"
+              python -m ntr.nerva.validate_fixed_source_core_physics
+              python -m ntr.nerva.run_fixed_source_core \
+                --seeds 13007 23011 33013 43019 \
+                --particles 3000 --batches 30 \
+                --output /repo/build/nerva_fixed_source
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_fixed_source/genuine_fixed_source_core_neutron_balance.json\")); assert p[\"seed_count\"] == 4; assert p[\"fixed_external_source_replaces_cloned_eigenvalue_source\"]; assert p[\"fission_daughter_transport_disabled_NOT_PHYSICAL_REACTOR_OPERATION\"]; assert all(x[\"absolute_balance_error\"]<1e-6 for x in p[\"per_seed\"]); assert not p[\"reactor_k_eff_inferred_from_fixed_source\"]; print(\"Observed fixed-source neutron fate conserved; NOT a critical NERVA reactor\")"
+            '
+      - name: Retain real statepoints and evaluated neutron-data audit on failure or success
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerva-physical-fixed-source-neutron-evidence
+          path: build/nerva_fixed_source/
+          if-no-files-found: warn
+          retention-days: 14
