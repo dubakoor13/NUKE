@@ -218,9 +218,6 @@ def main() -> int:
         reject(lambda:audit_real_ensemble(summary),"source population/batches")
         mock_statepoint(paths[0],local=0.,seed=seeds[0])
         write_summary()
-        reject(lambda:audit_real_ensemble(
-            Path(tmp)/"not_present.json"
-        ), "not_present" if False else "unreachable") if False else None
         # Tampering with persisted statepoint must invalidate provenance.
         with h5py.File(paths[0],"r+") as h:
             h["n_particles"][...]=2000
