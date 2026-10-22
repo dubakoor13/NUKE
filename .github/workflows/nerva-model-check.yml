@@ -323,6 +323,9 @@ jobs:
       - name: Validate evaluated MT901 temperature-resolved local KERMA numerical arrays
         run: python -m ntr.nerva.validate_kerma_coverage
 
+      - name: Reject untraceable executed-material nuclear-heating physics
+        run: python -m ntr.nerva.validate_executed_material_kerma_qualification
+
       - name: Validate physical MT901 local-neutron-heating preflight wiring
         run: python -m ntr.nerva.validate_local_heating_preflight
 
