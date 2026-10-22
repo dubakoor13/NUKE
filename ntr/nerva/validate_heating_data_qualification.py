@@ -6,13 +6,14 @@ eigenvalue statepoint in the separate four-seed transport workflow.
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import tempfile
 
 import h5py
 import numpy as np
 
 from .heating_data_qualification import (
-    evaluate_heating_scores, inspect_statepoint,
+    evaluate_heating_scores, inspect_statepoint, audit_real_ensemble, digest,
 )
 
 
@@ -25,15 +26,17 @@ def reject(action, word):
         raise AssertionError("physically invalid heating accepted: " + word)
 
 
-def mock_statepoint(path: Path, *, local: float) -> None:
+def mock_statepoint(path: Path, *, local: float, seed: int = 13007,
+                    particles: int = 3000) -> None:
     with h5py.File(path, "w") as h:
         h.attrs["filetype"] = np.bytes_("statepoint")
         h.attrs["photon_transport"] = 0
         h.attrs["tallies_present"] = 1
         h.create_dataset("run_mode", data=np.bytes_("eigenvalue"))
-        h.create_dataset("seed", data=13007)
+        h.create_dataset("seed", data=seed)
         h.create_dataset("current_batch", data=60)
         h.create_dataset("n_inactive", data=20)
+        h.create_dataset("n_particles", data=particles)
         ts = h.create_group("tallies")
         for i, (name, scores, values) in enumerate((
             ("nerva_3d_neutronics", ["heating","heating-local","kappa-fission"],
@@ -157,6 +160,68 @@ def main() -> int:
         with h5py.File(file,"r+") as h:
             h.attrs["photon_transport"] = 1
         reject(lambda:inspect_statepoint(file),"neutron-only")
+
+        # Fully executed OpenMC HDF5 is checked in real transport CI. The
+        # following forged HDF5s ONLY test the numerical audit's rejection
+        # logic; no synthetic result can certify genuine reactor physics.
+        paths = [Path(tmp)/f"seed_{seed}.h5" for seed in
+                 (13007,23011,33013,43019)]
+        seeds = (13007,23011,33013,43019)
+        summary = Path(tmp)/"fake_summary.json"
+        def write_summary():
+            summary.write_text(json.dumps({
+                "execution":"ACTUAL_OPENMC_TRANSPORT",
+                "assembly":"core",
+                "batches":60,"inactive_batches":20,
+                "particles_per_generation":3000,
+                "runs":[{
+                    "seed":seed,"statepoint_path":str(path),
+                    "statepoint_sha256":digest(path),
+                } for seed,path in zip(seeds,paths)],
+            }),encoding="utf-8")
+
+        for seed,path in zip(seeds,paths):
+            mock_statepoint(path,local=0.0,seed=seed)
+        write_summary()
+        real_format_zero = audit_real_ensemble(summary)
+        assert real_format_zero["exactly_zero_local_deposition_moments_in_every_seed"]
+        assert real_format_zero["ensemble_local_heat_deposition_evidence"] == (
+            "ZERO_LOCAL_HEAT_DEPOSITION_IN_ALL_REAL_SEEDS"
+        )
+        assert real_format_zero["independent_seed_local_heating_mean_eV_per_source"] == 0.
+        assert real_format_zero["independent_seed_local_heating_sem_eV_per_source"] == 0.
+        assert real_format_zero["all_runs_have_identical_executed_source_settings"]
+        assert not real_format_zero["thermal_power_normalization_allowed"]
+
+        for seed,path in zip(seeds,paths):
+            mock_statepoint(path,local=700000.,seed=seed)
+        write_summary()
+        statistically_resolved = audit_real_ensemble(summary)
+        assert statistically_resolved["all_real_statepoints_have_usable_neutron_local_heating"]
+        assert statistically_resolved["ensemble_local_heat_deposition_evidence"] == (
+            "POSITIVE_LOCAL_HEATING_BUT_CORE_PHYSICS_UNQUALIFIED"
+        )
+        assert not statistically_resolved["thermal_power_normalization_allowed"]
+        assert statistically_resolved["executed_active_batches"]==40
+
+        mock_statepoint(paths[0],local=0.,seed=seeds[0])
+        write_summary()
+        mixed = audit_real_ensemble(summary)
+        assert mixed["inconsistent_zero_and_nonzero_local_deposition_across_seeds"]
+        assert mixed["ensemble_local_heat_deposition_evidence"] == (
+            "INCONSISTENT_ZERO_AND_NONZERO_LOCAL_HEATING_ACROSS_SEEDS"
+        )
+        assert not mixed["thermal_power_normalization_allowed"]
+
+        mock_statepoint(paths[0],local=0.,seed=seeds[0],particles=2000)
+        write_summary()
+        reject(lambda:audit_real_ensemble(summary),"source population/batches")
+        mock_statepoint(paths[0],local=0.,seed=seeds[0])
+        write_summary()
+        # Tampering with persisted statepoint must invalidate provenance.
+        with h5py.File(paths[0],"r+") as h:
+            h["n_particles"][...]=2000
+        reject(lambda:audit_real_ensemble(summary),"source identity/hash")
 
     print("NERVA neutron-local deposition numerical QA: PASS")
     print("  synthetic fixtures only; real HDF5 integration is separate")
