@@ -344,6 +344,9 @@ jobs:
       - name: Validate HDF5 spatial fission-source bank time/seed statistics (synthetic)
         run: python -m ntr.nerva.validate_source_bank_convergence
 
+      - name: Validate actual neutron emission direction and spatial-clone numerics (synthetic)
+        run: python -m ntr.nerva.validate_source_direction_physics_audit
+
       - name: Validate time-resolved actual-source-bank trajectory numerics (synthetic)
         run: python -m ntr.nerva.validate_source_bank_trajectory
 
