@@ -371,6 +371,9 @@ jobs:
       - name: Validate fission-event and neutron-yield energy-group physical integrity
         run: python -m ntr.nerva.validate_core_fission_yield_energy
 
+      - name: Validate executed OpenMC material temperatures against evaluated-neutron data (fail closed)
+        run: python -m ntr.nerva.validate_core_material_temperature_qualification
+
       - name: Validate source-particle population sensitivity statistics and provenance
         run: python -m ntr.nerva.validate_source_population_sensitivity
 
