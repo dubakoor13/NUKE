@@ -189,7 +189,7 @@ jobs:
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --inventory /repo/build/nerva_real_core/evaluated_kerma_inventory.json \
                 --output /repo/build/nerva_real_core/executed_material_kerma_qualification.json
-              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/executed_material_kerma_qualification.json\")); assert p[\"defined_material_count\"]==9; assert p[\"physical_material_count\"]==4; assert p[\"uninstantiated_declared_material_count\"]==5; assert p[\"executed_reachable_material_ids\"]==[19,20,21,22]; assert p[\"required_executed_neutron_nuclide_count\"]==13; assert len(p[\"material_regions_without_complete_evaluated_mt901\"])==4; assert not p[\"thermal_power_normalization_allowed\"]; print(\"REAL executed OpenMC geometry: 4 of 9 declared materials, 13 active nuclides lacking evaluated local MT901\")"
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/executed_material_kerma_qualification.json\")); assert p[\"declared_material_count\"]==9; assert p[\"physical_material_count\"]==4; assert p[\"uninstantiated_declared_material_count\"]==5; assert p[\"executed_reachable_material_ids\"]==[19,20,21,22]; assert p[\"required_executed_neutron_nuclide_count\"]==13; assert len(p[\"material_regions_without_complete_evaluated_mt901\"])==4; assert not p[\"thermal_power_normalization_allowed\"]; print(\"REAL executed OpenMC geometry: 4 of 9 declared materials, 13 active nuclides lacking evaluated local MT901\")"
 
             '
 
