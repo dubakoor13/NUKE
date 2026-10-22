@@ -92,7 +92,7 @@ def inspect_energy_statepoint(path: Path, *, fission_daughters: bool) -> dict:
                 or not np.isfinite(edges).all() or np.any(np.diff(edges)<=0)
                 or not np.allclose([edges[0],edges[-1]],
                                    [ENERGY_LIMITS_EV[0],ENERGY_LIMITS_EV[-1]],atol=1e-12,rtol=1e-13)
-                or all(abs(edges-x)>1e-11 for x in ENERGY_LIMITS_EV[1:3])
+                or any(not np.any(np.isclose(edges,x,rtol=1e-12,atol=0)) for x in ENERGY_LIMITS_EV[1:3])
                 or en_score.shape[0]!=len(mat_id)*groups
                 or mat_score.shape[0]!=len(mat_id)):
             raise ValueError("wrong executed material or energy-bin provenance")
@@ -114,8 +114,8 @@ def inspect_energy_statepoint(path: Path, *, fission_daughters: bool) -> dict:
             reference=spatial["scores"][score]["axial_and_3d_integral_per_external_source"]
             _equal(np.array([full]),np.array([reference]),"whole-core mesh vs neutron energy "+score)
         specials = {}
-        for name,expected in (("nerva_fuel_spectrum","fuel"),
-                              ("nerva_hydrogen_spectrum","hydrogen")):
+        for name,expected in (("nerva_fuel_spectrum","conceptual (U,Zr)C-graphite surrogate"),
+                              ("nerva_hydrogen_spectrum","hydrogen coolant")):
             t,labels,values=_tally(tallies,name,n)
             f0,f1=_filters(tallies,t,("material","energy"))
             mid=np.asarray(f0["bins"][()],dtype=int).reshape(-1)
@@ -131,7 +131,7 @@ def inspect_energy_statepoint(path: Path, *, fission_daughters: bool) -> dict:
                        energy[matches[0],:,en_labels.index(score)],
                        "material energy vs nested "+name+" "+score)
             spectra=grouped["flux"][matches[0]]
-            specials[expected]={
+            specials["fuel" if name=="nerva_fuel_spectrum" else "hydrogen"]={
                 "material_id":int(mid[0]),
                 "flux_integral_per_external_source":float(spectra.sum()),
                 "incident_energy_spectrum_fractions":
