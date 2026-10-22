@@ -13,6 +13,8 @@ on:
       - 'ntr/nerva/source_phase_space_audit.py'
       - 'ntr/nerva/core_reaction_ensemble.py'
       - 'ntr/nerva/core_reaction_history.py'
+      - 'ntr/nerva/core_reaction_estimator_agreement.py'
+      - 'ntr/nerva/validate_core_reaction_estimator_agreement.py'
       - 'ntr/nerva/validate_core_reaction_history.py'
       - 'ntr/nerva/validate_core_reaction_ensemble.py'
       - 'ntr/nerva/validate_source_phase_space_audit.py'
@@ -81,6 +83,7 @@ jobs:
               python -m ntr.nerva.validate_source_phase_space_audit
               python -m ntr.nerva.validate_core_reaction_ensemble
               python -m ntr.nerva.validate_core_reaction_history
+              python -m ntr.nerva.validate_core_reaction_estimator_agreement
               python -m ntr.nerva.validate_heating_data_qualification
               python -m ntr.nerva.run_real_core_replicas \
                 --rings 3 --particles 3000 --batches 120 --inactive 30 \
@@ -105,6 +108,9 @@ jobs:
               python -m ntr.nerva.core_reaction_history \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/core_reaction_history.json
+              python -m ntr.nerva.core_reaction_estimator_agreement \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --output /repo/build/nerva_real_core/core_reaction_estimator_agreement.json
               python -m ntr.nerva.heating_data_qualification \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/heating_data_qualification.json
