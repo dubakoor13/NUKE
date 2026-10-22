@@ -88,9 +88,13 @@ def main()->int:
         warm[0]["bound_thermal_scattering_tables"]=["c_Graphite"]
         warm[3]["bound_thermal_scattering_tables"]=["c_Be"]
         warm[4]["bound_thermal_scattering_tables"]=["c_Graphite"]
-        warm[5]["bound_thermal_scattering_tables"]=["c_Zr_in_ZrH"]
+        warm[5]["bound_thermal_scattering_tables"]=["c_H_in_ZrH","c_Zr_in_ZrH"]
         multi={key:[600.,900.] for key in temp}
-        physical_setting={"solver_temperature_default_is_implicit":False}
+        physical_setting={
+            "solver_temperature_default_is_implicit":False,
+            "temperature_selection_method_from_xml":"nearest",
+            "explicit_nearest_tolerance_K":1.,
+        }
         named_only=evaluate_executed_neutron_temperatures(
             warm,multi,physical_setting
         )
@@ -99,19 +103,65 @@ def main()->int:
 
         verified={
             name:{"temperatures_K":[600.,900.],"hdf5_sha256":"fixture"}
-            for name in ("c_Graphite","c_Be","c_Zr_in_ZrH")
+            for name in ("c_Graphite","c_Be","c_H_in_ZrH","c_Zr_in_ZrH")
         }
         covered=evaluate_executed_neutron_temperatures(
             warm,multi,physical_setting,evaluated_bound_kernels=verified
         )
-        assert covered["thermal_solid_bound_scattering_qualifications_present"]
-        assert covered["hot_operating_temperature_neutron_physics_qualified"]
+        # Complete HDF5 temperatures do not certify mixed (U,Zr)C/graphite
+        # fuel: graphite phase fractions within the solid are unknown.
+        assert not covered["thermal_solid_bound_scattering_qualifications_present"]
+        assert not covered["hot_operating_temperature_neutron_physics_qualified"]
+        assert not covered["mixed_fuel_graphite_phase_fractions_verified"]
+        assert any("heterogeneous fuel" in r for r in covered["qualifier_reasons"])
+        assert covered["executed_nearest_temperature_selector_qualified"]
+        assert covered["effective_nearest_temperature_tolerance_K"]==1.
         assert not covered["nasa_nerva_historical_criticality_or_hot_core_benchmark_validated"]
         assert all(
             t["executed_material_temperature_covered"]
             for mat in covered["physical_materials"]
             for t in mat["evaluated_bound_kernel_temperature_evidence"]
         )
+        # Counterfactual synthetic homogeneous fuel checks that the phase
+        # gate is not a global hardcoded rejection. It is NOT reactor data.
+        homogeneous=deepcopy(warm)
+        homogeneous[0]["material_name"]="synthetic homogeneous fuel fixture"
+        homogeneous[0]["bound_thermal_scattering_tables"]=[]
+        qualified=evaluate_executed_neutron_temperatures(
+            homogeneous,multi,physical_setting,evaluated_bound_kernels=verified
+        )
+        assert qualified["hot_operating_temperature_neutron_physics_qualified"]
+        assert qualified["mixed_fuel_graphite_phase_fractions_verified"]
+        assert not qualified["nasa_nerva_historical_criticality_or_hot_core_benchmark_validated"]
+
+        incomplete_phase=deepcopy(homogeneous)
+        incomplete_phase[5]["bound_thermal_scattering_tables"]=["c_Zr_in_ZrH"]
+        bad_phase=evaluate_executed_neutron_temperatures(
+            incomplete_phase,multi,physical_setting,evaluated_bound_kernels=verified
+        )
+        assert not bad_phase["hot_operating_temperature_neutron_physics_qualified"]
+        assert bad_phase["physical_materials"][5]["bound_phase_table_assignment_matches"] is False
+
+        # A Python-side loose tolerance cannot override the actual
+        # executed settings.xml <temperature><tolerance> value.
+        near=deepcopy(multi)
+        near["U235"]=[599.,900.]
+        strict=deepcopy(physical_setting)
+        strict["explicit_nearest_tolerance_K"]=0.25
+        rejected=evaluate_executed_neutron_temperatures(
+            homogeneous,near,strict,evaluated_bound_kernels=verified
+        )
+        assert not rejected["hot_operating_temperature_neutron_physics_qualified"]
+        assert rejected["effective_nearest_temperature_tolerance_K"]==0.25
+        assert not rejected["all_explicit_material_temperatures_inside_nearest_evaluated_tolerance"]
+        unknown_selector=deepcopy(physical_setting)
+        unknown_selector["temperature_selection_method_from_xml"]="interpolation"
+        rejected=evaluate_executed_neutron_temperatures(
+            homogeneous,multi,unknown_selector,evaluated_bound_kernels=verified
+        )
+        assert not rejected["executed_nearest_temperature_selector_qualified"]
+        assert not rejected["hot_operating_temperature_neutron_physics_qualified"]
+
         missing_kernel=deepcopy(verified)
         missing_kernel.pop("c_Be")
         result=evaluate_executed_neutron_temperatures(
@@ -178,6 +228,12 @@ def main()->int:
         ET.ElementTree(xml2).write(material_path)
         reject(lambda:_executed_material_inventory(material_path),"duplicate")
 
+        setting.write_text(
+            "<settings><run_mode>eigenvalue</run_mode>"
+            "<temperature><method>nearest</method><tolerance>nan</tolerance>"
+            "</temperature></settings>"
+        )
+        reject(lambda:_settings_temperature(setting),"nonphysical neutron transport temperature tolerance")
         setting.write_text("<settings><run_mode>fixed source</run_mode></settings>")
         reject(lambda:_settings_temperature(setting),"neutron-only eigenvalue")
 

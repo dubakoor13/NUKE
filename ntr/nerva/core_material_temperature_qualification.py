@@ -29,6 +29,7 @@ import numpy as np
 import openmc.data
 
 from .nuclear_data import _library_entries
+from .materials import EVALUATED_BOUND_THERMAL_TABLES
 from .audit_nuclear_data_temperatures import audit_temperature_coverage
 from .config import NervaConfig
 
@@ -143,12 +144,19 @@ def _settings_temperature(path: Path) -> dict:
     default=None if temp is None else temp.findtext("default")
     tol=None if temp is None else temp.findtext("tolerance")
     numeric=None if default is None else float(default)
+    tolerance=None if tol is None else float(tol)
     if numeric is not None and (not math.isfinite(numeric) or numeric<=0):
         raise ValueError("nonphysical neutron transport default temperature")
+    if tolerance is not None and (
+        not math.isfinite(tolerance) or tolerance<=0
+    ):
+        raise ValueError("nonphysical neutron transport temperature tolerance")
+    if method not in (None,"nearest","interpolation"):
+        raise ValueError("unsupported executed OpenMC neutron temperature method")
     return {
         "explicit_openmc_settings_default_temperature_K":numeric,
         "temperature_selection_method_from_xml":method,
-        "explicit_nearest_tolerance_K":None if tol is None else float(tol),
+        "explicit_nearest_tolerance_K":tolerance,
         "solver_temperature_default_is_implicit":default is None,
     }
 
@@ -169,6 +177,16 @@ def evaluate_executed_neutron_temperatures(
     if (not material_list or not math.isfinite(nearest_tolerance_K)
             or nearest_tolerance_K<=0 or nearest_tolerance_K>20):
         raise ValueError("invalid physical neutron temperature audit tolerance")
+    method=setting.get("temperature_selection_method_from_xml")
+    runtime_tolerance=setting.get("explicit_nearest_tolerance_K")
+    valid_nearest=(
+        method=="nearest" and isinstance(runtime_tolerance,(int,float))
+        and not isinstance(runtime_tolerance,bool)
+        and math.isfinite(runtime_tolerance) and 0<runtime_tolerance<=20
+    )
+    # A desired tolerance in a Python configuration is NOT proof of the
+    # selector actually executed by the neutron-transport executable.
+    effective_tolerance=min(nearest_tolerance_K,float(runtime_tolerance)) if valid_nearest else nearest_tolerance_K
     rows=[]
     evaluated_bound_kernels = ({} if evaluated_bound_kernels is None
                                else evaluated_bound_kernels)
@@ -194,7 +212,7 @@ def evaluate_executed_neutron_temperatures(
                      if available and temp is not None else None)
             within_range=(available[0]<=temp<=available[-1]
                           if available and temp is not None else None)
-            close=(within_range and abs(nearest-temp)<=nearest_tolerance_K+1e-9
+            close=(within_range and abs(nearest-temp)<=effective_tolerance+1e-9
                    if nearest is not None else None)
             if temp is not None and close is not True:
                 all_within=False
@@ -211,6 +229,24 @@ def evaluate_executed_neutron_temperatures(
             or "zirconium-hydride" in name
         )
         has_bound=bool(material["bound_thermal_scattering_tables"])
+        # Exact phase-specific assignments are essential: any nonempty
+        # S(alpha,beta) list is NOT proof of the correct chemistry.
+        phase_tables={
+            "beryllium radial reflector":EVALUATED_BOUND_THERMAL_TABLES["reflector"],
+            "tie-tube graphite filler":EVALUATED_BOUND_THERMAL_TABLES["graphite"],
+            "conceptual zirconium-hydride moderator":EVALUATED_BOUND_THERMAL_TABLES["zrh"],
+        }
+        expected_phase_tables=phase_tables.get(material["material_name"])
+        correct_phase_assignment=(
+            set(material["bound_thermal_scattering_tables"])==set(expected_phase_tables)
+            if expected_phase_tables is not None else None
+        )
+        mixed_fuel_unqualified=(
+            material["material_name"]=="conceptual (U,Zr)C-graphite surrogate"
+        )
+        # Mixed carbide/graphite fuel has unresolved C-phase partition.
+        # Applying graphite S(a,b) to every fuel carbon atom is unphysical.
+        # No model or composition mutation is performed here.
         bound_evidence=[]
         for table in material["bound_thermal_scattering_tables"]:
             kernel=evaluated_bound_kernels.get(table)
@@ -226,7 +262,7 @@ def evaluate_executed_neutron_temperatures(
             covered=(
                 nearest is not None
                 and grid[0] <= temp <= grid[-1]
-                and abs(nearest-temp) <= nearest_tolerance_K+1e-9
+                and abs(nearest-temp) <= effective_tolerance+1e-9
             )
             bound_evidence.append({
                 "table":table,
@@ -239,6 +275,8 @@ def evaluate_executed_neutron_temperatures(
             })
         missing_bound=(
             (is_moderator and not has_bound)
+            or mixed_fuel_unqualified
+            or (correct_phase_assignment is False)
             or (has_bound and not all(
                 x["executed_material_temperature_covered"] for x in bound_evidence
             ))
@@ -251,6 +289,11 @@ def evaluate_executed_neutron_temperatures(
                         for r in isotopes)
             ),
             "moderator_or_reflector_solid_declared":is_moderator,
+            "expected_bound_phase_tables":(
+                list(expected_phase_tables) if expected_phase_tables is not None else None
+            ),
+            "bound_phase_table_assignment_matches":correct_phase_assignment,
+            "mixed_fuel_graphite_phase_fractions_unverified":mixed_fuel_unqualified,
             "evaluated_bound_kernel_temperature_evidence":bound_evidence,
             "bound_scattering_qualification_missing":missing_bound,
         }
@@ -265,7 +308,7 @@ def evaluate_executed_neutron_temperatures(
     # physically unqualified as a NASA nuclear thermal rocket at temperature.
     qualified=(
         all_explicit and all_within
-        and multi_temperature_any and all_solid_bound
+        and multi_temperature_any and all_solid_bound and valid_nearest
         and setting.get("solver_temperature_default_is_implicit") is False
     )
     return {
@@ -282,10 +325,20 @@ def evaluate_executed_neutron_temperatures(
         "thermal_solid_bound_scattering_qualifications_present":all_solid_bound,
         "physical_materials":rows,
         "openmc_executed_settings_temperature":setting,
+        "executed_nearest_temperature_selector_qualified":bool(valid_nearest),
+        "effective_nearest_temperature_tolerance_K":effective_tolerance,
+        "mixed_fuel_graphite_phase_fractions_verified":not any(
+            row["mixed_fuel_graphite_phase_fractions_unverified"] for row in rows
+        ),
         "hot_operating_temperature_neutron_physics_qualified":bool(qualified),
         "qualifier_reasons":[
             x for flag,x in (
                 (not all_explicit, "physical material temperatures missing from executed XML"),
+                (not valid_nearest, "executed OpenMC nearest-temperature method/tolerance not explicitly qualified"),
+                (any(row["mixed_fuel_graphite_phase_fractions_unverified"] for row in rows),
+                 "heterogeneous fuel graphite/carbon phase fractions are not documented"),
+                (any(row["bound_phase_table_assignment_matches"] is False for row in rows),
+                 "actual bound thermal-scattering tables do not match material phase"),
                 (not multi_temperature_any, "only one evaluated nuclear-data temperature per isotope"),
                 (not all_solid_bound,
                  "bound solid scattering HDF5 data or executed material temperature not qualified"),
