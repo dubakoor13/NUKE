@@ -384,6 +384,8 @@ jobs:
 
       - name: Validate native global neutron vacuum leakage and multiplicative scattering conservation across active histories
         run: python -m ntr.nerva.validate_core_neutron_leakage_history
+      - name: Validate genuine-format independent axial versus 3D neutron transport geometry and parity
+        run: python -m ntr.nerva.validate_core_axial_transport_parity
 
       - name: Validate measured neutron fate leakage, absorption and banked-fission economy
         run: python -m ntr.nerva.validate_core_neutron_economy_validation
