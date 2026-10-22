@@ -21,6 +21,12 @@ from .model import build_model
 from .nuclear_data import inspect_nuclear_data, write_report
 from .fixed_source_core_physics import audit_four_seed_fixed_source, sha
 from .fixed_source_fission_branching import compare_four_seed_external_source_modes
+import openmc
+
+# Diagnostic energy bins are observational only: neither source sampling
+# nor material cross sections nor the transport physics are modified.
+ENERGY_WINDOW_TAIL_EDGES_EV = (0.0, 1.0e-5, 2.0e7, 1.0e10)
+
 
 
 def _physics_setting_identity(path: Path) -> bytes:
@@ -76,6 +82,26 @@ def main() -> int:
         raise RuntimeError("evaluated neutron cross-section physical preflight failed")
 
     model = build_model(cfg, assembly="core", eigenvalue_entropy_mesh=False)
+    # Independent, narrowly targeted HDF5 diagnostic to determine whether
+    # previously observed material/energy tally residuals originate BELOW
+    # 1e-5 eV, ABOVE 20 MeV, or in neither energy tail.
+    # Reuse the EXACT material filter of the unfiltered reference tally.
+    parents = [t for t in model.tallies
+               if t.name == "nerva_material_transport"]
+    if len(parents) != 1 or len(parents[0].filters) != 1:
+        raise ValueError("whole-core material neutron tally not uniquely defined")
+    reference_filter = parents[0].filters[0]
+    if not isinstance(reference_filter, openmc.MaterialFilter):
+        raise ValueError("reference neutron tally does not filter actual materials")
+    window = openmc.Tally(name="nerva_energy_window_tail_attribution")
+    window.filters = [
+        reference_filter,
+        openmc.EnergyFilter(ENERGY_WINDOW_TAIL_EDGES_EV),
+    ]
+    window.scores = [
+        "flux", "absorption", "fission", "nu-fission", "heating-local",
+    ]
+    model.tallies.append(window)
     model.settings.run_mode = "fixed source"
     model.settings.inactive = 0
     model.settings.statepoint = {"batches": [args.batches]}
