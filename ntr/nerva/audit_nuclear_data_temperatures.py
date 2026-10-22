@@ -14,6 +14,12 @@ from .materials import build_materials
 from .nuclear_data import _library_entries, resolve_cross_sections
 
 
+# HDF5 kT -> Kelvin conversion and serialized requested material
+# temperatures can differ by a few floating-point ulps. This is not a
+# physical nearest-table tolerance and must never license extrapolation.
+ROUNDING_ONLY_TEMPERATURE_EPSILON_K = 1e-8
+
+
 def _requested_temperatures(
     config: NervaConfig,
 ) -> dict[str, list[dict]]:
@@ -117,7 +123,10 @@ def audit_temperature_coverage(
             ]
             if explicit:
                 row["explicit_requested_temperatures_in_range"] = all(
-                    temperatures[0] <= value <= temperatures[-1]
+                    math.isfinite(value)
+                    and temperatures[0] - ROUNDING_ONLY_TEMPERATURE_EPSILON_K
+                    <= value <=
+                    temperatures[-1] + ROUNDING_ONLY_TEMPERATURE_EPSILON_K
                     for value in explicit
                 )
                 tol = (
@@ -128,7 +137,9 @@ def audit_temperature_coverage(
                 )
                 row["explicit_requested_temperatures_within_nearest_tolerance"] = all(
                     math.isfinite(value)
-                    and temperatures[0] <= value <= temperatures[-1]
+                    and temperatures[0] - ROUNDING_ONLY_TEMPERATURE_EPSILON_K
+                    <= value <=
+                    temperatures[-1] + ROUNDING_ONLY_TEMPERATURE_EPSILON_K
                     and min(abs(x-value) for x in temperatures) <= tol + 1e-9
                     for value in explicit
                 )
@@ -174,6 +185,8 @@ def audit_temperature_coverage(
         ),
         "model_explicit_temperature_coverage_ok": explicit_coverage_ok,
         "evaluated_temperature_extrapolation_permitted": False,
+        "nonphysical_extrapolation_rounding_slack_K":
+            ROUNDING_ONLY_TEMPERATURE_EPSILON_K,
         "all_indexed_required_nuclides_have_verified_hdf5_identity": all(
             row["load_error"] is None for row in rows
         ),
