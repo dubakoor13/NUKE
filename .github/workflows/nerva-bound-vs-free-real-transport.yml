@@ -12,6 +12,7 @@ on:
       - 'ntr/nerva/config.py'
       - 'ntr/nerva/audit_bound_thermal_scattering.py'
       - 'ntr/nerva/audit_nuclear_data_temperatures.py'
+      - 'ntr/nerva/physical_scattering_pair_qualification.py'
   workflow_dispatch: {}
 
 permissions:
@@ -33,7 +34,7 @@ jobs:
             --format '{{json .RepoDigests}}' \
             > build/nerva_bound_vs_free/docker_repo_digests.json
 
-      - name: Execute eight real C++ eigenvalue runs, fixed physical core
+      - name: Verify physical neutron-data compatibility before matched real C++ transport
         run: |
           set -euo pipefail
           docker run --rm \
@@ -48,6 +49,15 @@ jobs:
               openmc --version
               test -f "$OPENMC_CROSS_SECTIONS"
 
+              python -m ntr.nerva.physical_scattering_pair_qualification \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --hydrogen-temperature-k 293.6059129982851 \
+                --solid-temperature-k 295.99644373136465 \
+                --nearest-tolerance-k 3.0 \
+                --output /repo/build/nerva_bound_vs_free/matched_evaluated_temperature_qualification.json
+
+              if python -c "import json,sys; p=json.load(open(\"/repo/build/nerva_bound_vs_free/matched_evaluated_temperature_qualification.json\")); sys.exit(0 if p[\"real_bound_vs_free_transport_comparison_permitted\"] else 1)"; then
+              echo "EVALUATED-TEMPERATURE COMPATIBLE: real C++ transport comparison may run"
               echo "REAL OPENMC FREE-GAS CONTROL: 4 independent seeds"
               python -m ntr.nerva.run_real_core_replicas \
                 --rings 3 --particles 1500 --batches 80 --inactive 20 \
@@ -72,6 +82,10 @@ jobs:
                 --free /repo/build/nerva_bound_vs_free/free \
                 --bound /repo/build/nerva_bound_vs_free/bound \
                 --output /repo/build/nerva_bound_vs_free/physical_neutron_scattering_comparison.json
+              else
+                echo "PHYSICAL QUALIFICATION BLOCK: no matched evaluated neutron/S(alpha,beta) temperatures"
+                echo "No bound/free transport comparison executed; record exact gaps in retained JSON"
+              fi
             '
       - name: Retain genuine neutron physics HDF5 and isotope temperature evidence
         if: always()
