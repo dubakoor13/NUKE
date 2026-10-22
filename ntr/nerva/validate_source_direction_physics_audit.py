@@ -131,6 +131,8 @@ def main() -> int:
 
         with h5py.File(final_paths[1],"r+") as h:
             h["seed"][...]=seeds[0]
+        # Rehash the deliberately modified statepoint: reach the actual
+        # per-file neutron seed check rather than stopping at the SHA gate.
         save_summary()
         reject(lambda:audit_real_source_angular_physics(summary),"checkpoint identity/seed")
         fake(final_paths[1],seeds[1],80)
@@ -142,6 +144,7 @@ def main() -> int:
 
         with h5py.File(f,"r+") as h:
             h["current_batch"][...]=99
+        save_summary()
         reject(lambda:audit_real_source_angular_physics(summary),"checkpoint identity/seed")
         fake(f,seeds[0],80)
         # Physically false, but a valid-format synthetic clone of the old
