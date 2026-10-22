@@ -47,7 +47,9 @@ def main() -> int:
            "explicit neutron energy tail bins do not conserve")
     negative=bands.copy()
     negative[0,1,1]=-0.1
-    reject(lambda:classify_window_partition(full,old,negative),
+    negative_old=negative[:,1,:].copy()
+    negative_full=negative.sum(axis=1)
+    reject(lambda:classify_window_partition(negative_full,negative_old,negative),
            "negative neutron")
     # Heating-local can be signed, and must not be used to infer reactor power.
     signed=bands.copy()
