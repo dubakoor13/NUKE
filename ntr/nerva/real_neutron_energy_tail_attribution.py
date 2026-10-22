@@ -205,6 +205,15 @@ def audit_eight_tail_statepoints(root: Path, *,
             r["max_abs_full_energy_partition_residual"] for r in all_rows),
         "max_observed_original_window_score_residual":max(
             r["max_abs_legacy_window_residual"] for r in all_rows),
+        "all_measured_nonroundoff_legacy_residuals_accounted_for_by_scored_tails":all(
+            point["physically_scored_tails_explain_residual_to_1e_minus_11"]
+            for r in all_rows for point in r["measurable_material_score_residuals"]
+        ),
+        "measured_below_range_neutron_flux_per_source_by_seed_and_mode":[
+            {"seed":r["seed"],"mode":mode,
+             "flux":r[mode]["explicit_tail_score_per_source"]["below_lower_bound"]}
+            for r in rows for mode in ("off","on")
+        ],
         "per_seed":rows,
         "hot_nuclear_data_physically_qualified":False,
         "reactor_criticality_or_fission_source_stationarity_qualified":False,
