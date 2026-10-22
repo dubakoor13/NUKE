@@ -58,7 +58,7 @@ def main() -> int:
         with h5py.File(path, "r+") as h:
             moments = h["tallies"]["tally 1"]["results"]
             data = moments[()]
-            data[0, 3, 0] = 30 * .05
+            data[0, 3, 0] = 30 * .02
             moments[...] = data
         rejects(lambda: read_branching_fixed_source_balance(path),
                 "do not conserve source")
