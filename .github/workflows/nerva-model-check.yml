@@ -362,6 +362,9 @@ jobs:
       - name: Validate genuine-format disjoint active-generation neutron reaction accounting
         run: python -m ntr.nerva.validate_core_reaction_history
 
+      - name: Validate real-format analog and tracklength neutron reaction physical estimator agreement
+        run: python -m ntr.nerva.validate_core_reaction_estimator_agreement
+
       - name: Validate source-particle population sensitivity statistics and provenance
         run: python -m ntr.nerva.validate_source_population_sensitivity
 
