@@ -365,6 +365,9 @@ jobs:
       - name: Validate real-format analog and tracklength neutron reaction physical estimator agreement
         run: python -m ntr.nerva.validate_core_reaction_estimator_agreement
 
+      - name: Validate native global neutron vacuum leakage and multiplicative scattering conservation across active histories
+        run: python -m ntr.nerva.validate_core_neutron_leakage_history
+
       - name: Validate source-particle population sensitivity statistics and provenance
         run: python -m ntr.nerva.validate_source_population_sensitivity
 
