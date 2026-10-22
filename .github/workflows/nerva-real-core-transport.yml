@@ -23,6 +23,8 @@ on:
       - 'ntr/nerva/core_reaction_history.py'
       - 'ntr/nerva/core_reaction_estimator_agreement.py'
       - 'ntr/nerva/core_neutron_leakage_history.py'
+      - 'ntr/nerva/core_axial_transport_parity.py'
+      - 'ntr/nerva/validate_core_axial_transport_parity.py'
       - 'ntr/nerva/core_neutron_economy_validation.py'
       - 'ntr/nerva/neutron_economy_uncertainty.py'
       - 'ntr/nerva/validate_neutron_economy_uncertainty.py'
