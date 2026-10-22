@@ -205,7 +205,8 @@ def inspect_statepoint(path: Path) -> dict:
         seed = int(state["seed"][()])
         batches = int(state["current_batch"][()])
         inactive = int(state["n_inactive"][()])
-        if seed <= 0 or inactive < 0 or batches <= inactive + 1:
+        particles = int(state["n_particles"][()])
+        if seed <= 0 or inactive < 0 or batches <= inactive + 1 or particles < 2:
             raise ValueError("invalid real transport seed/batch count")
         tallies = state["tallies"]
         active = batches - inactive
@@ -231,6 +232,7 @@ def inspect_statepoint(path: Path) -> dict:
         "completed_batches": batches,
         "inactive_batches": inactive,
         "active_tally_realizations": active,
+        "transport_particles_per_generation": particles,
     })
     return report
 
@@ -244,6 +246,19 @@ def audit_real_ensemble(summary: Path) -> dict:
     runs = payload.get("runs")
     if not isinstance(runs, list) or len(runs) < 4:
         raise ValueError("four or more independent OpenMC statepoints required")
+    # Compare recorded hardware-independent transport conditions with
+    # the values actually persisted by OpenMC's eigenvalue statepoints.
+    expected = (
+        payload.get("batches"),
+        payload.get("inactive_batches"),
+        payload.get("particles_per_generation"),
+    )
+    if (
+        any(isinstance(x,bool) or not isinstance(x,int) for x in expected)
+        or expected[0] <= expected[1] + 1
+        or expected[1] < 0 or expected[2] < 2
+    ):
+        raise ValueError("invalid physical eigenvalue source settings in summary")
     seen: set[int] = set()
     reports = []
     for item in runs:
@@ -252,18 +267,69 @@ def audit_real_ensemble(summary: Path) -> dict:
         if (observed["seed"] != item.get("seed")
                 or observed["statepoint_sha256"] != item.get("statepoint_sha256")):
             raise ValueError("OpenMC source identity/hash does not match transport summary")
+        actual = (
+            observed["completed_batches"],
+            observed["inactive_batches"],
+            observed["transport_particles_per_generation"],
+        )
+        if actual != expected:
+            raise ValueError("OpenMC active-source population/batches disagree across real seeds")
         if observed["seed"] in seen:
             raise ValueError("OpenMC seed duplicated in heating evidence")
         seen.add(observed["seed"])
         reports.append(observed)
     qualified = all(row["neutron_only_local_heating_data_usable"]
                     for row in reports)
+    values = np.array(
+        [row["local_heating_eV_per_source"] for row in reports], dtype=float
+    )
+    zero_moments = [
+        row["local_heating_eV_per_source"] == 0.0
+        and row["mesh_local_heating_conservative_sem_upper_bound"] == 0.0
+        and row["material_local_heating_conservative_sem_upper_bound"] == 0.0
+        for row in reports
+    ]
+    all_zero = all(zero_moments)
+    mixed_zero = any(zero_moments) and not all_zero
+    # Replicates are separate transport RNG seeds, but a small sample and
+    # source genealogy do not establish independence of fission histories.
+    mean = float(np.mean(values))
+    sd = float(np.std(values, ddof=1))
+    sem = sd / math.sqrt(len(values))
+    if all_zero:
+        evidence = "ZERO_LOCAL_HEAT_DEPOSITION_IN_ALL_REAL_SEEDS"
+    elif mixed_zero:
+        evidence = "INCONSISTENT_ZERO_AND_NONZERO_LOCAL_HEATING_ACROSS_SEEDS"
+    elif qualified:
+        evidence = "POSITIVE_LOCAL_HEATING_BUT_CORE_PHYSICS_UNQUALIFIED"
+    else:
+        evidence = "LOCAL_HEATING_UNRESOLVED_IN_ONE_OR_MORE_REAL_SEEDS"
+    # A resolved *tally* alone cannot authorize thermal power calibration:
+    # evaluated nuclear KERMA, neutron-source stationarity and the historical
+    # core operating-temperature physics remain separate unpassed gates.
+    allowed = False
     return {
         "audit": "INDEPENDENT_REAL_OPENMC_HEATING_DATA_QUALIFICATION",
         "transport_summary_sha256": digest(summary),
         "number_of_independent_seeds": len(seen),
         "all_real_statepoints_have_usable_neutron_local_heating": qualified,
-        "thermal_power_normalization_allowed": qualified,
+        "ensemble_local_heat_deposition_evidence": evidence,
+        "exactly_zero_local_deposition_moments_in_every_seed": all_zero,
+        "inconsistent_zero_and_nonzero_local_deposition_across_seeds": mixed_zero,
+        "independent_seed_local_heating_mean_eV_per_source": mean,
+        "independent_seed_local_heating_sample_sd_eV_per_source": sd,
+        "independent_seed_local_heating_sem_eV_per_source": sem,
+        "independent_seed_replicates_are_neutron_history_independence_proof": False,
+        "all_runs_have_identical_executed_source_settings": True,
+        "executed_particles_per_generation": expected[2],
+        "executed_active_batches": expected[0] - expected[1],
+        "additional_physical_requirements_before_power_normalization": [
+            "evaluated nonzero physical KERMA with provenance",
+            "physically qualified material operating temperatures",
+            "independently demonstrated fission-source stationarity",
+            "independent physical heat-deposition benchmark",
+        ],
+        "thermal_power_normalization_allowed": allowed,
         "status": ("DATA_PRESENT_REQUIRES_MORE_PHYSICAL_VALIDATION"
                    if qualified else "BLOCKED_NO_VERIFIED_LOCAL_HEAT_DEPOSITION"),
         "runs": reports,
