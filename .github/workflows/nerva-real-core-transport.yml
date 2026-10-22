@@ -17,6 +17,8 @@ on:
       - 'ntr/nerva/core_neutron_leakage_history.py'
       - 'ntr/nerva/core_fission_yield_energy.py'
       - 'ntr/nerva/core_material_temperature_qualification.py'
+      - 'ntr/nerva/audit_nuclear_data_temperatures.py'
+      - 'ntr/nerva/validate_nuclear_data.py'
       - 'ntr/nerva/validate_core_material_temperature_qualification.py'
       - 'ntr/nerva/validate_core_fission_yield_energy.py'
       - 'ntr/nerva/validate_core_neutron_leakage_history.py'
@@ -92,6 +94,7 @@ jobs:
               python -m ntr.nerva.validate_core_reaction_estimator_agreement
               python -m ntr.nerva.validate_core_neutron_leakage_history
               python -m ntr.nerva.validate_core_fission_yield_energy
+              python -m ntr.nerva.validate_nuclear_data
               python -m ntr.nerva.validate_core_material_temperature_qualification
               python -m ntr.nerva.validate_heating_data_qualification
               python -m ntr.nerva.run_real_core_replicas \
