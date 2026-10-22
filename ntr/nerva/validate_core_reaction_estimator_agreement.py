@@ -118,11 +118,15 @@ def main():
         altered[0][-1]=changed
         fail(lambda:compare_estimator_windows(altered),"cumulative sums or squares")
         altered=[list(t) for t in trajectories]
-        changed=dict(altered[0][-1])
-        changed["tracklength"]=changed["tracklength"].copy()
-        changed["tracklength"][1,0]*=10.
-        changed["tracklength"][1,1]*=100.
-        altered[0][-1]=changed
+        # A whole-seed, mathematically valid constant factor error in the
+        # tracklength cross section: every sum doubles, each sum of squares
+        # quadruples. A permissive variance alone cannot hide the physics.
+        for idx, row in enumerate(altered[0]):
+            changed=dict(row)
+            changed["tracklength"]=row["tracklength"].copy()
+            changed["tracklength"][:,0] *= 2.
+            changed["tracklength"][:,1] *= 4.
+            altered[0][idx]=changed
         # Catastrophically discordant estimators may exceed the generous
         # statistical screen without tampering with reactor geometry.
         measured=compare_estimator_windows(altered)
