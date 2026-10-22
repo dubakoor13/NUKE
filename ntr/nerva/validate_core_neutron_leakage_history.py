@@ -101,11 +101,16 @@ def main() -> int:
             assert all(x["net_multiplicative_scattering_per_source"]>0 for x in
                        report["disjoint_windows"])
         faulty=deepcopy(history[0])
-        faulty[-1]["cumulative_analog_abs_scatter_nuscatter_nufission_leakage"][
-            4,0] += 20.
+        # A coherent 10% wrong escape estimator: scale its raw first and
+        # second moments consistently, rather than creating fake negative
+        # variance by corrupting only one of them.
+        for sample in faulty:
+            native=sample["cumulative_analog_abs_scatter_nuscatter_nufission_leakage"]
+            native[4,0] *= 1.1
+            native[4,1] *= 1.21
         result=check_native_neutron_windows(faulty)
         assert not result["all_disjoint_neutron_conservation_windows_passed"]
-        assert result["maximum_absolute_disjoint_neutron_conservation_residual"]>.1
+        assert result["maximum_absolute_disjoint_neutron_conservation_residual"]>.10
 
         faulty=deepcopy(history[0])
         faulty[-1]["cumulative_analog_abs_scatter_nuscatter_nufission_leakage"][
@@ -128,7 +133,7 @@ def main() -> int:
         _fixture(filename,999,120,analog,native,wrong_realizations=True)
         reject(lambda:read_native_neutron_checkpoint(filename),"estimator and active generations")
         _fixture(filename,999,120,analog,native,wrong_filter=True)
-        reject(lambda:read_native_neutron_checkpoint(filename),"estimator or clipped")
+        reject(lambda:read_native_neutron_checkpoint(filename),"mismatched whole-core estimator")
     print("NERVA genuine-format OpenMC neutron analog leakage/history conservation: PASS")
     print("  synthetic fixtures; official OpenMC four-seed reactor run separately required")
     return 0
