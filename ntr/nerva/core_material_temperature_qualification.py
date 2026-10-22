@@ -229,7 +229,9 @@ def audit_actual_core_neutron_temperature(summary_path: Path,
     if not index.is_file() or _sha(index)!=report.get("cross_sections_xml_sha256"):
         raise ValueError("evaluated neutron cross-sections index missing or SHA256 mismatched")
     seeds=set()
-    model_sha={key:set() for key in ("geometry.xml","materials.xml","settings.xml","tallies.xml")}
+    model_sha={key:set() for key in ("geometry.xml","materials.xml","tallies.xml")}
+    per_seed_settings_sha={}
+    normalized_settings_sha=set()
     primary=None
     settings=None
     for run in report["runs"]:
@@ -244,20 +246,36 @@ def audit_actual_core_neutron_temperature(summary_path: Path,
                 or provenance.get("nuclear_data",{}).get("cross_sections_sha256")!=_sha(index)
                 or provenance.get("assembly")!="core"):
             raise ValueError("different evaluated nuclear data or source seed")
-        for name in model_sha:
+        for name in (*model_sha, "settings.xml"):
             candidate=statepoint.parent/name
             if (_sha(candidate)!=provenance.get("xml_sha256",{}).get(name)):
                 raise ValueError("actual reactor physical XML/provenance tampered: "+name)
-            model_sha[name].add(_sha(candidate))
+            if name in model_sha:
+                model_sha[name].add(_sha(candidate))
+        # settings.xml legitimately differs per independent random seed.
+        # Require the native OpenMC <seed> to match, and compare all OTHER
+        # settings identically, rather than incorrectly expecting a single
+        # settings.xml hash across different neutron source seeds.
+        settings_xml=statepoint.parent/"settings.xml"
+        per_seed_settings_sha[str(seed)]=_sha(settings_xml)
+        settings_tree=ET.parse(settings_xml).getroot()
+        seed_node=settings_tree.find("seed")
+        if seed_node is None or int(seed_node.text)!=seed:
+            raise ValueError("executed OpenMC settings random source seed mismatch")
+        settings_tree.remove(seed_node)
+        normalized_settings_sha.add(hashlib.sha256(
+            ET.tostring(settings_tree,encoding="utf-8")
+        ).hexdigest())
         material=_executed_material_inventory(statepoint.parent/"materials.xml")
-        physical_settings=_settings_temperature(statepoint.parent/"settings.xml")
+        physical_settings=_settings_temperature(settings_xml)
         if primary is None:
             primary=material
             settings=physical_settings
         elif material!=primary or settings!=physical_settings:
             raise ValueError("four-seed reactor physical materials or temperatures changed")
-    if any(len(x)!=1 for x in model_sha.values()):
-        raise ValueError("four-seed core geometry/material/settings/tallies inconsistent")
+    if (any(len(x)!=1 for x in model_sha.values())
+            or len(normalized_settings_sha)!=1):
+        raise ValueError("four-seed reactor geometry/material/tallies/settings except RNG seed inconsistent")
 
     cfg=replace(NervaConfig(),
         hydrogen_temperature_k=float(report["hydrogen_temperature_K"]),
@@ -282,6 +300,8 @@ def audit_actual_core_neutron_temperature(summary_path: Path,
         "cross_sections_xml_sha256":_sha(index),
         "actual_openmc_seed_count":len(seeds),
         "physical_model_xml_sha256":{k:next(iter(v)) for k,v in model_sha.items()},
+        "settings_xml_per_seed_sha256":per_seed_settings_sha,
+        "settings_xml_except_rng_seed_sha256":next(iter(normalized_settings_sha)),
         "all_real_source_model_provenance_consistent":True,
     })
     return physical
