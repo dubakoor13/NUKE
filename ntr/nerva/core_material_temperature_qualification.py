@@ -1,10 +1,12 @@
 """Actual OpenMC core material-temperature and nuclear-data qualification.
 
 Read physical temperatures, nuclides and S(alpha,beta) assignments from
-EXECUTED per-seed OpenMC materials.xml and settings.xml, not desired
-NervaConfig defaults. Independently load all 29 evaluated-neutron HDF5
-temperature lists via the existing OpenMC data coverage audit and require
-the actual cross_sections.xml SHA256 in transport provenance.
+EXECUTED per-seed OpenMC geometry.xml, materials.xml and settings.xml, not
+desired NervaConfig defaults. Only ROOT-REACHABLE material regions physically
+contribute to neutron transport. Keep all declared but unplaced materials
+separately and never count their isotope/temperature deficiencies as a
+qualification failure for executed neutron transport. Verify evaluated HDF5
+nuclear-temperature lists and real cross_sections.xml SHA256 provenance.
 
 An unset material temperature is an implicit solver default, NOT an
 explicitly validated solid operating temperature. A cold NNDC index with
@@ -32,6 +34,7 @@ from .nuclear_data import _library_entries
 from .materials import EVALUATED_BOUND_THERMAL_TABLES
 from .audit_nuclear_data_temperatures import audit_temperature_coverage
 from .config import NervaConfig
+from .executed_material_kerma_qualification import _real_reachable_material_ids
 
 
 def _sha(path: Path) -> str:
@@ -130,6 +133,26 @@ def _executed_material_inventory(path: Path) -> list[dict]:
     if len(output)<2:
         raise ValueError("missing physical reactor materials")
     return sorted(output,key=lambda row:row["material_id"])
+
+
+def _root_reachable_temperature_materials(
+    defined: list[dict], geometry_xml: Path
+) -> tuple[list[dict], set[int]]:
+    """Count only physically placed OpenMC isotope/thermal environments.
+
+    Reachability is the executed root-universe and filled-hex-lattice
+    graph, not the presence of a material entry in materials.xml.
+    """
+    ids, cells = _real_reachable_material_ids(
+        Path(geometry_xml), {m["material_id"] for m in defined}
+    )
+    placed = [
+        {**m, "reachable_executed_cells": cells[m["material_id"]]}
+        for m in defined if m["material_id"] in ids
+    ]
+    if len(placed) != len(ids) or not placed:
+        raise ValueError("root-reachable neutron material inventory inconsistent")
+    return placed, ids
 
 
 def _settings_temperature(path: Path) -> dict:
@@ -349,7 +372,7 @@ def evaluate_executed_neutron_temperatures(
         ],
         "nasa_nerva_historical_criticality_or_hot_core_benchmark_validated":False,
         "interpretation":(
-            "This reads actually EXECUTED reactor materials and settings, and "
+            "This reads only root-reachable EXECUTED reactor materials and settings, and "
             "the genuine evaluated HDF5 neutron temperature inventory. "
             "Missing material temperatures mean solver defaults, NOT "
             "a qualified fuel/reflector temperature field. Cold neutron "
@@ -377,6 +400,8 @@ def audit_actual_core_neutron_temperature(summary_path: Path,
     per_seed_settings_sha={}
     normalized_settings_sha=set()
     primary=None
+    declared=None
+    actual_reachable_ids=None
     settings=None
     for run in report["runs"]:
         seed=run["seed"]
@@ -411,12 +436,20 @@ def audit_actual_core_neutron_temperature(summary_path: Path,
             ET.tostring(settings_tree,encoding="utf-8")
         ).hexdigest())
         material=_executed_material_inventory(statepoint.parent/"materials.xml")
+        geometry=statepoint.parent/"geometry.xml"
+        placed,active_ids=_root_reachable_temperature_materials(material,geometry)
         physical_settings=_settings_temperature(settings_xml)
         if primary is None:
-            primary=material
+            primary=placed
+            declared=material
+            actual_reachable_ids=active_ids
             settings=physical_settings
-        elif material!=primary or settings!=physical_settings:
-            raise ValueError("four-seed reactor physical materials or temperatures changed")
+        elif (material!=declared or placed!=primary
+              or active_ids!=actual_reachable_ids
+              or settings!=physical_settings):
+            raise ValueError(
+                "four-seed reactor physical geometry reachability, materials or temperatures changed"
+            )
     if (any(len(x)!=1 for x in model_sha.values())
             or len(normalized_settings_sha)!=1):
         raise ValueError("four-seed reactor geometry/material/tallies/settings except RNG seed inconsistent")
@@ -429,14 +462,27 @@ def audit_actual_core_neutron_temperature(summary_path: Path,
             report.get("bound_nearest_temperature_tolerance_K") or 0),
     )
     data=audit_temperature_coverage(index,cfg)
+    required={name for material in primary for name in material["nuclides"]}
+    declared_nuclides={
+        name for material in declared for name in material["nuclides"]
+    }
+    inspected={entry["nuclide"] for entry in data["nuclides"]}
+    if inspected!=declared_nuclides:
+        raise ValueError(
+            "defined reactor nuclides differ from evaluated data audit inventory"
+        )
     temperatures={}
     for entry in data["nuclides"]:
+        # Defined but unplaced materials are not actual neutron physics;
+        # missing HDF5 or thermal data for those inputs is NOT proof that
+        # an executed reactor region was missing its neutron evaluation.
+        if entry["nuclide"] not in required:
+            continue
         if entry["load_error"] is not None:
-            raise ValueError("unloadable evaluated neutron isotope HDF5")
+            raise ValueError("unloadable evaluated neutron isotope HDF5 for physical core")
         temperatures[entry["nuclide"]]=entry["available_temperatures_K"]
-    nuclides={name for material in primary for name in material["nuclides"]}
-    if set(temperatures)!=nuclides:
-        raise ValueError("actually exported reactor nuclides differ from evaluated data audit")
+    if set(temperatures)!=required:
+        raise ValueError("executed reactor isotopes differ from evaluated data audit")
     bound_kernels=_load_executed_bound_kernel_evidence(index,primary)
     physical=evaluate_executed_neutron_temperatures(
         primary,temperatures,settings,evaluated_bound_kernels=bound_kernels
@@ -447,6 +493,16 @@ def audit_actual_core_neutron_temperature(summary_path: Path,
         "real_transport_summary_sha256":_sha(path),
         "cross_sections_xml_sha256":_sha(index),
         "actual_openmc_seed_count":len(seeds),
+        "declared_material_count":len(declared),
+        "actual_reachable_material_count":len(primary),
+        "uninstantiated_declared_material_count":len(declared)-len(primary),
+        "actual_reachable_material_ids":sorted(actual_reachable_ids),
+        "declared_isotope_count":len(declared_nuclides),
+        "unplaced_materials":[
+            {"material_id":m["material_id"],"material_name":m["material_name"]}
+            for m in declared if m["material_id"] not in actual_reachable_ids
+        ],
+        "actual_geometry_reachability_and_evaluated_xs_reconciled":True,
         "physical_model_xml_sha256":{k:next(iter(v)) for k,v in model_sha.items()},
         "settings_xml_per_seed_sha256":per_seed_settings_sha,
         "settings_xml_except_rng_seed_sha256":next(iter(normalized_settings_sha)),
@@ -464,6 +520,9 @@ def main()->int:
     result=audit_actual_core_neutron_temperature(a.summary,a.cross_sections)
     a.output.parent.mkdir(parents=True,exist_ok=True)
     a.output.write_text(json.dumps(result,indent=2,allow_nan=False)+"\n")
+    print("Defined material count:",result["declared_material_count"])
+    print("Actually instantiated physical regions:",result["actual_reachable_material_count"])
+    print("Declared but unplaced:",result["uninstantiated_declared_material_count"])
     print("Actual OpenMC evaluated nuclides",result["evaluated_neutron_nuclide_count"])
     print("Explicit physical temperatures",result["number_with_explicit_exported_temperature"],
           "/",result["number_of_physical_materials"])
