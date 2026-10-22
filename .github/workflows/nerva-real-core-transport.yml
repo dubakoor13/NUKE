@@ -9,6 +9,8 @@ on:
       - 'ntr/nerva/source_bank_convergence.py'
       - 'ntr/nerva/source_bank_trajectory.py'
       - 'ntr/nerva/source_resolution_audit.py'
+      - 'ntr/nerva/real_core_keff_history_qualification.py'
+      - 'ntr/nerva/validate_real_core_keff_history_qualification.py'
       - 'ntr/nerva/source_energy_audit.py'
       - 'ntr/nerva/source_phase_space_audit.py'
       - 'ntr/nerva/source_direction_physics_audit.py'
@@ -96,6 +98,7 @@ jobs:
               python -m ntr.nerva.validate_source_clone_moment_closure
               python -m ntr.nerva.validate_source_bank_convergence
               python -m ntr.nerva.validate_source_bank_trajectory
+              python -m ntr.nerva.validate_real_core_keff_history_qualification
               python -m ntr.nerva.validate_source_resolution_audit
               python -m ntr.nerva.validate_source_energy_audit
               python -m ntr.nerva.validate_source_phase_space_audit
@@ -126,6 +129,14 @@ jobs:
               python -m ntr.nerva.source_resolution_audit \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/source_resolution_audit.json
+              # Verify saved OpenMC source entropy and k histories are exact
+              # prefixes of the same independent-seed neutron run, then
+              # compute explicitly non-certifying split-chain k statistics.
+              python -m ntr.nerva.real_core_keff_history_qualification \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --spatial-audit /repo/build/nerva_real_core/source_resolution_audit.json \
+                --output /repo/build/nerva_real_core/real_core_keff_history_qualification.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/real_core_keff_history_qualification.json\")); assert p[\"all_checkpoint_keff_and_entropy_prefixes_verified\"]; assert p[\"four_seed_split_chain_generation_k\"][\"independent_seed_count\"]==4; assert not p[\"spatial_fission_source_stationarity_validated\"]; print(\"Real eigenvalue generation-history integrity verified; spatial source stationarity NOT ESTABLISHED\")"
               python -m ntr.nerva.source_energy_audit \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/source_energy_audit.json
