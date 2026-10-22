@@ -235,9 +235,10 @@ def audit_eight_statepoint_energy(root: Path, *, batches: int=30,
         "interpretation":(
             "These are incident-energy tracklength neutron spectra per injected "
             "external neutron, not normalized reactor flux or temperature. "
-            "Independent unfiltered tallies QUANTIFY any scored contribution "
-            "outside the finite incident-energy window, including tiny "
-            "non-roundoff residuals; the side of the boundary is unresolved. "
+            "Independent unfiltered tallies QUANTIFY residuals against "
+            "the finite incident-energy window, including tiny nonroundoff "
+            "differences. Their cause and energy-side location are not "
+            "established by this audit; exhaustive coverage is not claimed. "
             "Spectral changes do not qualify operating-temperature data, "
             "eigenvalue fission source, or local heating."),
     }
