@@ -44,8 +44,9 @@ def _file(path, seed, batch, rates, *, corrupt_type=False,
         grp=h.create_group("tallies")
         filt=grp.create_group("filters")
         for ident,name,values in (
-            (81,"material",[19,21] if bad_materials else mats),
-            (82,"energy",energy_edges)
+            (81,"material",mats),
+            (82,"energy",energy_edges),
+            *((83,"material",[19,21]),) if bad_materials else ()
         ):
             f=filt.create_group(f"filter {ident}")
             f.create_dataset("type",data=np.bytes_(name))
@@ -54,7 +55,7 @@ def _file(path, seed, batch, rates, *, corrupt_type=False,
         for j,(name,filtered,raw) in enumerate((
             ("nerva_global_reaction_tracklength",(),rates.sum((0,1))[[1,3]][np.newaxis,:]),
             ("nerva_material_transport",(81,),rates.sum(axis=1)),
-            ("nerva_material_energy_transport",(81,82),rates.reshape(16,4))
+            ("nerva_material_energy_transport",((83 if bad_materials else 81),82),rates.reshape(16,4))
         )):
             t=grp.create_group(f"tally {j+1}")
             t.create_dataset("name",data=np.bytes_(name))
