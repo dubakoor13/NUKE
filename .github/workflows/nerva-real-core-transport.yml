@@ -12,6 +12,8 @@ on:
       - 'ntr/nerva/source_energy_audit.py'
       - 'ntr/nerva/source_phase_space_audit.py'
       - 'ntr/nerva/source_direction_physics_audit.py'
+      - 'ntr/nerva/source_clone_moment_closure.py'
+      - 'ntr/nerva/validate_source_clone_moment_closure.py'
       - 'ntr/nerva/validate_source_direction_physics_audit.py'
       - 'ntr/nerva/core_reaction_ensemble.py'
       - 'ntr/nerva/core_reaction_history.py'
@@ -91,6 +93,7 @@ jobs:
               echo "Evaluated neutron library: $OPENMC_CROSS_SECTIONS"
               python -m ntr.nerva.validate_real_core_replicas_statistics
               python -m ntr.nerva.validate_source_direction_physics_audit
+              python -m ntr.nerva.validate_source_clone_moment_closure
               python -m ntr.nerva.validate_source_bank_convergence
               python -m ntr.nerva.validate_source_bank_trajectory
               python -m ntr.nerva.validate_source_resolution_audit
@@ -115,6 +118,11 @@ jobs:
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/source_direction_physics_audit.json
               python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/source_direction_physics_audit.json\")); assert p[\"actual_independent_seed_count\"]==4; assert not p[\"fission_source_stationarity_demonstrated\"]; assert p[\"source_direction_vectors_unit_normalized\"]; assert p[\"smallest_effective_position_fraction\"]<0.05; print(\"Real OpenMC source: directional vectors physical, fission-source cloning still blocks stationarity\")"
+              python -m ntr.nerva.source_clone_moment_closure \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --source-direction /repo/build/nerva_real_core/source_direction_physics_audit.json \
+                --output /repo/build/nerva_real_core/source_clone_moment_closure.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/source_clone_moment_closure.json\")); assert p[\"independent_seed_count\"] == 4; assert p[\"all_20_real_checkpoint_moment_partitions_closed\"]; assert not p[\"cloned_source_sites_are_independent_neutron_histories\"]; assert p[\"minimum_effective_source_site_fraction\"] < 0.05; print(\"Actual neutron source angular/energy moment conservation across cloned sites: PASS; source independence NOT ESTABLISHED\")"
               python -m ntr.nerva.source_resolution_audit \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/source_resolution_audit.json
