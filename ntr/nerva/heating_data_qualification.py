@@ -173,7 +173,11 @@ def evaluate_heating_scores(mesh: dict[str, float],
         "statistical_resolution_is_physical_validation":False,
         "neutron_only_local_heating_data_usable": bool(usable),
         "physical_heating_qualification_status":status,
-        "thermal_power_normalization_allowed": bool(usable),
+        # Local tally resolution and whole-domain integration alone do not
+        # certify evaluated hot-core KERMA, source stationarity or a NERVA
+        # reactor heat-deposition benchmark. This individual-statepoint
+        # record must never authorize physical power normalization.
+        "thermal_power_normalization_allowed": False,
         "nasa_nerva_core_thermal_physics_validated": False,
         "interpretation": (
             "Standard heating and recoverable fission energy may be nonzero "
