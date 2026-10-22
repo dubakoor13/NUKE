@@ -347,6 +347,9 @@ jobs:
       - name: Validate actual neutron emission direction and spatial-clone numerics (synthetic)
         run: python -m ntr.nerva.validate_source_direction_physics_audit
 
+      - name: Validate source-site conditional angular and energy covariance identities
+        run: python -m ntr.nerva.validate_source_clone_moment_closure
+
       - name: Validate time-resolved actual-source-bank trajectory numerics (synthetic)
         run: python -m ntr.nerva.validate_source_bank_trajectory
 
