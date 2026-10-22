@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 import tempfile
+from unittest.mock import patch
+
+import openmc.data
+
+from .config import NervaConfig
+from .audit_nuclear_data_temperatures import audit_temperature_coverage
 
 from .nuclear_data import _library_entries, required_neutron_nuclides
 
@@ -98,6 +104,98 @@ def main() -> int:
             assert "missing path" in str(exc)
         else:
             raise AssertionError("missing nuclear data path accepted")
+
+    # Synthetic HDF5-reader fixtures below are only negative physical
+    # preflight tests. Genuine evaluated HDF5 and transport remain mandatory.
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        nuclides = required_neutron_nuclides()
+        for name in nuclides:
+            (root / (name + ".h5")).write_bytes(b"synthetic-invalid-hdf5")
+        xml = root / "cross_sections.xml"
+        def make_index(duplicate=False):
+            library = [
+                f'<library materials="{name}" path="{name}.h5" type="neutron"/>'
+                for name in nuclides
+            ]
+            if duplicate:
+                library.append('<library materials="H1" path="H1.h5" type="neutron"/>')
+            xml.write_text(
+                "<cross_sections>"+"".join(library)+"</cross_sections>",
+                encoding="utf-8"
+            )
+
+        reference = 293.6059129982851
+        class FakeIncidentNeutron:
+            def __init__(self, name, values=None):
+                self.name = name
+                self.kTs = [
+                    float(t) * openmc.data.K_BOLTZMANN
+                    for t in (values if values is not None else [reference])
+                ]
+
+        def reader(path):
+            return FakeIncidentNeutron(Path(path).stem)
+
+        make_index()
+        with patch.object(openmc.data.IncidentNeutron,"from_hdf5",side_effect=reader):
+            covered = audit_temperature_coverage(
+                cross_sections=xml,config=NervaConfig(core_rings=3)
+            )
+            assert covered["model_explicit_temperature_coverage_ok"]
+            assert covered["all_indexed_required_nuclides_have_verified_hdf5_identity"]
+            assert not covered["evaluated_temperature_extrapolation_permitted"]
+
+            # A 1-K out-of-range temperature would formerly pass the 10-K
+            # nearest selector. Evaluated coverage MUST now remain false.
+            outside = audit_temperature_coverage(
+                cross_sections=xml,
+                config=NervaConfig(core_rings=3,hydrogen_temperature_k=reference+1.),
+            )
+            hydrogen = next(
+                row for row in outside["nuclides"] if row["nuclide"]=="H1"
+            )
+            assert hydrogen["explicit_requested_temperatures_in_range"] is False
+            assert hydrogen[
+                "explicit_requested_temperatures_within_nearest_tolerance"
+            ] is False
+            assert not outside["model_explicit_temperature_coverage_ok"]
+
+        def swapped(path):
+            name = Path(path).stem
+            return FakeIncidentNeutron("U235" if name == "H1" else name)
+        with patch.object(openmc.data.IncidentNeutron,"from_hdf5",side_effect=swapped):
+            report = audit_temperature_coverage(
+                cross_sections=xml,config=NervaConfig(core_rings=3)
+            )
+            h1 = next(row for row in report["nuclides"] if row["nuclide"]=="H1")
+            assert "identity mismatch" in h1["load_error"]
+            assert not report["all_indexed_required_nuclides_have_verified_hdf5_identity"]
+            assert not report["model_explicit_temperature_coverage_ok"]
+
+        def broken_grid(path):
+            name = Path(path).stem
+            return FakeIncidentNeutron(
+                name, [reference,float("nan")] if name=="H1" else [reference]
+            )
+        with patch.object(openmc.data.IncidentNeutron,"from_hdf5",side_effect=broken_grid):
+            report = audit_temperature_coverage(
+                cross_sections=xml,config=NervaConfig(core_rings=3)
+            )
+            h1 = next(row for row in report["nuclides"] if row["nuclide"]=="H1")
+            assert "invalid evaluated neutron temperature grid" in h1["load_error"]
+            assert not report["model_explicit_temperature_coverage_ok"]
+
+        make_index(duplicate=True)
+        with patch.object(openmc.data.IncidentNeutron,"from_hdf5",side_effect=reader):
+            try:
+                audit_temperature_coverage(
+                    cross_sections=xml,config=NervaConfig(core_rings=3)
+                )
+            except ValueError as exc:
+                assert "ambiguous duplicate" in str(exc)
+            else:
+                raise AssertionError("duplicate neutron cross-section index accepted")
 
     print("NERVA nuclear-data preflight validation: PASS")
     print(f"  required model nuclides: {len(required)}")
