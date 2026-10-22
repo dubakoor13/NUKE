@@ -141,7 +141,7 @@ def main():
     reject(lambda:run(right=altered),"saved HDF5 source banks")
     altered=deepcopy(b)
     altered[2]["runs"][0]["snapshots"][-1]["statepoint_sha256"]="f"*64
-    reject(lambda:run(right=altered),"same HDF5 source particles")
+    reject(lambda:run(right=altered),"different HDF5 source particles")
     altered=deepcopy(b)
     altered[3]["statepoint_sha256"][0]="f"*64
     reject(lambda:run(right=altered),"different evaluated neutron data or HDF5")
