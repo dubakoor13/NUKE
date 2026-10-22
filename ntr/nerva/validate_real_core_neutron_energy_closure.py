@@ -40,6 +40,7 @@ def main() -> int:
     reject(lambda:_equal(mat,altered,"finite test"),"finite test")
     crossed=groups.copy()
     crossed[2,1]=.626
+    crossed[3,0]=.626
     reject(lambda:spectral_fractions(crossed,intensity),"crosses")
     print("Neutron energy filter boundaries, material partition and truncation rejection: PASS")
     print("All energy/reaction fixtures SYNTHETIC; actual C++ OpenMC required separately")
