@@ -6,6 +6,34 @@
 
 **Important:** The printed page number in the book is **NOT** necessarily the same as the PDF viewer's 1-based page number. The repository's `emrich_reference_audit.py` opens the **actual checked-in PDF**, records SHA-256 and all chapter-heading page candidates, and stores a machine-readable `emrich_2023_pdf_chapter_audit.json` as a GitHub Actions artifact. Use its page numbers to open and visually inspect any quoted equation or figure; **do not invent equation, figure, table, or PDF page numbers**. No equations or numerical historical test datasets have yet been certified as extracted.
 
+## First verified source-PDF identity and chapter locations
+
+The real repository PDF has **429 PDF pages** and SHA-256
+`5a7e3a017edc604045f26924199299db24bbe2df681671e23d016ee998c56740`
+as extracted by the dedicated GitHub Actions PDF audit. At least seven
+independent 2023 chapter-heading locations consistently give **PDF page =
+printed page + 14**. This index is edition-specific, not an equation
+transcription. A few chapters use difficult embedded fonts and their text
+headings may not be searchable, so such page references are marked inferred.
+
+| Chapter | 2023 printed start | Real PDF viewer page | Source of location |
+|---|---:|---:|---|
+| Ch. 5 — Nuclear structure/processes | 59 | 73 | Actual PDF chapter heading verified |
+| Ch. 6 — Neutron flux energy distribution | 97 | 111 | **Inferred only** from seven+ verified chapter offsets; visually check heading |
+| Ch. 7 — Neutron balance/transport | 107 | 121 | Actual PDF chapter heading verified |
+| Ch. 8 — Multigroup diffusion equations | 115 | 129 | Actual PDF chapter heading verified |
+| Ch. 9 — Thermal-fluid aspects | 135 | 149 | **Inferred only** from chapter offsets; visually check heading |
+| Ch. 11 — Reactor kinetics | 187 | 201 | Actual PDF chapter heading verified |
+| Ch. 13 — Fuel burnup/transmutation | 251 | 265 | Actual PDF chapter heading verified |
+| Ch. 15 — Nuclear rocket materials | 287 | 301 | Actual PDF chapter heading verified |
+| Ch. 16 — Nuclear rocket testing | 305 | 319 | Actual PDF chapter heading verified |
+| Appendix III — Selected NERVA test data | Not yet recorded | 411 | Actual PDF appendix heading verified |
+
+When using individual equations, figures, tabular NERVA measurements or
+subsections, **open and visually check the exact source page** rather than
+assuming a chapter index alone authenticates the contents. Neither textbook
+examples nor compiled test data replace original NASA reports.
+
 ## What this source can and cannot validate
 
 | Level | Evidence needed | Validating role of Emrich |
