@@ -53,9 +53,8 @@ def main() -> int:
         assert not result["self_sustaining_reactor_criticality_validated"]
         path = fixture(Path(temporary))
         make_on(path, broken=True)
-        # With 0.02 missing source neutrons this breaches the explicit source
-        # conservation screen when asked for stricter physical closure.
-        # Tamper 0.05 daughters instead to exceed the initial 0.025 screen.
+        # Missing fission daughters must violate particle conservation;
+        # this is an exact event-count identity, not an uncertainty band.
         with h5py.File(path, "r+") as h:
             moments = h["tallies"]["tally 1"]["results"]
             data = moments[()]
