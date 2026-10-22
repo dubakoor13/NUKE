@@ -28,6 +28,10 @@ on:
       - 'ntr/nerva/validate_source_phase_space_audit.py'
       - 'ntr/nerva/validate_source_energy_audit.py'
       - 'ntr/nerva/heating_data_qualification.py'
+      - 'ntr/nerva/executed_material_kerma_qualification.py'
+      - 'ntr/nerva/validate_executed_material_kerma_qualification.py'
+      - 'ntr/nerva/audit_kerma_coverage.py'
+      - 'ntr/nerva/mt901_numeric.py'
       - 'ntr/nerva/validate_heating_data_qualification.py'
       - 'ntr/nerva/validate_source_resolution_audit.py'
       - 'ntr/nerva/validate_source_bank_trajectory.py'
@@ -97,6 +101,7 @@ jobs:
               python -m ntr.nerva.validate_nuclear_data
               python -m ntr.nerva.validate_core_material_temperature_qualification
               python -m ntr.nerva.validate_heating_data_qualification
+              python -m ntr.nerva.validate_executed_material_kerma_qualification
               python -m ntr.nerva.run_real_core_replicas \
                 --rings 3 --particles 3000 --batches 120 --inactive 30 \
                 --source-bank-batches 40 60 80 100 120 \
@@ -139,6 +144,19 @@ jobs:
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/heating_data_qualification.json
               python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/heating_data_qualification.json\")); assert p[\"all_real_statepoints_have_usable_neutron_local_heating\"] is False, \"Changed NNDC heating behavior: reevaluate data physics\"; print(\"Cold NNDC nuclear-heating support: FAIL (expected physical qualification)\")"
+
+              # Match ACTUAL executed materials.xml from each real OpenMC seed
+              # against the ACTUAL HDF5-inspected physical MT901 inventory,
+              # with strict nuclear-data-library hashes and statepoint hashes.
+              python -m ntr.nerva.audit_kerma_coverage \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --output /repo/build/nerva_real_core/evaluated_kerma_inventory.json
+              python -m ntr.nerva.executed_material_kerma_qualification \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --inventory /repo/build/nerva_real_core/evaluated_kerma_inventory.json \
+                --output /repo/build/nerva_real_core/executed_material_kerma_qualification.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/executed_material_kerma_qualification.json\")); assert p[\"physical_material_count\"]==9; assert p[\"required_executed_neutron_nuclide_count\"]==29; assert len(p[\"material_regions_without_complete_evaluated_mt901\"])==9; assert not p[\"thermal_power_normalization_allowed\"]; print(\"REAL executed 9/9 physical materials missing local-neutron KERMA data: independently verified\")"
+
             '
 
       - name: Persist physical-statepoint evidence even when transport fails
