@@ -22,6 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .neutron_economy_uncertainty import quantify_seed_economy_uncertainty
+
 
 def _sha(file: Path) -> str:
     h=hashlib.sha256()
@@ -262,6 +264,10 @@ def audit_real_neutron_economy(
                            for v in seed_rows]))
         for key in key_names
     }
+    # Treat the four independent RNG runs (not correlated batches or
+    # within-generation neutrons) as sampling units. Preserve the joint
+    # covariance of absorption + leakage - neutron-producing scattering.
+    uncertainty=quantify_seed_economy_uncertainty(seed_rows)
     leakage_dominates=all(
         v["mean_vacuum_leakage_fraction_of_all_terminals"]>.9
         for v in seed_rows
@@ -279,6 +285,7 @@ def audit_real_neutron_economy(
         "saved_checkpoint_count":len(all_hashes),
         "evaluated_nuclear_data_sha256":summary["cross_sections_xml_sha256"],
         "mean_per_starting_neutron":means,
+        "correlated_independent_seed_uncertainty":uncertainty,
         "vacuum_leakage_dominates_terminal_neutron_losses":leakage_dominates,
         "per_seed":seed_rows,
         "independent_neutron_genealogy_or_spatial_source_stationarity_validated":False,
