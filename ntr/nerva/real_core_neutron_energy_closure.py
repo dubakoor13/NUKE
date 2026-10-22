@@ -100,12 +100,30 @@ def inspect_energy_statepoint(path: Path, *, fission_daughters: bool) -> dict:
                 or any(s not in en_labels for s in (*NEUTRON_SCORES,"heating-local"))):
             raise ValueError("missing actual neutron flux, absorption and fission scores")
         energy = en_score.reshape(len(mat_id),groups,len(en_labels))
-        # Energy-group spectrum must not silently truncate the source phase space.
+        # Distinguish rare genuine out-of-window events from arithmetic
+        # roundoff. OpenMC energy filters cover a FINITE 1e-5..2e7 eV
+        # domain, whereas the material-only tally has no energy cut.
+        # A small closure residual can occur in a real history (observed in
+        # the Be reflector for seed 33013), and MUST be exposed.
+        truncated = []
+        max_fraction_unassigned = 0.0
         for score in (*NEUTRON_SCORES,"heating-local"):
             if score not in mat_labels: raise ValueError("unfiltered score missing: "+score)
             comparison=energy[:,:,en_labels.index(score)].sum(axis=1)
             baseline=mat_score[:,mat_labels.index(score)]
             _equal(comparison, baseline, "incident energy coverage for "+score)
+            residual = baseline - comparison
+            for k, missing in enumerate(residual):
+                if abs(missing) > 1e-11:
+                    fraction = abs(float(missing)) / max(abs(float(baseline[k])),1e-15)
+                    max_fraction_unassigned = max(max_fraction_unassigned, fraction)
+                    truncated.append({
+                        "material_id":int(mat_id[k]),
+                        "material_name":known[int(mat_id[k])],
+                        "reaction_score":score,
+                        "unassigned_score_per_external_source":float(missing),
+                        "fraction_of_unfiltered_material_score":fraction,
+                    })
         grouped = {s:energy[:,:,en_labels.index(s)] for s in NEUTRON_SCORES}
         if any(np.any(x < -1e-10) for x in grouped.values()):
             raise ValueError("nonphysical negative neutron tracklength or reaction intensity")
@@ -152,7 +170,11 @@ def inspect_energy_statepoint(path: Path, *, fission_daughters: bool) -> dict:
             "all_materials_energy_integral_closes_unfiltered_scores":True,
             "nested_fuel_hydrogen_spectra_match":True,
             "spatial_mesh_and_spectral_neutron_scores_close":True,
-            "incident_energy_range_verified_by_independent_unfiltered_tallies":True,
+            "incident_energy_window_audited_against_unfiltered_tallies":True,
+            "exact_energy_window_coverage_demonstrated":len(truncated)==0,
+            "observed_out_of_window_or_nonroundoff_score_residuals":truncated,
+            "maximum_material_relative_unassigned_reaction_score":max_fraction_unassigned,
+            "unassigned_energy_above_or_below_window_individually_identified":False,
             "whole_core_integral_flux_per_external_source":float(groups_all.sum()),
             "whole_core_incident_energy_flux_fractions":spectrum,
             "fuel_hydrogen":specials,
@@ -193,6 +215,17 @@ def audit_eight_statepoint_energy(root: Path, *, batches: int=30,
         "independent_seed_pairs":4,
         "genuine_statepoint_count":8,
         "material_energy_unfiltered_and_3d_spatial_integral_closure":True,
+        "spectral_range_not_assumed_to_be_exhaustive":True,
+        "maximum_observed_unassigned_material_score_fraction":max(
+            r[mode]["maximum_material_relative_unassigned_reaction_score"]
+            for r in rows for mode in ("off","on")
+        ),
+        "real_materials_with_nonroundoff_out_of_window_scores":[
+            {"seed":r["seed"],"mode":mode,
+             "residuals":r[mode]["observed_out_of_window_or_nonroundoff_score_residuals"]}
+            for r in rows for mode in ("off","on")
+            if r[mode]["observed_out_of_window_or_nonroundoff_score_residuals"]
+        ],
         "incident_neutron_energy_group_boundaries_ev":list(ENERGY_LIMITS_EV),
         "flux_spectrum_fractions_by_mode":measurements,
         "per_seed":rows,
@@ -202,8 +235,9 @@ def audit_eight_statepoint_energy(root: Path, *, batches: int=30,
         "interpretation":(
             "These are incident-energy tracklength neutron spectra per injected "
             "external neutron, not normalized reactor flux or temperature. "
-            "Independent unfiltered tallies establish no missing scored "
-            "flux/absorption/fission outside the examined energy domain. "
+            "Independent unfiltered tallies QUANTIFY any scored contribution "
+            "outside the finite incident-energy window, including tiny "
+            "non-roundoff residuals; the side of the boundary is unresolved. "
             "Spectral changes do not qualify operating-temperature data, "
             "eigenvalue fission source, or local heating."),
     }
