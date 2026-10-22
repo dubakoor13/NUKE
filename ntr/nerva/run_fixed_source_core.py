@@ -59,10 +59,9 @@ def main() -> int:
     write_report(nuclear, root / "evaluated_neutron_data_preflight.json")
     if not nuclear.ready:
         raise RuntimeError("actual OpenMC neutron-data physical preflight failed")
-    model = build_model(cfg, assembly="core")
+    model = build_model(cfg, assembly="core", eigenvalue_entropy_mesh=False)
     model.settings.run_mode = "fixed source"
     model.settings.inactive = 0
-    model.settings.entropy_mesh = None
     model.settings.create_fission_neutrons = False
     model.settings.statepoint = {"batches": [a.batches]}
     # Same explicitly declared fissionable-region initial source as the
