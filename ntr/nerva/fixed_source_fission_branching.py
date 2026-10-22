@@ -100,7 +100,10 @@ def read_branching_fixed_source_balance(statepoint: Path) -> dict:
             or not all(math.isfinite(x) for x in scores.values())):
         raise ValueError("physically missing fission neutrons or invalid neutron fate")
     total = absorption + leakage - scatter_extra - fission_daughters
-    if abs(total - 1.0) > 0.025:
+    # Genuine four-seed analog event accounting closed below 1e-14.
+    # Enforce the particle-conservation identity at numerical accuracy,
+    # not a loose Monte Carlo statistical comparison.
+    if abs(total - 1.0) > 1e-6:
         raise ValueError("fission-branching neutron production and loss do not conserve source")
     return {
         "seed": seed,
