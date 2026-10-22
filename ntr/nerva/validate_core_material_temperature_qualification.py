@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 
 from .core_material_temperature_qualification import (
     _executed_material_inventory,
+    _root_reachable_temperature_materials,
     _settings_temperature,
     evaluate_executed_neutron_temperatures,
     audit_actual_core_neutron_temperature,
@@ -70,6 +71,70 @@ def main()->int:
         assert settings["explicit_openmc_settings_default_temperature_K"] is None
         result=evaluate_executed_neutron_temperatures(mats,temp,settings)
         assert result["number_of_physical_materials"]==9
+        # The generic reducer is intentionally also tested against the
+        # full declared library; the production real-core audit MUST pass
+        # ONLY geometry-reachable physical materials to the reducer.
+        geom=ET.Element("geometry")
+        for idx,(mid,universe) in enumerate(
+            ((19,1),(20,2),(21,3),(22,5)),start=1
+        ):
+            ET.SubElement(geom,"cell",{
+                "id":str(idx),"name":f"actual region {mid}",
+                "material":str(mid),"universe":str(universe),
+            })
+        ET.SubElement(geom,"cell",{
+            "id":"9","name":"physical root lattice",
+            "fill":"10","universe":"4",
+        })
+        lattice=ET.SubElement(geom,"hex_lattice",{
+            "id":"10","n_rings":"2",
+        })
+        ET.SubElement(lattice,"universes").text="1 2 3 5"
+        geom_path=root/"geometry.xml"
+        ET.ElementTree(geom).write(geom_path,encoding="utf-8")
+        reachable,ids=_root_reachable_temperature_materials(mats,geom_path)
+        assert ids=={19,20,21,22}
+        assert [m["material_id"] for m in reachable]==[19,20,21,22]
+        assert all(m["reachable_executed_cells"] for m in reachable)
+        actual_isotopes={n for m in reachable for n in m["nuclides"]}
+        assert actual_isotopes.issubset(temp)
+        qualified_for_executed_geometry=evaluate_executed_neutron_temperatures(
+            reachable,{k:v for k,v in temp.items() if k in actual_isotopes},
+            settings,
+        )
+        assert qualified_for_executed_geometry["number_of_physical_materials"]==4
+        assert qualified_for_executed_geometry["number_with_explicit_exported_temperature"]==1
+        assert qualified_for_executed_geometry["number_relying_on_implicit_temperature"]==3
+        assert qualified_for_executed_geometry["evaluated_neutron_nuclide_count"]==len(actual_isotopes)
+        assert not qualified_for_executed_geometry["hot_operating_temperature_neutron_physics_qualified"]
+        # A missing evaluated nuclide in a *defined but unplaced* material
+        # may not falsely block executed geometry; the same missing isotope
+        # in a reachable material must be rejected.
+        unused_only={k:v for k,v in temp.items() if k in actual_isotopes}
+        evaluated=evaluate_executed_neutron_temperatures(
+            reachable,unused_only,settings
+        )
+        assert evaluated["evaluated_neutron_nuclide_count"]==len(actual_isotopes)
+        occupied=deepcopy(geom)
+        occupied.findall("cell")[3].set("material","24")
+        ET.ElementTree(occupied).write(geom_path,encoding="utf-8")
+        switched,ids=_root_reachable_temperature_materials(mats,geom_path)
+        assert 24 in ids and 22 not in ids and len(switched)==4
+        assert "conceptual zirconium-hydride moderator" in [
+            m["material_name"] for m in switched
+        ]
+        # Failure to load HDF5 for this newly reachable moderator MUST fail.
+        mod_iso={n for m in switched for n in m["nuclides"]}
+        reject(lambda:evaluate_executed_neutron_temperatures(
+            switched,{k:v for k,v in temp.items() if k in mod_iso and k!="Zr90"},
+            settings
+        ),"missing/invalid")
+        occupied.findall("cell")[3].set("material","999")
+        ET.ElementTree(occupied).write(geom_path,encoding="utf-8")
+        reject(lambda:_root_reachable_temperature_materials(mats,geom_path),
+               "missing physical material")
+        ET.ElementTree(geom).write(geom_path,encoding="utf-8")
+        assert _root_reachable_temperature_materials(mats,geom_path)[1]=={19,20,21,22}
         assert result["number_with_explicit_exported_temperature"]==1
         assert result["number_relying_on_implicit_temperature"]==8
         assert len(result["evaluated_neutron_temperature_values_K"])==1
