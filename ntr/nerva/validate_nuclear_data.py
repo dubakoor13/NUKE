@@ -140,7 +140,7 @@ def main() -> int:
         make_index()
         with patch.object(openmc.data.IncidentNeutron,"from_hdf5",side_effect=reader):
             covered = audit_temperature_coverage(
-                cross_sections=xml,config=NervaConfig(core_rings=3)
+                cross_sections=xml,config=NervaConfig(core_rings=3,hydrogen_temperature_k=reference)
             )
             assert covered["model_explicit_temperature_coverage_ok"]
             assert covered["all_indexed_required_nuclides_have_verified_hdf5_identity"]
@@ -166,7 +166,7 @@ def main() -> int:
             return FakeIncidentNeutron("U235" if name == "H1" else name)
         with patch.object(openmc.data.IncidentNeutron,"from_hdf5",side_effect=swapped):
             report = audit_temperature_coverage(
-                cross_sections=xml,config=NervaConfig(core_rings=3)
+                cross_sections=xml,config=NervaConfig(core_rings=3,hydrogen_temperature_k=reference)
             )
             h1 = next(row for row in report["nuclides"] if row["nuclide"]=="H1")
             assert "identity mismatch" in h1["load_error"]
@@ -180,7 +180,7 @@ def main() -> int:
             )
         with patch.object(openmc.data.IncidentNeutron,"from_hdf5",side_effect=broken_grid):
             report = audit_temperature_coverage(
-                cross_sections=xml,config=NervaConfig(core_rings=3)
+                cross_sections=xml,config=NervaConfig(core_rings=3,hydrogen_temperature_k=reference)
             )
             h1 = next(row for row in report["nuclides"] if row["nuclide"]=="H1")
             assert "invalid evaluated neutron temperature grid" in h1["load_error"]
@@ -190,7 +190,7 @@ def main() -> int:
         with patch.object(openmc.data.IncidentNeutron,"from_hdf5",side_effect=reader):
             try:
                 audit_temperature_coverage(
-                    cross_sections=xml,config=NervaConfig(core_rings=3)
+                    cross_sections=xml,config=NervaConfig(core_rings=3,hydrogen_temperature_k=reference)
                 )
             except ValueError as exc:
                 assert "ambiguous duplicate" in str(exc)
