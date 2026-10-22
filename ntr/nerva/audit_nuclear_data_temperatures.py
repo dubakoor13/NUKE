@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import openmc.data
@@ -50,6 +51,10 @@ def audit_temperature_coverage(
             continue
         file_path = Path(entry.resolved_path)
         for material in entry.materials:
+            if material in neutron_paths:
+                raise ValueError(
+                    "ambiguous duplicate evaluated neutron-data index for " + material
+                )
             neutron_paths[material] = file_path
 
     requested = _requested_temperatures(config)
@@ -82,15 +87,24 @@ def audit_temperature_coverage(
             data = openmc.data.IncidentNeutron.from_hdf5(
                 file_path
             )
+            if data.name != nuclide:
+                raise ValueError(
+                    f"evaluated neutron HDF5 identity mismatch: "
+                    f"index={nuclide}, file={data.name}"
+                )
+            temperatures = [
+                float(kT / openmc.data.K_BOLTZMANN)
+                for kT in data.kTs
+            ]
+            if (not temperatures
+                    or any(not math.isfinite(t) or t <= 0 for t in temperatures)
+                    or len(temperatures) != len(set(temperatures))):
+                raise ValueError("invalid evaluated neutron temperature grid")
+            temperatures.sort()
         except Exception as exc:
             row["load_error"] = f"{type(exc).__name__}: {exc}"
             rows.append(row)
             continue
-
-        temperatures = sorted(
-            float(kT / openmc.data.K_BOLTZMANN)
-            for kT in data.kTs
-        )
         row["available_temperatures_K"] = temperatures
         if temperatures:
             row["available_min_K"] = temperatures[0]
@@ -113,7 +127,9 @@ def audit_temperature_coverage(
                     else 10.0
                 )
                 row["explicit_requested_temperatures_within_nearest_tolerance"] = all(
-                    min(abs(x-value) for x in temperatures) <= tol + 1e-9
+                    math.isfinite(value)
+                    and temperatures[0] <= value <= temperatures[-1]
+                    and min(abs(x-value) for x in temperatures) <= tol + 1e-9
                     for value in explicit
                 )
 
@@ -142,6 +158,7 @@ def audit_temperature_coverage(
     ]
     explicit_coverage_ok = all(
         row["load_error"] is None
+        and row["explicit_requested_temperatures_in_range"] is True
         and row["explicit_requested_temperatures_within_nearest_tolerance"] is True
         for row in explicit_rows
     )
@@ -156,6 +173,10 @@ def audit_temperature_coverage(
             else 10.0
         ),
         "model_explicit_temperature_coverage_ok": explicit_coverage_ok,
+        "evaluated_temperature_extrapolation_permitted": False,
+        "all_indexed_required_nuclides_have_verified_hdf5_identity": all(
+            row["load_error"] is None for row in rows
+        ),
         "nuclides": rows,
         "interpretation": (
             "Read-only audit of available neutron-data temperatures. "
