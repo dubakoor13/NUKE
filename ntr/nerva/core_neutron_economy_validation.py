@@ -95,8 +95,7 @@ def analyze_neutron_economy_window(
     for ident in reachable_ids-{fuel_material_id}:
         if by_id[ident][1]>max(1e-10,1e-6*original_fission):
             raise ValueError("neutron fission wrongly scored outside physical fuel material")
-    if (by_id[fuel_material_id][1]<=0
-            or set(material_ids)!=reachable_ids.union(set(material_ids)-reachable_ids)):
+    if by_id[fuel_material_id][1]<=0:
         raise ValueError("no genuine fission-producing core material")
     balance=absorption+leakage-scattering
     if abs(balance-1.)>1e-7:
