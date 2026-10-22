@@ -359,6 +359,9 @@ jobs:
       - name: Validate nested-resolution fission-source TV and site-cloning numerics (synthetic)
         run: python -m ntr.nerva.validate_source_resolution_audit
 
+      - name: Validate physical criticality mismatch from genuine-format OpenMC k and native neutron estimators
+        run: python -m ntr.nerva.validate_core_criticality_physical_qualification
+
       - name: Validate actual eigenvalue generation-history checkpoint prefix integrity and split-chain k statistics
         run: python -m ntr.nerva.validate_real_core_keff_history_qualification
 
