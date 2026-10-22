@@ -112,7 +112,7 @@ def main() -> int:
         reject(lambda:calculate_fission_yield_windows(fail,19),"source seed")
         fail=deepcopy(rows)
         fail[-1]["energy_edges_ev"][-1] *=2
-        reject(lambda:calculate_fission_yield_windows(fail,19),"energy")
+        reject(lambda:calculate_fission_yield_windows(fail,19),"neutron filter")
         fail=deepcopy(rows)
         fail[-1]["material_energy"][0,2,3] += 1.
         reject(lambda:calculate_fission_yield_windows(fail,19),"production")
