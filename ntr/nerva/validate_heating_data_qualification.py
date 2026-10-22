@@ -116,6 +116,7 @@ def main() -> int:
     )
     assert healthy["neutron_only_local_heating_data_usable"]
     assert healthy["local_heating_statistically_resolved"]
+    assert not healthy["thermal_power_normalization_allowed"]
     noisy = evaluate_heating_scores(
         {**mesh,"heating-local":7.5e5},
         {**material,"heating-local":7.5e5},
@@ -158,7 +159,8 @@ def main() -> int:
         assert not report["thermal_power_normalization_allowed"]
         mock_statepoint(file,local=700000)
         report = inspect_statepoint(file)
-        assert report["thermal_power_normalization_allowed"]
+        assert report["neutron_only_local_heating_data_usable"]
+        assert not report["thermal_power_normalization_allowed"]
         assert report["active_tally_realizations"] == 40
         assert report["local_heating_statistically_resolved"]
         assert report["mesh_local_heating_conservative_sem_upper_bound"] == 0.0
