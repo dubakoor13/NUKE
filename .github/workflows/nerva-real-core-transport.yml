@@ -15,6 +15,8 @@ on:
       - 'ntr/nerva/core_reaction_history.py'
       - 'ntr/nerva/core_reaction_estimator_agreement.py'
       - 'ntr/nerva/core_neutron_leakage_history.py'
+      - 'ntr/nerva/core_fission_yield_energy.py'
+      - 'ntr/nerva/validate_core_fission_yield_energy.py'
       - 'ntr/nerva/validate_core_neutron_leakage_history.py'
       - 'ntr/nerva/validate_core_reaction_estimator_agreement.py'
       - 'ntr/nerva/validate_core_reaction_history.py'
@@ -87,6 +89,7 @@ jobs:
               python -m ntr.nerva.validate_core_reaction_history
               python -m ntr.nerva.validate_core_reaction_estimator_agreement
               python -m ntr.nerva.validate_core_neutron_leakage_history
+              python -m ntr.nerva.validate_core_fission_yield_energy
               python -m ntr.nerva.validate_heating_data_qualification
               python -m ntr.nerva.run_real_core_replicas \
                 --rings 3 --particles 3000 --batches 120 --inactive 30 \
@@ -117,6 +120,9 @@ jobs:
               python -m ntr.nerva.core_neutron_leakage_history \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/core_neutron_leakage_history.json
+              python -m ntr.nerva.core_fission_yield_energy \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --output /repo/build/nerva_real_core/core_fission_yield_energy.json
               python -m ntr.nerva.heating_data_qualification \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/heating_data_qualification.json
