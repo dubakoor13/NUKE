@@ -11,6 +11,8 @@ on:
       - 'ntr/nerva/validate_fixed_source_spatial_response.py'
       - 'ntr/nerva/real_core_neutron_energy_closure.py'
       - 'ntr/nerva/validate_real_core_neutron_energy_closure.py'
+      - 'ntr/nerva/real_neutron_energy_tail_attribution.py'
+      - 'ntr/nerva/validate_real_neutron_energy_tail_attribution.py'
       - 'ntr/nerva/run_fixed_source_core.py'
       - 'ntr/nerva/fixed_source_core_physics.py'
       - 'ntr/nerva/model.py'
@@ -47,10 +49,19 @@ jobs:
               python -m ntr.nerva.validate_fixed_source_fission_branching
               python -m ntr.nerva.validate_fixed_source_spatial_response
               python -m ntr.nerva.validate_real_core_neutron_energy_closure
+              python -m ntr.nerva.validate_real_neutron_energy_tail_attribution
               python -m ntr.nerva.run_fixed_source_fission_branching \
                 --seeds 13007 23011 33013 43019 \
                 --particles 3000 --batches 30 \
                 --output /repo/build/nerva_fission_branching
+              # Explicitly score energies below 1e-5 eV and above 20 MeV,
+              # not just the legacy incident-energy window. Attribute
+              # any measurable material reaction-score imbalance to actual
+              # scored tails, or report it unresolved without guessing.
+              python -m ntr.nerva.real_neutron_energy_tail_attribution \
+                --root /repo/build/nerva_fission_branching \
+                --output /repo/build/nerva_fission_branching/real_neutron_energy_tail_attribution.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_fission_branching/real_neutron_energy_tail_attribution.json\")); assert p[\"native_hdf5_statepoint_count\"]==8; assert p[\"independent_seed_pairs\"]==4; assert p[\"all_actual_material_energy_partitions_numerically_conserved\"]; assert p[\"all_measured_nonroundoff_legacy_residuals_accounted_for_by_scored_tails\"]; assert not p[\"hot_nuclear_data_physically_qualified\"]; assert all(r[mode][\"independent_window_partition_conserved\"] for r in p[\"per_seed\"] for mode in (\"off\",\"on\")); print(\"REAL OpenMC independently scored neutron underflow/middle/overflow: audited without forcing energy-window closure\")"
               python -m ntr.nerva.real_core_neutron_energy_closure \
                 --root /repo/build/nerva_fission_branching \
                 --output /repo/build/nerva_fission_branching/real_core_neutron_energy_closure.json
