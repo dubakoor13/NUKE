@@ -43,7 +43,9 @@ def _name_bytes(value) -> str:
     raise ValueError("invalid OpenMC HDF5 byte string")
 
 
-def _score_totals(tallies, tally_name: str, scores: tuple[str, ...]) -> dict:
+def _score_totals(tallies, tally_name: str, scores: tuple[str, ...], *,
+                  expected_active_batches: int) -> tuple[dict, dict]:
+    """Read actual OpenMC first and second moments for active-batch uncertainty."""
     candidates = [
         item for item in tallies.values()
         if isinstance(item, h5py.Group) and "name" in item
@@ -53,8 +55,8 @@ def _score_totals(tallies, tally_name: str, scores: tuple[str, ...]) -> dict:
         raise ValueError("missing or duplicate genuine OpenMC tally " + tally_name)
     tally = candidates[0]
     n = int(tally["n_realizations"][()])
-    if n < 2:
-        raise ValueError("OpenMC heating tally has fewer than two active batches")
+    if n < 2 or n != expected_active_batches:
+        raise ValueError("OpenMC heating tally active realizations mismatch executed batches")
     labels = [_name_bytes(v) for v in tally["score_bins"][()]]
     if len(set(labels)) != len(labels):
         raise ValueError("duplicate OpenMC reaction score")
@@ -63,20 +65,36 @@ def _score_totals(tallies, tally_name: str, scores: tuple[str, ...]) -> dict:
             or not np.isfinite(results).all()):
         raise ValueError("invalid OpenMC heating tally array")
     ret = {}
+    sem_bounds = {}
     for score in scores:
         if score not in labels:
             raise ValueError("required OpenMC heating score absent: " + score)
-        vals = results[:, labels.index(score), 0] / n
-        if not np.isfinite(vals).all():
-            raise ValueError("nonfinite deposited-energy tally")
+        first = results[:, labels.index(score), 0]
+        second = results[:, labels.index(score), 1]
+        vals = first / n
+        mean_square = second / n
+        if not np.isfinite(vals).all() or np.any(second < 0):
+            raise ValueError("nonfinite or negative deposited-energy tally moments")
+        # E[X²] >= E[X]², allowing only IEEE-754 roundoff.
+        variance_numerator = mean_square - vals * vals
+        scale = np.maximum(1.0, np.maximum(np.abs(mean_square), vals * vals))
+        if np.any(variance_numerator < -1e-8 * scale):
+            raise ValueError("OpenMC heating tally second moments violate nonnegative variance")
+        per_bin_sem = np.sqrt(np.maximum(0.0, variance_numerator) / (n - 1))
         ret[score] = float(np.sum(vals, dtype=np.float64))
-    return ret
+        # Different spatial/material bins are correlated by neutron histories.
+        # Summing marginal SEMs is a conservative covariance-agnostic bound.
+        sem_bounds[score] = float(np.sum(per_bin_sem, dtype=np.float64))
+    return ret, sem_bounds
 
 
 def evaluate_heating_scores(mesh: dict[str, float],
                             material: dict[str, float],
                             *,
-                            coherence_relative_tolerance: float = 1e-8) -> dict:
+                            coherence_relative_tolerance: float = 1e-8,
+                            mesh_local_sem_upper_bound: float | None = None,
+                            material_local_sem_upper_bound: float | None = None,
+                            minimum_signal_to_sem: float = 5.0) -> dict:
     """Assess data availability, without inventing a replacement estimator.
 
     For a mesh that covers the complete reactor, 'heating' and 'heating-local'
@@ -88,6 +106,12 @@ def evaluate_heating_scores(mesh: dict[str, float],
             or coherence_relative_tolerance <= 0
             or coherence_relative_tolerance >= 0.1):
         raise ValueError("invalid mesh/material energy closure tolerance")
+    if (not math.isfinite(minimum_signal_to_sem)
+            or minimum_signal_to_sem < 1 or minimum_signal_to_sem > 20):
+        raise ValueError("invalid deposited-energy statistical-resolution threshold")
+    for bound in (mesh_local_sem_upper_bound, material_local_sem_upper_bound):
+        if bound is not None and (not math.isfinite(bound) or bound < 0):
+            raise ValueError("nonfinite/negative deposited-energy standard-error bound")
     required = set(REQUIRED_SCORES)
     if not required.issubset(mesh) or not {"heating", "heating-local"}.issubset(material):
         raise ValueError("required evaluated OpenMC heating scores missing")
@@ -105,8 +129,30 @@ def evaluate_heating_scores(mesh: dict[str, float],
     local_closed = abs(local - material_local) <= tol
     if not ordinary_closed or not local_closed:
         raise ValueError("whole-core deposited energy is not consistently scored by material")
-    # A local score consistent at zero is STILL NOT physical heating evidence.
-    usable = local > 1e-12 * max(reference, kappa)
+    # A nonzero mean alone may be unresolved Monte Carlo noise. The
+    # statepoint records per-batch moments, NOT independent neutron histories.
+    nonzero = local > 1e-12 * max(reference, kappa)
+    uncertainty_available = (
+        mesh_local_sem_upper_bound is not None
+        and material_local_sem_upper_bound is not None
+    )
+    sem_bound = (
+        max(mesh_local_sem_upper_bound, material_local_sem_upper_bound)
+        if uncertainty_available else None
+    )
+    resolved = bool(
+        uncertainty_available and nonzero
+        and (sem_bound == 0.0 or local / sem_bound >= minimum_signal_to_sem)
+    )
+    usable = resolved
+    if not nonzero:
+        status = "BLOCKED_ZERO_NEUTRON_LOCAL_HEATING"
+    elif not uncertainty_available:
+        status = "BLOCKED_MISSING_LOCAL_HEATING_STATISTICS"
+    elif not resolved:
+        status = "BLOCKED_UNRESOLVED_LOCAL_HEATING_STATISTICS"
+    else:
+        status = "LOCAL_HEATING_STATISTICALLY_RESOLVED_NOT_PHYSICALLY_VALIDATED"
     return {
         "neutron_only_required_deposition_score": heating_score_for_transport(False),
         "ordinary_heating_eV_per_source": reference,
@@ -116,17 +162,26 @@ def evaluate_heating_scores(mesh: dict[str, float],
         "material_local_heating_eV_per_source": material_local,
         "local_to_ordinary_heating_ratio": local / reference,
         "mesh_material_energy_partition_consistent": True,
-        "neutron_only_local_heating_data_usable": bool(usable),
-        "physical_heating_qualification_status": (
-            "LOCAL_HEATING_DATA_AVAILABLE_NOT_PHYSICALLY_VALIDATED" if usable
-            else "BLOCKED_ZERO_NEUTRON_LOCAL_HEATING"
+        "mesh_local_heating_conservative_sem_upper_bound":mesh_local_sem_upper_bound,
+        "material_local_heating_conservative_sem_upper_bound":material_local_sem_upper_bound,
+        "minimum_signal_to_sem_ratio":minimum_signal_to_sem,
+        "local_heating_signal_to_conservative_sem_bound":(
+            None if sem_bound is None or sem_bound == 0 else local / sem_bound
         ),
+        "local_heating_statistically_resolved":resolved,
+        "statistical_resolution_is_physical_validation":False,
+        "neutron_only_local_heating_data_usable": bool(usable),
+        "physical_heating_qualification_status":status,
         "thermal_power_normalization_allowed": bool(usable),
         "nasa_nerva_core_thermal_physics_validated": False,
         "interpretation": (
             "Standard heating and recoverable fission energy may be nonzero "
             "while evaluated heating-local is identically zero. In that case "
             "the neutron-only thermal normalization input is UNAVAILABLE. "
+            "A tiny nonzero heating-local score without numerical "
+            "resolution in executed batch moments is also inadequate. "
+            "Summed marginal SEMs conservatively bound unknown bin covariance "
+            "but do not prove fission-chain independence or historical fidelity. "
             "Do not substitute kappa-fission, distribute missing heat, "
             "or switch to ordinary heating without separately verified "
             "energy-deposition assumptions and nuclear-data coverage."
@@ -149,14 +204,24 @@ def inspect_statepoint(path: Path) -> dict:
             raise ValueError("OpenMC heating tallies not saved")
         seed = int(state["seed"][()])
         batches = int(state["current_batch"][()])
-        if seed <= 0 or batches <= 2:
+        inactive = int(state["n_inactive"][()])
+        if seed <= 0 or inactive < 0 or batches <= inactive + 1:
             raise ValueError("invalid real transport seed/batch count")
         tallies = state["tallies"]
-        mesh = _score_totals(tallies, REQUIRED_MESH, REQUIRED_SCORES)
-        material = _score_totals(
-            tallies, REQUIRED_MATERIAL, ("heating", "heating-local")
+        active = batches - inactive
+        mesh, mesh_sem = _score_totals(
+            tallies, REQUIRED_MESH, REQUIRED_SCORES,
+            expected_active_batches=active,
         )
-        report = evaluate_heating_scores(mesh, material)
+        material, material_sem = _score_totals(
+            tallies, REQUIRED_MATERIAL, ("heating", "heating-local"),
+            expected_active_batches=active,
+        )
+        report = evaluate_heating_scores(
+            mesh, material,
+            mesh_local_sem_upper_bound=mesh_sem["heating-local"],
+            material_local_sem_upper_bound=material_sem["heating-local"],
+        )
     report.update({
         "source": "OPENMC_FORMAT_EIGENVALUE_HDF5_CONTENT",
         "executable_origin_proven_by_hdf5_contents_alone": False,
@@ -164,6 +229,8 @@ def inspect_statepoint(path: Path) -> dict:
         "statepoint_path": str(path),
         "seed": seed,
         "completed_batches": batches,
+        "inactive_batches": inactive,
+        "active_tally_realizations": active,
     })
     return report
 
