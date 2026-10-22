@@ -186,6 +186,10 @@ jobs:
                 --criticality /repo/build/nerva_real_core/core_criticality_physical_qualification.json \
                 --output /repo/build/nerva_real_core/core_neutron_economy_physical_validation.json
               python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/core_neutron_economy_physical_validation.json\")); assert p[\"saved_checkpoint_count\"]==20; assert p[\"independent_seed_count\"]==4; assert p[\"vacuum_leakage_dominates_terminal_neutron_losses\"]; assert abs(p[\"mean_per_starting_neutron\"][\"native_vacuum_leakage_per_starting_neutron\"]-1.024)<.02; assert not p[\"physically_validated_critical_nerva_core\"]; print(\"Real neutron economy verified: vacuum leakage dominates, cold reactor still noncritical\")"
+              # Covariance acceptance is computed from the actual four OpenMC
+              # independent-seed means; correlated eigenvalue batches are NOT
+              # miscounted as independent statistical samples.
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/core_neutron_economy_physical_validation.json\")); u=p[\"correlated_independent_seed_uncertainty\"]; assert u[\"independent_seed_count\"]==p[\"independent_seed_count\"]==4; assert u[\"statistics\"]==\"FOUR_INDEPENDENT_OPENMC_SEED_MEANS_CORRELATED_NEUTRON_ECONOMY\"; assert sorted(u[\"seeds\"])==sorted(x[\"seed\"] for x in p[\"per_seed\"]); assert len(u[\"between_seed_sample_covariance\"])==6; assert u[\"maximum_absolute_per_seed_neutron_balance_residual\"]<1e-7; assert u[\"joint_neutron_balance_covariance_standard_error\"]<1e-7; assert not u[\"formal_monte_carlo_confidence_coverage_established\"]; assert not u[\"source_bank_stationarity_validated\"]; print(\"Real HDF5 four-seed correlated neutron-balance and paired-tally uncertainty: PASS; source stationarity NOT established\")"
               python -m ntr.nerva.core_fission_yield_energy \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/core_fission_yield_energy.json
