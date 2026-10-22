@@ -7,6 +7,8 @@ on:
       - 'ntr/nerva/fixed_source_fission_branching.py'
       - 'ntr/nerva/run_fixed_source_fission_branching.py'
       - 'ntr/nerva/validate_fixed_source_fission_branching.py'
+      - 'ntr/nerva/fixed_source_spatial_response.py'
+      - 'ntr/nerva/validate_fixed_source_spatial_response.py'
       - 'ntr/nerva/run_fixed_source_core.py'
       - 'ntr/nerva/fixed_source_core_physics.py'
       - 'ntr/nerva/model.py'
@@ -41,10 +43,15 @@ jobs:
               test -f "$OPENMC_CROSS_SECTIONS"
               python -m ntr.nerva.validate_fixed_source_core_physics
               python -m ntr.nerva.validate_fixed_source_fission_branching
+              python -m ntr.nerva.validate_fixed_source_spatial_response
               python -m ntr.nerva.run_fixed_source_fission_branching \
                 --seeds 13007 23011 33013 43019 \
                 --particles 3000 --batches 30 \
                 --output /repo/build/nerva_fission_branching
+              python -m ntr.nerva.fixed_source_spatial_response \
+                --root /repo/build/nerva_fission_branching \
+                --output /repo/build/nerva_fission_branching/real_spatial_neutron_response.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_fission_branching/real_spatial_neutron_response.json\")); assert p[\"real_hdf5_statepoints\"]==8; assert p[\"independent_seed_pairs\"]==4; assert p[\"real_whole_core_axial_and_3d_flux_fission_nufission_conserved\"]; assert p[\"physically_identical_geometry_materials_tallies\"]; assert not p[\"criticality_or_eigenvalue_source_stationarity_validated\"]; assert all(0 <= item[mode][\"scores\"][\"nu-fission\"][\"relative_mesh_integral_error\"] < 1e-8 for item in p[\"seeds\"] for mode in (\"fission_on\", \"fission_off\")); print(\"Real source-driven core 3D/axial flux, fission and nu-fission spatial conservation: PASS\")"
               python -c "import json; p=json.load(open(\"/repo/build/nerva_fission_branching/real_source_driven_fission_multiplication_validation.json\")); assert p[\"independent_seed_count\"]==4; assert p[\"mean_fission_daughter_neutrons_per_external_source\"]>0; assert p[\"four_seed_analog_whole_core_neutron_conservation_verified\"]; assert all(x[\"fission_daughters_enabled\"][\"absolute_balance_residual\"]<1e-6 for x in p[\"seed_modes\"]); assert not p[\"reactor_criticality_or_power_normalization_qualified\"]; print(\"Real fission-on and fission-off neutron source conservation: PASS; criticality NOT inferred\")"
             '
       - name: Retain real OpenMC statepoints, physical XML, source-balance metrics and execution logs
