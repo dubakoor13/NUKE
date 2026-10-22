@@ -127,6 +127,20 @@ def main()->int:
         assert not result["hot_operating_temperature_neutron_physics_qualified"]
         assert not result["thermal_solid_bound_scattering_qualifications_present"]
 
+        # A temperature just outside the tabulated data domain remains
+        # unqualified, even if it is closer than the nearest-table tolerance.
+        not_bracketed=deepcopy(multi)
+        not_bracketed["U235"]=[604.,900.]
+        outside=evaluate_executed_neutron_temperatures(
+            warm,not_bracketed,physical_setting,evaluated_bound_kernels=verified
+        )
+        assert not outside["hot_operating_temperature_neutron_physics_qualified"]
+        assert not outside["all_explicit_material_temperatures_inside_nearest_evaluated_tolerance"]
+        fuel_u235=[x for x in outside["physical_materials"][0][
+            "evaluated_isotope_temperature_evidence"] if x["nuclide"]=="U235"][0]
+        assert fuel_u235["explicit_temperature_within_evaluated_range"] is False
+        assert fuel_u235["explicit_temperature_nearest_table_covered"] is False
+
         wrong=deepcopy(mats)
         wrong[0]["explicit_material_temperature_K"]=1250.0
         report=evaluate_executed_neutron_temperatures(wrong,temp,settings)
