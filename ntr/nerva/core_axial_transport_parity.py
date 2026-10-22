@@ -48,7 +48,8 @@ def _read_mesh_tally(tallies, name: str, mesh_name: str, active: int):
     if len(matches) != 1:
         raise ValueError("missing or duplicate genuine OpenMC neutron mesh tally: " + name)
     t = matches[0]
-    if (_txt(t["estimator"][()]) != "tracklength"
+    estimator = _txt(t["estimator"][()])
+    if (estimator not in ("tracklength", "analog")
             or int(t["n_realizations"][()]) != active
             or int(t["n_filters"][()]) != 1):
         raise ValueError("inconsistent neutron mesh estimator or active generation")
@@ -76,11 +77,15 @@ def _read_mesh_tally(tallies, name: str, mesh_name: str, active: int):
         raise ValueError("missing required physical neutron scores")
     values = np.asarray(t["results"][()], dtype=np.float64)
     if (values.shape != (int(np.prod(dims)), len(labels), 2)
-            or not np.isfinite(values).all()
-            or np.any(values < 0)):
+            or not np.isfinite(values).all()):
         raise ValueError("invalid genuine OpenMC neutron mesh tally moments")
-    return (dims, lower, upper,
-            values[:, [labels.index(s) for s in SCORES], 0])
+    # Other scores (notably evaluated KERMA) may carry signed scores.
+    # Positivity is meaningful only for the selected neutron flux and
+    # neutron-production reactions; preserve their raw tally sums.
+    selected = values[:, [labels.index(s) for s in SCORES], :]
+    if np.any(selected < 0):
+        raise ValueError("negative native neutron flux or fission tally moments")
+    return (dims, lower, upper, selected[:, :, 0], estimator)
 
 
 def read_axial_transport_checkpoint(path: Path) -> dict:
@@ -108,8 +113,10 @@ def read_axial_transport_checkpoint(path: Path) -> dict:
     except (OSError, KeyError, TypeError, UnicodeError, IndexError) as exc:
         raise ValueError("incomplete genuine neutron axial HDF5 evidence") from exc
 
-    axial_dims, lo, hi, axial = a
-    volumetric_dims, lo3, hi3, volumetric = b
+    axial_dims, lo, hi, axial, estimator_axial = a
+    volumetric_dims, lo3, hi3, volumetric, estimator_3d = b
+    if estimator_axial != estimator_3d:
+        raise ValueError("actual 3D and axial neutron mesh estimators differ")
     if (tuple(axial_dims[:2]) != (1, 1)
             or axial_dims[2] < 4
             or volumetric_dims[2] != axial_dims[2]
