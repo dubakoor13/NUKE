@@ -127,7 +127,7 @@ def main() -> int:
         runs[0]["statepoint_sha256"]=_sha(first)
         gap=audit()
         assert gap["material_transport_support_status"]=="REACHABLE_MATERIAL_NEUTRON_SAMPLING_INCOMPLETE"
-        assert gap["genuine_checkpoint_material_flux"][-3][
+        assert gap["genuine_checkpoint_material_flux"][2][
             "reachable_material_ids_with_no_observed_flux"]==[21]
         fixture(first,seed=seeds[0],batch=40,flux=expected)
         runs[0]["statepoint_sha256"]=_sha(first)
@@ -140,7 +140,7 @@ def main() -> int:
         runs[0]["statepoint_sha256"]=_sha(first)
 
         with h5py.File(first,"r+") as h:
-            h["tallies"]["tally 82"]["results"][4,0,1]=1.
+            h["tallies"]["tally 82"]["results"][4,0,0]=20.
         reject(lambda:real_material_neutron_flux(first,{19,20,21,22,23}),
                "nonphysical")
         fixture(first,seed=seeds[0],batch=40,flux=expected)
