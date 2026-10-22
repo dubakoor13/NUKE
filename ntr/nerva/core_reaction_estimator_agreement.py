@@ -81,7 +81,7 @@ def _checkpoint(path: Path) -> dict:
                     raise ValueError("OpenMC physical reaction estimator mismatch")
                 if int(obj["n_realizations"][()]) != n:
                     raise ValueError("OpenMC reaction tally and active generations disagree")
-                if obj["filters"][()].size != 0:
+                if int(obj["n_filters"][()]) != 0:
                     raise ValueError("estimator reaction tally must span whole core")
                 names=[_bytestr(v) for v in obj["score_bins"][()]]
                 if len(set(names)) != len(names) or any(s not in names for s in SCORES):
