@@ -1,10 +1,10 @@
-"""Run two matched cold-core fixed-source physical transport experiments.
+"""Run two matched cold-core fixed-source physical neutron experiments.
 
-One executes actual OpenMC with fission daughters enabled; one is an
-otherwise identical prescribed-source control with daughters disabled.
-The same geometry, materials, cross-sections, source, seeds, particle
-population and tally XML are used in both modes. No criticality or
-geometry search is performed.
+One *unchanged* OpenMC model object and external source are exported twice:
+with fission daughter neutron transport off and on, respectively. The actual
+geometry.xml, materials.xml and tallies.xml must be byte-for-byte identical.
+Only create_fission_neutrons differs in settings.xml; the RNG seed is
+identical per paired mode. No criticality or reactor design tuning.
 """
 from __future__ import annotations
 
@@ -14,12 +14,25 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
+import xml.etree.ElementTree as ET
 
 from .config import NervaConfig
 from .model import build_model
-from .fixed_source_core_physics import sha
+from .nuclear_data import inspect_nuclear_data, write_report
+from .fixed_source_core_physics import audit_four_seed_fixed_source, sha
 from .fixed_source_fission_branching import compare_four_seed_external_source_modes
+
+
+def _physics_setting_identity(path: Path) -> bytes:
+    """Require all OpenMC source, batch, transport settings except daughter switch."""
+    root = ET.parse(path).getroot()
+    if root.tag != "settings":
+        raise ValueError("not actual OpenMC settings XML")
+    fission = root.find("create_fission_neutrons")
+    if fission is None or fission.text not in ("true", "false"):
+        raise ValueError("fission daughter transport setting absent")
+    root.remove(fission)
+    return ET.tostring(root, encoding="utf-8")
 
 
 def main() -> int:
@@ -41,23 +54,11 @@ def main() -> int:
     if xs is None:
         raise RuntimeError("verified evaluated neutron nuclear cross-section data required")
     xs = Path(xs).resolve(strict=True)
+    os.environ["OPENMC_CROSS_SECTIONS"] = str(xs)
     base = args.output.resolve()
     no_fission = base / "suppressed_fission_control"
     with_fission = base / "fission_daughters_transported"
     base.mkdir(parents=True, exist_ok=True)
-
-    # Reuse the already independently qualified and audited fixed-source
-    # suppressed-daughter experiment on the same nuclear model.
-    cmd = [
-        sys.executable, "-m", "ntr.nerva.run_fixed_source_core",
-        "--cross-sections", str(xs),
-        "--output", str(no_fission),
-        "--seeds", *[str(s) for s in args.seeds],
-        "--batches", str(args.batches),
-        "--particles", str(args.particles),
-    ]
-    print("Executing real suppressed-fission control", flush=True)
-    subprocess.run(cmd, check=True)
 
     cfg = NervaConfig(
         core_rings=3, hydrogen_temperature_k=293.6059129982851,
@@ -66,30 +67,42 @@ def main() -> int:
         diagnostic_energy_groups=8,
     )
     cfg.validate()
+    nuclear = inspect_nuclear_data(
+        cross_sections=xs, config=cfg,
+        photon_transport=False, require_referenced_files=True,
+    )
+    write_report(nuclear, base / "evaluated_neutron_data_preflight.json")
+    if not nuclear.ready:
+        raise RuntimeError("evaluated neutron cross-section physical preflight failed")
+
     model = build_model(cfg, assembly="core", eigenvalue_entropy_mesh=False)
     model.settings.run_mode = "fixed source"
     model.settings.inactive = 0
-    model.settings.create_fission_neutrons = True
     model.settings.statepoint = {"batches": [args.batches]}
     if model.settings.source is None:
-        raise ValueError("actual physical external-source distribution is missing")
-    baseline = None
-    for seed in args.seeds:
-        directory = with_fission / f"seed_{seed}"
+        raise ValueError("actual physical prescribed external source is missing")
+
+    fixed_xml = None
+    def perform(seed: int, directory: Path, *, daughters: bool) -> None:
+        nonlocal fixed_xml
         directory.mkdir(parents=True, exist_ok=True)
         model.settings.seed = seed
+        model.settings.create_fission_neutrons = daughters
         model.export_to_xml(directory=directory)
-        control = no_fission / f"seed_{seed}"
         identity = tuple(sha(directory / name) for name in
                          ("geometry.xml", "materials.xml", "tallies.xml"))
-        identical = tuple(sha(control / name) for name in
-                          ("geometry.xml", "materials.xml", "tallies.xml"))
-        if identity != identical or (baseline is not None and identity != baseline):
-            raise ValueError("different physical materials/geometry/neutron scores across modes")
-        baseline = identity
-        # XML difference must be specifically the fission-secondary setting.
-        print("Executing genuine externally-driven fission transport, seed", seed, flush=True)
-        with (directory / "openmc_branching_transport.log").open("w", encoding="utf-8") as log:
+        if fixed_xml is None:
+            fixed_xml = identity
+        elif identity != fixed_xml:
+            raise ValueError("physical geometry, composition, or neutron scores changed between modes")
+        if daughters:
+            control = no_fission / f"seed_{seed}"
+            if _physics_setting_identity(directory / "settings.xml") != (
+                    _physics_setting_identity(control / "settings.xml")):
+                raise ValueError("external source distribution or neutron solver settings differ")
+        print("GENUINE OpenMC fixed-source mode", "fission-on" if daughters else "fission-off",
+              "seed", seed, flush=True)
+        with (directory / "openmc_neutron_transport.log").open("w", encoding="utf-8") as log:
             result = subprocess.run(
                 [binary], cwd=directory,
                 env={**os.environ, "OPENMC_CROSS_SECTIONS": str(xs),
@@ -98,22 +111,35 @@ def main() -> int:
             )
         if result.returncode:
             raise RuntimeError(
-                f"real fission-daughter transport seed {seed} failed with "
-                f"exit {result.returncode}; inspect saved neutron execution log")
+                f"genuine neutron transport failed, seed {seed}, "
+                f"fission daughters {daughters}; see neutron execution log")
+
+    for seed in args.seeds:
+        perform(seed, no_fission / f"seed_{seed}", daughters=False)
+    control = audit_four_seed_fixed_source(no_fission, list(args.seeds), args.batches)
+    (no_fission / "genuine_fixed_source_core_neutron_balance.json").write_text(
+        json.dumps(control, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+    )
+    if any(row["absolute_balance_error"] >= 1e-6 for row in control["per_seed"]):
+        raise ValueError("actual baseline neutron fate is not conservative")
+
+    for seed in args.seeds:
+        perform(seed, with_fission / f"seed_{seed}", daughters=True)
     report = compare_four_seed_external_source_modes(
         with_fission, no_fission, list(args.seeds), args.batches
     )
     report["evaluated_cross_sections_xml_sha256"] = sha(xs)
     report["particles_per_seed_per_mode"] = args.particles * args.batches
+    report["same_physical_neutron_model_byte_identical"] = True
     report["reactor_conditions"] = (
         "cold unchanged 3-ring NERVA-derived demonstration core; "
         "not calibrated NASA NERVA historical reactor"
     )
-    result = base / "real_source_driven_fission_multiplication_validation.json"
-    result.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n",
+    target = base / "real_source_driven_fission_multiplication_validation.json"
+    target.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n",
                       encoding="utf-8")
     print("REAL OpenMC fixed-source fission secondary neutron closure: PASS", flush=True)
-    print("Mean fission daughters produced per initial neutron:",
+    print("Mean fission daughters produced per injected neutron:",
           report["mean_fission_daughter_neutrons_per_external_source"], flush=True)
     print("No criticality, eigenvalue, fuel design or local power validation", flush=True)
     return 0
