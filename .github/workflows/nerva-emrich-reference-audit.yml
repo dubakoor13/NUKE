@@ -24,7 +24,7 @@ jobs:
 
       - name: Install strictly text-extraction-only PDF dependency
         run: |
-          python -m pip install 'pypdf>=5,<7'
+          python -m pip install 'pypdf>=5,<7' 'fonttools>=4,<6'
 
       - name: Validate false table-of-contents hits and chapter order
         run: |
@@ -45,7 +45,21 @@ jobs:
           assert record['all_referenced_nuke_paths_exist']
           assert record['source_pdf_page_count'] > 320
           assert len(record['source_pdf_sha256']) == 64
-          assert set((5,6,7,8)).issubset(record['critical_chapter_headings_found'])
+          # 2023 book has 14 front-matter pages; verify the offset from
+          # multiple independently extracted chapter headings, NOT by
+          # assuming printed and PDF page numbers coincide.
+          assert set((5,7,8,15)).issubset(record['critical_chapter_headings_found'])
+          assert record['observed_verified_printed_to_pdf_page_offset'] == 14
+          assert record['number_of_independently_consistent_printed_to_pdf_page_offsets'] >= 5
+          located={str(r['chapter']):r for r in record['chapter_location_crosswalk']}
+          for number, printed, pdf in [(5,59,73),(7,107,121),(8,115,129),(15,287,301)]:
+              assert located[str(number)]['publisher_second_edition_printed_start_page']==printed
+              assert located[str(number)]['first_pdf_page_1_based_if_detected']==pdf
+          for number, inferred in [(6,111),(9,149)]:
+              row=located[str(number)]
+              if not row['page_heading_verified_in_actual_pdf']:
+                  assert row['pdf_page_inferred_from_consistent_printed_offset']==inferred
+                  assert row['requires_visual_heading_check']
           assert record['nasa_nerva_test_data_validated_against_primary_sources'] is False
           assert record['actual_pdf_equations_transcribed_and_independently_checked'] is False
           assert record['nuke_calculations_benchmarked_against_emrich_exercises'] is False
