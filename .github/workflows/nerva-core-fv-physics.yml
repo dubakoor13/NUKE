@@ -9,6 +9,10 @@ on:
       - 'ntr/nerva/core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_conforming_mesh.py'
       - 'ntr/nerva/core_hex_conforming_fem.py'
+      - 'ntr/nerva/core_solid_material_tables.py'
+      - 'ntr/nerva/core_hex_conforming_hydraulics.py'
+      - 'ntr/nerva/validate_core_solid_material_tables.py'
+      - 'ntr/nerva/validate_core_hex_conforming_hydraulics.py'
       - 'ntr/nerva/run_core_hex_conforming_fem.py'
       - 'ntr/nerva/validate_core_hex_conforming_fem.py'
       - 'ntr/nerva/run_core_hex_radial_lateral_fv.py'
@@ -29,6 +33,10 @@ on:
       - 'ntr/nerva/core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_conforming_mesh.py'
       - 'ntr/nerva/core_hex_conforming_fem.py'
+      - 'ntr/nerva/core_solid_material_tables.py'
+      - 'ntr/nerva/core_hex_conforming_hydraulics.py'
+      - 'ntr/nerva/validate_core_solid_material_tables.py'
+      - 'ntr/nerva/validate_core_hex_conforming_hydraulics.py'
       - 'ntr/nerva/run_core_hex_conforming_fem.py'
       - 'ntr/nerva/validate_core_hex_conforming_fem.py'
       - 'ntr/nerva/run_core_hex_radial_lateral_fv.py'
@@ -105,6 +113,10 @@ jobs:
           PY
       - name: Check conforming fuel/coating prism thermal FEM smoke
         run: python -m ntr.nerva.validate_core_hex_conforming_fem
+      - name: Check tabulated 3D solid thermo integrals
+        run: python -m ntr.nerva.validate_core_solid_material_tables
+      - name: Check 3D fuel FEM and H2 quasi-steady compressible momentum coupling
+        run: python -m ntr.nerva.validate_core_hex_conforming_hydraulics
       - name: Check executable interfaces
         run: |
           python -m ntr.nerva.run_core_conjugate_fv --help
