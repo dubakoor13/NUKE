@@ -26,6 +26,8 @@ from .config import NervaConfig
 from .layout import coolant_channel_positions
 from .core_conjugate_fv import CoreSolidLaw
 from .core_solid_material_tables import TabulatedCoreSolidLaw
+from .core_hex_conforming_hydraulics import solve_conforming_core_with_hydraulics
+from .thermal import HydrogenProperties
 from .core_hex_conforming_mesh import (
     HexTriangleSection,make_nerva_hex_triangle_section,
 )
@@ -71,6 +73,13 @@ def parse_args()->argparse.Namespace:
     p.add_argument("--coating-material-npz",type=Path,default=None,
                    help="temperature_k / conductivity_w_m_k / cp_j_kg_k"
                         " table. Replaces constant coating k and cp.")
+    p.add_argument("--couple-hydraulics",action="store_true",
+                   help="Steady 3-D FEM + NASA-7 frozen-H2 compressible "
+                        "channel momentum/heat-transfer fixed point.")
+    p.add_argument("--inlet-pressure-pa",type=float,default=None)
+    p.add_argument("--hydrogen-viscosity-pa-s",type=float,default=1.2e-5)
+    p.add_argument("--hydrogen-conductivity-w-m-k",type=float,default=0.18)
+    p.add_argument("--hydraulic-roughness-m",type=float,default=1e-6)
     p.add_argument("--dt-s",type=float,default=None)
     p.add_argument("--steps",type=int,default=1)
     p.add_argument("--output",type=Path,
@@ -141,6 +150,16 @@ def main()->int:
     args=parse_args()
     if args.steps<1 or (args.dt_s is None and args.steps!=1):
         raise ValueError("steady solves require one step, transient steps>=1")
+    if args.couple_hydraulics:
+        if args.dt_s is not None or args.steps!=1:
+            raise ValueError("quasi-steady hydraulic outer coupling cannot "
+                             "be used for transient H2 inventory")
+        if args.hydrogen_model!="nasa7-h2":
+            raise ValueError("hydraulic coupling requires frozen NASA-7 H2")
+        if (args.inlet_pressure_pa is None
+                or not np.isfinite(args.inlet_pressure_pa)
+                or args.inlet_pressure_pa<=0):
+            raise ValueError("positive inlet pressure required")
     if args.detailed_source and args.material_separated_mesh_heating:
         raise ValueError("select exactly one spatial deposition source")
     if args.material_separated_mesh_heating and args.element_index is None:
@@ -228,6 +247,7 @@ def main()->int:
     if any(not 0<=i<fuel_power.shape[0] for i in selections):
         raise ValueError("invalid fuel element index")
     all_s=[];all_g=[];all_wall=[];reports=[]
+    hydraulic_pressure=[];hydraulic_mach=[];hydraulic_film=[]
     for elem in selections:
         if detail is not None:
             source=detail[elem]
@@ -253,8 +273,25 @@ def main()->int:
             np.full((nz,19),args.initial_temperature_k))
         history=[]
         for step in range(args.steps):
-            sol=solve_conforming_core_thermal(
-                section,z,old,boundary,fuel,coat,source,dt_s=args.dt_s)
+            hydraulic=None
+            if args.couple_hydraulics:
+                hydrogen_props=HydrogenProperties(
+                    dynamic_viscosity_pa_s=args.hydrogen_viscosity_pa_s,
+                    thermal_conductivity_w_m_k=(
+                        args.hydrogen_conductivity_w_m_k))
+                hydraulic=solve_conforming_core_with_hydraulics(
+                    section,z,old,fuel,coat,source,
+                    mass_flow_kg_s=flows[elem],
+                    inlet_temperature_k=np.full(19,args.inlet_temperature_k),
+                    inlet_pressure_pa=np.full(19,args.inlet_pressure_pa),
+                    direct_hydrogen_power_w=direct[elem,:,:].T,
+                    channel_diameter_m=cfg.coolant_bore_diameter_cm*0.01,
+                    roughness_m=args.hydraulic_roughness_m,
+                    props=hydrogen_props)
+                sol=hydraulic.thermal
+            else:
+                sol=solve_conforming_core_thermal(
+                    section,z,old,boundary,fuel,coat,source,dt_s=args.dt_s)
             old=sol.state
             history.append({
                 "step":step+1,"iterations":sol.iterations,
@@ -267,11 +304,23 @@ def main()->int:
                 "wall_to_gas_power_W":float(sol.wall_to_hydrogen_w.sum()),
                 "first_law_residual":sol.first_law_residual,
                 "residual_units":"J" if sol.transient else "W",
+                "hydraulic_outer_iterations":(
+                    hydraulic.iterations if hydraulic is not None else None),
+                "max_hydraulic_mach":(
+                    float(np.max(hydraulic.mach_number))
+                    if hydraulic is not None else None),
+                "max_hydraulic_thermal_temperature_disagreement_K":(
+                    hydraulic.thermal_hydraulic_temperature_error_k
+                    if hydraulic is not None else None),
             })
         reports.append({"element_instance":int(elem),"steps":history})
         all_s.append(old.solid_temperature_k)
         all_g.append(old.hydrogen_temperature_k)
         all_wall.append(sol.wall_to_hydrogen_w)
+        if args.couple_hydraulics:
+            hydraulic_pressure.append(hydraulic.pressure_pa)
+            hydraulic_mach.append(hydraulic.mach_number)
+            hydraulic_film.append(hydraulic.film_w_m2_k)
     args.output.mkdir(parents=True,exist_ok=True)
     np.savez_compressed(
         args.output/"conforming_core_3d_fields.npz",
@@ -281,6 +330,12 @@ def main()->int:
         xy_m=section.xy_m,triangles=section.triangles,
         material=section.material,wall_edges=section.wall_edges,
         wall_channel=section.wall_channel,z_edges_m=z)
+    if args.couple_hydraulics:
+        np.savez_compressed(
+            args.output/"conforming_core_hydraulics.npz",
+            pressure_pa=np.stack(hydraulic_pressure),
+            mach_number=np.stack(hydraulic_mach),
+            heat_transfer_coefficient_w_m2_k=np.stack(hydraulic_film))
     report={
         "model":"conforming XY triangle x axial P1 element thermal FEM",
         "geometry_is_original_nuke_demonstration":True,
@@ -290,6 +345,8 @@ def main()->int:
             if voxel_source is not None
             else "channel_to_triangle_nearest-site projection"),
         "local_kerma_data_qualified":False,
+        "hydraulic_model":("quasi-steady subsonic NASA7 frozen H2"
+                            if args.couple_hydraulics else "prescribed"),
         "fuel_material_model":("tabulated" if args.fuel_material_npz
                                else "constant"),
         "coating_material_model":("tabulated" if args.coating_material_npz
