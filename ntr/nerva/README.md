@@ -1035,3 +1035,22 @@ plots. Matplotlib is loaded only when plots are actually requested.
 12. Add local fuel-element/tie-tube power peaking.
 13. Add 2-D/3-D fuel conduction and temperature/density feedback iteration.
 14. Calibrate only against published Rover/NERVA benchmark information.
+
+## Implicit radial–axial fuel/ZrC + hydrogen conjugate core solver
+
+An **opt-in** sparse finite-volume model, `core_conjugate_fv.py`,
+now solves coupled radial/axial fuel and ZrC conduction with implicit
+1-D axial hydrogen enthalpy conservation. It supports transient heat storage,
+variable-property solid laws, fuel/coating contact resistance, and separate
+solid-versus-direct-coolant heating. The independent
+`core_conjugate_fv_diagnostics.py` reconstructs face fluxes and per-cell
+first-law residuals without reusing the solver matrix.
+
+Use `python -m ntr.nerva.run_core_conjugate_fv --help` to run one or all
+channels from `element_channel_power_reconstruction.npz`. See
+[CORE_FV_PHYSICS.md](CORE_FV_PHYSICS.md) for physical equations, analytical
+mesh-refinement checks, numerical evidence, prescribed material-property
+inputs and validity limits. The equal-area annuli approximate Voronoi
+sectors: there is **no** true lateral 3-D hex solid conduction yet. The
+existing NNDC cold transport data do **not** supply qualified hot-core
+local nuclear deposition for this solver.
