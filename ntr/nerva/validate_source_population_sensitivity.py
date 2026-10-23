@@ -80,6 +80,11 @@ def _make_case(root: Path, particles: int, seeds: tuple[int, ...], *,
                 [.68, .69, .71, .70],
             "between_seed_mean_total_variation_by_batch":
                 [.65, .64, .68, .69, .67],
+            "jensen_shannon_divergence_natural_logarithm_and_no_pseudocounts":True,
+            "between_seed_mean_jensen_shannon_nats_by_batch":
+                [.32,.33,.34,.35,.36],
+            "mean_within_seed_adjacent_jensen_shannon_nats_by_interval":
+                [.38,.39,.40,.41],
         },
     }
     (root / "real_core_transport_summary.json").write_text(json.dumps(summary))
@@ -120,6 +125,13 @@ def main() -> int:
         assert abs(report["effective_position_fraction_growth_factor"] - 1.8) < 1e-12
         assert report["fission_source_convergence_demonstrated"] is False
         assert report["nasa_nerva_historical_model_validated"] is False
+        assert report["both_population_source_information_bounds_verified"]
+        assert not report["jensen_shannon_source_differences_are_confidence_intervals"]
+        assert not report["source_site_effective_count_is_genealogically_independent_neutron_count"]
+        assert report["low_population"]["source_jensen_shannon_and_tv_pinsker_consistent"]
+        assert report["high_population"]["source_jensen_shannon_and_tv_pinsker_consistent"]
+        assert report["low_population"]["final_between_seed_jensen_shannon_nats"]==.36
+        assert report["change_in_final_between_seed_source_JSD_nats"]==0.
 
         path = large / "seed_53003" / "transport_provenance.json"
         original = _modify(
@@ -166,6 +178,23 @@ def main() -> int:
             })
         )
         reject(lambda: assess_population_sensitivity(small, large), "source TV")
+        path.write_text(json.dumps(original))
+
+        original = _modify(
+            path, lambda x: x["multi_checkpoint_source_bank_trajectory"].update({
+                "between_seed_mean_jensen_shannon_nats_by_batch":
+                    [.32,.33,.34,.35,.01]
+            })
+        )
+        reject(lambda:assess_population_sensitivity(small,large),"Pinsker")
+        path.write_text(json.dumps(original))
+
+        original = _modify(
+            path, lambda x: x["multi_checkpoint_source_bank_trajectory"].pop(
+                "mean_within_seed_adjacent_jensen_shannon_nats_by_interval"
+            )
+        )
+        reject(lambda:assess_population_sensitivity(small,large),"missing or misaligned")
         path.write_text(json.dumps(original))
 
         original = _modify(path, lambda x: x.update({"execution":"SYNTHETIC"}))
