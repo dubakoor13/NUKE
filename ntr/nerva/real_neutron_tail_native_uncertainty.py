@@ -89,6 +89,26 @@ def read_actual_native_tail_uncertainty(path: Path, daughters: bool) -> dict:
                 or len(np.unique(material_ids)) != material_ids.size
                 or any(score not in labels for score in SCORES)):
             raise ValueError("native material/energy-bin provenance mismatch")
+        # Independent energy-only tally covers the whole scored domain.
+        # Its native SUMSQ captures covariance among material regions.
+        global_tally, global_labels, global_reference = _tally(
+            tallies, "nerva_global_energy_window_tail", n
+        )
+        energy_filter = _filters(tallies, global_tally, ("energy",))[0]
+        global_edges = np.asarray(energy_filter["bins"][()], dtype=float).reshape(-1)
+        if (not np.array_equal(global_edges, np.asarray(TAIL_EDGES_EV))
+                or any(score not in global_labels for score in SCORES)):
+            raise ValueError("whole-core native incident-energy scoring provenance changed")
+        global_raw = np.asarray(global_tally["results"][()], dtype=np.float64)
+        global_mean_raw, global_sem_raw = native_batch_moments(global_raw, n)
+        if (global_mean_raw.shape != (3, len(global_labels))
+                or not np.allclose(global_mean_raw, global_reference, rtol=1e-13, atol=1e-20)):
+            raise ValueError("whole-core native first/second neutron moments incomplete")
+        global_indices = [global_labels.index(score) for score in SCORES]
+        global_mean = global_mean_raw[:, global_indices]
+        global_sem = global_sem_raw[:, global_indices]
+        if np.any(global_mean[:, :4] < -1e-13):
+            raise ValueError("negative directly scored whole-core neutron reactions")
         raw = np.asarray(tally["results"][()], dtype=np.float64)
         mean, sem = native_batch_moments(raw, n)
         if (reference_means.shape != mean.shape
@@ -102,6 +122,24 @@ def read_actual_native_tail_uncertainty(path: Path, daughters: bool) -> dict:
         scale = np.maximum(1.0, np.max(np.abs(mean), axis=(0,1)))
         if np.any(mean[:, :, :4] < -1e-13*scale[:4]):
             raise ValueError("negative native neutron tracklength/reaction mean")
+        # Rates, unlike tracklength flux in void, should be recovered
+        # by summing the independently scored material reaction tallies.
+        material_total = mean.sum(axis=0, dtype=np.float64)
+        reaction_delta = global_mean[:, 1:] - material_total[:, 1:]
+        reaction_scale = np.maximum(1.0, np.maximum(
+            np.abs(global_mean[:, 1:]), np.abs(material_total[:, 1:])
+        ))
+        if np.any(np.abs(reaction_delta) > 1e-9 * reaction_scale):
+            raise ValueError("whole-core native energy-tail reaction not recovered by material tally")
+        global_direct = {}
+        for band, band_name in TAIL_SLICES:
+            global_direct[band_name] = {
+                score: {
+                    "mean_per_prescribed_source": float(global_mean[band, k]),
+                    "native_whole_domain_batch_sem_per_source": float(global_sem[band, k]),
+                    "zero_observations_do_not_bound_rare_event_rate": True,
+                } for k, score in enumerate(SCORES)
+            }
         observed_low = float(np.sum(mean[:, 0, 0], dtype=np.float64))
         observed_high = float(np.sum(mean[:, 2, 0], dtype=np.float64))
         previous = verified["explicit_tail_score_per_source"]
@@ -143,6 +181,14 @@ def read_actual_native_tail_uncertainty(path: Path, daughters: bool) -> dict:
             "native_per_material_energy_score_nonzero_records": records,
             "unobserved_zero_moment_material_energy_scores": zero_bins,
             "native_batch_sem_available_only_per_material_energy_score": True,
+            "whole_domain_tail_uncertainty_scored_directly_with_covariance": True,
+            "direct_whole_domain_energy_tail_native_moments": global_direct,
+            "largest_abs_global_vs_material_reaction_moment_error": float(
+                np.max(np.abs(reaction_delta))),
+            "global_minus_material_flux_by_energy_band": (
+                global_mean[:,0]-material_total[:,0]
+            ).tolist(),
+            "global_flux_may_include_void_tracklength": True,
             "material_summed_tail_sem_unavailable_without_covariance": True,
             "mean_total_sub_1e_minus_5_eV_flux_per_source": observed_low,
             "mean_total_above_20_MeV_flux_per_source": observed_high,
@@ -188,6 +234,8 @@ def audit_eight_actual_native_tail_uncertainties(
         "independent_seed_pairs": len(seeds),
         "native_batch_statistics_per_material_energy_score": True,
         "summed_material_tail_uncertainties_not_invented": True,
+        "direct_whole_domain_tail_sem_available": True,
+        "global_energy_tail_reaction_partition_tested_independently": True,
         "first_moments_agree_with_independent_energy_partition": True,
         "per_seed": rows,
         "criticality_validated": False,
