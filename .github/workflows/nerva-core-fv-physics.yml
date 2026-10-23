@@ -7,6 +7,7 @@ on:
       - 'ntr/nerva/core_conjugate_fv.py'
       - 'ntr/nerva/core_hex_lateral_fv.py'
       - 'ntr/nerva/core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/run_core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_radial_lateral_balance.py'
       - 'ntr/nerva/validate_core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_lateral_balance.py'
@@ -22,6 +23,7 @@ on:
       - 'ntr/nerva/core_conjugate_fv.py'
       - 'ntr/nerva/core_hex_lateral_fv.py'
       - 'ntr/nerva/core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/run_core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_radial_lateral_balance.py'
       - 'ntr/nerva/validate_core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_lateral_balance.py'
@@ -75,7 +77,26 @@ jobs:
           assert all(s['independent_max_scaled_cell_residual']<1e-6
                      for s in report['results'][0]['steps'])
           PY
+      - name: Integrate NUKE source arrays with unified radial/lateral core solver
+        run: |
+          python -m ntr.nerva.run_core_hex_radial_lateral_fv build/core_lateral_synthetic_input.npz --inlet-temperature-k 500 --initial-temperature-k 500 --hydrogen-density-kg-m3 3 --film-w-m2-k 5500 --hydrogen-model constant --fuel-density-kg-m3 1850 --fuel-cp-j-kg-k 1200 --fuel-conductivity-w-m-k 24 --coating-density-kg-m3 6400 --coating-cp-j-kg-k 650 --coating-conductivity-w-m-k 18 --coating-radial-cells 2 --fuel-radial-cells 5 --dt-s 0.1 --steps 2 --output build/ci_core_unified
+          test -s build/ci_core_unified/unified_radial_lateral_core_fields.npz
+          python - <<'PY'
+          import json
+          import numpy as np
+          from pathlib import Path
+          root=Path("build/ci_core_unified")
+          report=json.loads((root/"unified_radial_lateral_core_report.json").read_text())
+          assert len(report["results"])==1
+          assert len(report["results"][0]["steps"])==2
+          assert all(s["independent_cell_scaled_residual"]<1e-6 for s in report["results"][0]["steps"])
+          with np.load(root/"unified_radial_lateral_core_fields.npz") as data:
+              assert data["solid_temperature_k"].shape==(1,4,19,7)
+              assert data["hydrogen_temperature_k"].shape==(1,4,19)
+              assert np.isfinite(data["solid_temperature_k"]).all()
+          PY
       - name: Check executable interfaces
         run: |
           python -m ntr.nerva.run_core_conjugate_fv --help
           python -m ntr.nerva.run_core_hex_lateral_fv --help
+          python -m ntr.nerva.run_core_hex_radial_lateral_fv --help
