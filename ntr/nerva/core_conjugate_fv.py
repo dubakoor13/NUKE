@@ -239,12 +239,15 @@ def solve_core_sector_conjugate(
     tolerance_k: float = 1e-7,
     relaxation: float = 0.75,
     energy_tolerance: float = 1e-7,
+    fuel_coating_contact_resistance_m2_k_w: float = 0.0,
 )->CoreSectorResult:
     """Implicit 2-D solid / 1-D gas finite-volume conjugate step.
 
     dt_s=None gives the steady-state solution; otherwise backward Euler.
     Boundary flow and h(z) are prescribed; no momentum/pressure equations,
     chemistry, fuel damage, radiation loss or neutronic power feedback.
+    The optional fuel/coating contact resistance is a prescribed thermal
+    interface resistance [m2 K/W], not a calibrated NERVA fuel gap model.
     """
     grid.validate()
     fuel.validate()
@@ -254,7 +257,9 @@ def solve_core_sector_conjugate(
     if (dt_s is not None and (not math.isfinite(dt_s) or dt_s<=0)
             or max_iterations<2 or not math.isfinite(tolerance_k)
             or tolerance_k<=0 or not 0<relaxation<=1
-            or not math.isfinite(energy_tolerance) or energy_tolerance<=0):
+            or not math.isfinite(energy_tolerance) or energy_tolerance<=0
+            or not math.isfinite(fuel_coating_contact_resistance_m2_k_w)
+            or fuel_coating_contact_resistance_m2_k_w<0):
         raise ValueError("invalid implicit solver controls")
     s0=np.asarray(state.solid_temperature_k,dtype=float)
     g0=np.asarray(state.hydrogen_temperature_k,dtype=float)
@@ -318,6 +323,8 @@ def solve_core_sector_conjugate(
                     rface=re[max(j,neighbor)]
                     resistance=(abs(math.log(rface/rc[j]))/k[i,j] +
                                 abs(math.log(rc[neighbor]/rface))/k[i,neighbor])
+                    if min(j,neighbor)==grid.n_coating_cells-1:
+                        resistance+=fuel_coating_contact_resistance_m2_k_w/rface
                     conductance=2*math.pi*dz[i]/resistance
                     diagonal+=conductance
                     add(a,index(i,neighbor),-conductance)
