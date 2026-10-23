@@ -25,6 +25,7 @@ import numpy as np
 from .config import NervaConfig
 from .layout import coolant_channel_positions
 from .core_conjugate_fv import CoreSolidLaw
+from .core_solid_material_tables import TabulatedCoreSolidLaw
 from .core_hex_conforming_mesh import (
     HexTriangleSection,make_nerva_hex_triangle_section,
 )
@@ -59,11 +60,17 @@ def parse_args()->argparse.Namespace:
                    default="nasa7-h2")
     p.add_argument("--hydrogen-cp-reference-j-kg-k",type=float,default=14300.)
     p.add_argument("--fuel-density-kg-m3",type=float,required=True)
-    p.add_argument("--fuel-cp-j-kg-k",type=float,required=True)
-    p.add_argument("--fuel-conductivity-w-m-k",type=float,required=True)
+    p.add_argument("--fuel-cp-j-kg-k",type=float,default=None)
+    p.add_argument("--fuel-conductivity-w-m-k",type=float,default=None)
+    p.add_argument("--fuel-material-npz",type=Path,default=None,
+                   help="temperature_k / conductivity_w_m_k / cp_j_kg_k"
+                        " table. Replaces constant fuel k and cp.")
     p.add_argument("--coating-density-kg-m3",type=float,required=True)
-    p.add_argument("--coating-cp-j-kg-k",type=float,required=True)
-    p.add_argument("--coating-conductivity-w-m-k",type=float,required=True)
+    p.add_argument("--coating-cp-j-kg-k",type=float,default=None)
+    p.add_argument("--coating-conductivity-w-m-k",type=float,default=None)
+    p.add_argument("--coating-material-npz",type=Path,default=None,
+                   help="temperature_k / conductivity_w_m_k / cp_j_kg_k"
+                        " table. Replaces constant coating k and cp.")
     p.add_argument("--dt-s",type=float,default=None)
     p.add_argument("--steps",type=int,default=1)
     p.add_argument("--output",type=Path,
@@ -197,10 +204,25 @@ def main()->int:
                 np.asarray(d["fuel_material_power_density_w_cm3"],dtype=float),
                 np.asarray(d["coating_material_power_density_w_cm3"],dtype=float))
         voxel_source.validate()
-    fuel=CoreSolidLaw(args.fuel_density_kg_m3,args.fuel_cp_j_kg_k,
-                      args.fuel_conductivity_w_m_k)
-    coat=CoreSolidLaw(args.coating_density_kg_m3,args.coating_cp_j_kg_k,
-                      args.coating_conductivity_w_m_k)
+    def material_law(table, rho, cp, k, label):
+        if table is not None:
+            if cp is not None or k is not None:
+                raise ValueError(
+                    f"{label}: material NPZ is exclusive with constant cp/k")
+            return TabulatedCoreSolidLaw.from_npz(
+                table,density_kg_m3=rho)
+        if cp is None or k is None:
+            raise ValueError(
+                f"{label}: provide a material table OR both constant cp and k")
+        law=CoreSolidLaw(rho,cp,k)
+        law.validate()
+        return law
+    fuel=material_law(args.fuel_material_npz,args.fuel_density_kg_m3,
+                      args.fuel_cp_j_kg_k,args.fuel_conductivity_w_m_k,"fuel")
+    coat=material_law(args.coating_material_npz,
+                      args.coating_density_kg_m3,
+                      args.coating_cp_j_kg_k,
+                      args.coating_conductivity_w_m_k,"coating")
     selections=(range(fuel_power.shape[0]) if args.element_index is None
                 else (args.element_index,))
     if any(not 0<=i<fuel_power.shape[0] for i in selections):
@@ -268,6 +290,10 @@ def main()->int:
             if voxel_source is not None
             else "channel_to_triangle_nearest-site projection"),
         "local_kerma_data_qualified":False,
+        "fuel_material_model":("tabulated" if args.fuel_material_npz
+                               else "constant"),
+        "coating_material_model":("tabulated" if args.coating_material_npz
+                                  else "constant"),
         "historical_NERVA_reference_validated":False,
         "mesh_nodes":int(len(section.xy_m)),
         "mesh_triangles":int(len(section.triangles)),
