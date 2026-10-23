@@ -1,0 +1,55 @@
+name: NERVA conforming fuel-element geometry smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ntr/nerva/core_hex_conforming_mesh.py'
+      - 'ntr/nerva/core_hex_conforming_fem.py'
+      - 'ntr/nerva/run_core_hex_conforming_fem.py'
+      - '.github/workflows/nerva-core-conforming-mesh.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  conforming-geometry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install optional Gmsh mesh engine and numerical dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libglu1-mesa
+          python -m pip install "numpy>=1.26" "scipy>=1.12" "gmsh>=4.12,<5"
+      - name: Generate actual conforming 19-channel cross-sectional mesh
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.core_hex_conforming_mesh import make_nerva_hex_triangle_section
+          from ntr.nerva.run_core_hex_conforming_fem import (
+              channel_power_to_fuel_triangles,save_section)
+          mesh=make_nerva_hex_triangle_section(
+              fuel_mesh_size_m=8e-4,coating_mesh_size_m=7e-5)
+          mesh.validate()
+          assert len(np.unique(mesh.wall_channel))==19
+          assert np.any(mesh.material==0) and np.any(mesh.material==1)
+          power=np.full((1,19),1.)
+          mapped,sector=channel_power_to_fuel_triangles(mesh,power)
+          assert abs(float(mapped.sum())-19.)<1e-10
+          assert np.all(mapped[:,mesh.material==1]==0)
+          save_section("build/nerva_conforming_mesh.npz",mesh)
+          print("Gmsh NERVA coated bores:",len(np.unique(mesh.wall_channel)))
+          print("Gmsh fuel/coating triangles:",len(mesh.triangles))
+          print("Gmsh mesh nodes:",len(mesh.xy_m))
+          print("Projected watts:",mapped.sum())
+          PY
+      - name: Upload conforming mesh for developer inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerva-conforming-triangle-mesh
+          path: build/nerva_conforming_mesh.npz
