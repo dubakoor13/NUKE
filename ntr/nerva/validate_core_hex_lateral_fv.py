@@ -9,6 +9,7 @@ import math
 import numpy as np
 
 from .core_conjugate_fv import CoreSolidLaw
+from .core_hex_lateral_balance import audit_hex_core_cell_energy
 from .core_hex_lateral_fv import (
     HexSectorNetwork,HexCoolantBoundary,HexCoreState,
     solve_hex_core_conjugate,
@@ -45,6 +46,9 @@ def main()->int:
     hot=solve_hex_core_conjugate(mesh,z,old,boundary,fuel,coat,q)
     assert hot.iterations>=2
     assert abs(hot.energy_residual)<1e-5
+    audit=audit_hex_core_cell_energy(mesh,z,old,hot,boundary,fuel,coat,q,dt_s=None)
+    assert audit.maximum_scaled_cell_residual<1e-6, audit.maximum_scaled_cell_residual
+    assert audit.global_scaled_residual<1e-7
     assert np.max(np.abs(hot.lateral_face_heat_w))>1e-5
     assert np.all(hot.fuel_to_coating_w>0)
     assert np.all(hot.coating_to_hydrogen_w>0)
@@ -78,6 +82,9 @@ def main()->int:
     assert transient.solid_storage_j>0
     assert transient.hydrogen_storage_j>=0
     assert abs(transient.energy_residual)<1e-5
+    audit_t=audit_hex_core_cell_energy(
+        mesh,z,old,transient,boundary,fuel,coat,q,dt_s=0.1)
+    assert audit_t.maximum_scaled_cell_residual<1e-6, audit_t.maximum_scaled_cell_residual
     assert np.any(transient.lateral_face_heat_w!=0)
 
     zeros=HexCoolantBoundary(
@@ -95,6 +102,10 @@ def main()->int:
         fuel_coating_contact_resistance_m2_k_w=5e-5)
     assert resistive.state.fuel_temperature_k[0,0]>hot.state.fuel_temperature_k[0,0]
     assert abs(resistive.energy_residual)<1e-5
+    audit_c=audit_hex_core_cell_energy(
+        mesh,z,old,resistive,boundary,fuel,coat,q,
+        dt_s=None,contact_resistance_m2_k_w=5e-5)
+    assert audit_c.maximum_scaled_cell_residual<1e-6
 
     for invalid in (
         np.full((nz+1,19),1.0),
@@ -114,6 +125,7 @@ def main()->int:
           float(np.max(decoupled.state.fuel_temperature_k)-
                 np.max(hot.state.fuel_temperature_k)))
     print("steady energy residual W:",hot.energy_residual)
+    print("independent max local scaled residual:",audit.maximum_scaled_cell_residual)
     print("transient energy residual J:",transient.energy_residual)
     print("NERVA historical hot core/criticality validation: NOT PERFORMED")
     return 0
