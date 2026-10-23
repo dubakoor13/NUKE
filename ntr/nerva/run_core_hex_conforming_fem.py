@@ -27,6 +27,7 @@ from .layout import coolant_channel_positions
 from .core_conjugate_fv import CoreSolidLaw
 from .core_solid_material_tables import TabulatedCoreSolidLaw
 from .core_hex_conforming_hydraulics import solve_conforming_core_with_hydraulics
+from .core_hex_exterior_surface import CoreExteriorHeatBoundary
 from .thermal import HydrogenProperties
 from .core_hex_conforming_mesh import (
     HexTriangleSection,make_nerva_hex_triangle_section,
@@ -80,6 +81,14 @@ def parse_args()->argparse.Namespace:
     p.add_argument("--hydrogen-viscosity-pa-s",type=float,default=1.2e-5)
     p.add_argument("--hydrogen-conductivity-w-m-k",type=float,default=0.18)
     p.add_argument("--hydraulic-roughness-m",type=float,default=1e-6)
+    p.add_argument("--outer-contact-w-m2-k",type=float,default=0.,
+                   help="Prescribed external perimeter contact conductance.")
+    p.add_argument("--outer-contact-temperature-k",type=float,default=None,
+                   help="Prescribed external contact reservoir temperature.")
+    p.add_argument("--outer-emissivity",type=float,default=0.,
+                   help="Greybody emissivity of the exposed fuel-element perimeter.")
+    p.add_argument("--outer-radiation-temperature-k",type=float,default=None,
+                   help="Absolute exterior radiative environment temperature.")
     p.add_argument("--dt-s",type=float,default=None)
     p.add_argument("--steps",type=int,default=1)
     p.add_argument("--output",type=Path,
@@ -242,6 +251,31 @@ def main()->int:
                       args.coating_density_kg_m3,
                       args.coating_cp_j_kg_k,
                       args.coating_conductivity_w_m_k,"coating")
+    if ((args.outer_contact_w_m2_k>0 and
+            args.outer_contact_temperature_k is None)
+            or (args.outer_emissivity>0 and
+                args.outer_radiation_temperature_k is None)):
+        raise ValueError(
+            "external heat-transfer temperature must be explicitly provided; "
+            "no hidden NERVA contact/bath temperature assumptions")
+    contact_bath=(args.outer_contact_temperature_k if
+                  args.outer_contact_temperature_k is not None else
+                  args.initial_temperature_k)
+    radiation_bath=(args.outer_radiation_temperature_k if
+                    args.outer_radiation_temperature_k is not None else
+                    args.initial_temperature_k)
+    external=None
+    if args.outer_contact_w_m2_k or args.outer_emissivity:
+        external=CoreExteriorHeatBoundary(
+            contact_conductance_w_m2_k=args.outer_contact_w_m2_k,
+            contact_reservoir_temperature_k=contact_bath,
+            emissivity=args.outer_emissivity,
+            radiation_environment_temperature_k=radiation_bath)
+    if (not np.isfinite(args.outer_contact_w_m2_k) or
+            not np.isfinite(args.outer_emissivity) or
+            args.outer_contact_w_m2_k<0 or
+            not 0<=args.outer_emissivity<=1):
+        raise ValueError("invalid external film coefficient/emissivity")
     selections=(range(fuel_power.shape[0]) if args.element_index is None
                 else (args.element_index,))
     if any(not 0<=i<fuel_power.shape[0] for i in selections):
@@ -288,11 +322,13 @@ def main()->int:
                     direct_hydrogen_power_w=direct[elem,:,:].T,
                     channel_diameter_m=cfg.coolant_bore_diameter_cm*0.01,
                     roughness_m=args.hydraulic_roughness_m,
-                    props=hydrogen_props)
+                    props=hydrogen_props,
+                    exterior_boundary=external)
                 sol=hydraulic.thermal
             else:
                 sol=solve_conforming_core_thermal(
-                    section,z,old,boundary,fuel,coat,source,dt_s=args.dt_s)
+                    section,z,old,boundary,fuel,coat,source,dt_s=args.dt_s,
+                    exterior_boundary=external)
             old=sol.state
             history.append({
                 "step":step+1,"iterations":sol.iterations,
@@ -303,6 +339,7 @@ def main()->int:
                 "solid_source_power_W":float(source.sum()),
                 "direct_H2_power_W":float(direct[elem].sum()),
                 "wall_to_gas_power_W":float(sol.wall_to_hydrogen_w.sum()),
+                "external_perimeter_heat_loss_W":sol.exterior_heat_loss_w,
                 "first_law_residual":sol.first_law_residual,
                 "residual_units":"J" if sol.transient else "W",
                 "hydraulic_outer_iterations":(
@@ -358,6 +395,8 @@ def main()->int:
             if voxel_source is not None
             else "channel_to_triangle_nearest-site projection"),
         "local_kerma_data_qualified":False,
+        "external_surface_model":("prescribed contact + greybody radiation"
+                                  if external is not None else "adiabatic"),
         "hydraulic_model":("quasi-steady subsonic NASA7 frozen H2"
                             if args.couple_hydraulics else "prescribed"),
         "fuel_material_model":("tabulated" if args.fuel_material_npz
