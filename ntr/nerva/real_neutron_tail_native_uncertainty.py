@@ -129,7 +129,7 @@ def read_actual_native_tail_uncertainty(path: Path, daughters: bool) -> dict:
         reaction_scale = np.maximum(1.0, np.maximum(
             np.abs(global_mean[:, 1:]), np.abs(material_total[:, 1:])
         ))
-        if np.any(np.abs(reaction_delta) > 1e-9 * reaction_scale):
+        if np.any(np.abs(reaction_delta) > 1e-11 + 1e-10 * reaction_scale):
             raise ValueError("whole-core native energy-tail reaction not recovered by material tally")
         global_direct = {}
         for band, band_name in TAIL_SLICES:
