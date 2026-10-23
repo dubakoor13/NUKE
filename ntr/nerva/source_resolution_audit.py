@@ -86,6 +86,10 @@ def audit_source_grids(
         final_max = report["between_seed_max_total_variation_by_batch"][-1]
         adjacent = report["mean_within_seed_adjacent_total_variation_by_interval"]
         pooled_adjacent = report["ensemble_mean_adjacent_total_variation_by_interval"]
+        # A complementary information-theoretic metric provides independent
+        # math/implementation consistency checks of genuine source shapes.
+        # Unlike entropy alone, JSD compares matched distributions on a grid.
+        pooled_js=report["ensemble_mean_adjacent_jensen_shannon_nats_by_interval"]
         record = {
             "bins_per_axis": side,
             "number_of_spatial_bins": side ** 3,
@@ -97,6 +101,17 @@ def audit_source_grids(
                 report["between_seed_max_total_variation_by_batch"],
             "mean_within_seed_tv_per_interval": adjacent,
             "pooled_mean_source_tv_per_interval": pooled_adjacent,
+            "mean_cross_seed_jensen_shannon_nats_per_checkpoint":
+                report["between_seed_mean_jensen_shannon_nats_by_batch"],
+            "maximum_cross_seed_jensen_shannon_nats_per_checkpoint":
+                report["between_seed_max_jensen_shannon_nats_by_batch"],
+            "mean_within_seed_jensen_shannon_nats_per_interval":
+                report["mean_within_seed_adjacent_jensen_shannon_nats_by_interval"],
+            "pooled_source_jensen_shannon_nats_per_interval":pooled_js,
+            "final_mean_cross_seed_jensen_shannon_nats":
+                report["between_seed_mean_jensen_shannon_nats_by_batch"][-1],
+            "final_max_cross_seed_jensen_shannon_nats":
+                report["between_seed_max_jensen_shannon_nats_by_batch"][-1],
             "final_mean_cross_seed_tv": final_cross,
             "final_max_cross_seed_tv": final_max,
             "minimum_effective_distinct_position_fraction": smallest_effective,
@@ -140,6 +155,27 @@ def audit_source_grids(
                         "nested source-grid total variation decreased; "
                         "source histogram or statepoint integrity is broken"
                     )
+            # JSD also satisfies the data-processing inequality on
+            # nested bins. Check all time/seed comparisons, not just the
+            # favorable final snapshot. There is no arbitrary source
+            # convergence acceptance threshold in this exact identity.
+            for metric in (
+                "mean_cross_seed_jensen_shannon_nats_per_checkpoint",
+                "maximum_cross_seed_jensen_shannon_nats_per_checkpoint",
+                "mean_within_seed_jensen_shannon_nats_per_interval",
+                "pooled_source_jensen_shannon_nats_per_interval",
+            ):
+                finer = record[metric]
+                coarser = outputs[-1][metric]
+                if (len(finer)!=len(coarser)
+                        or any(f<-2e-12 or f>math.log(2.)+2e-12
+                               for f in finer)
+                        or any(f+2e-12<c for f,c in zip(finer,coarser))):
+                    raise ValueError(
+                        "nested source-grid Jensen-Shannon divergence "
+                        "decreased; numerical energy/probability "
+                        "histogram integrity is broken"
+                    )
         else:
             reference = record
         outputs.append(record)
@@ -149,6 +185,8 @@ def audit_source_grids(
     return {
         "analysis": "EXACT_SAME_OPENMC_SOURCE_BANKS_ON_NESTED_SPATIAL_GRIDS",
         "grid_resolution_audit_passed": True,
+        "nested_jensen_shannon_information_refinement_integrity_passed":True,
+        "jensen_shannon_divergence_nats_not_stationarity_probability":True,
         "source_diversity_screen_threshold_fraction": minimum_effective_fraction,
         "source_diversity_screen_status": (
             "FAIL_SOURCE_CLONING_SCREEN" if low_diversity
@@ -156,14 +194,20 @@ def audit_source_grids(
         ),
         "coarsest_final_cross_seed_tv": outputs[0]["final_mean_cross_seed_tv"],
         "finest_final_cross_seed_tv": outputs[-1]["final_mean_cross_seed_tv"],
+        "coarsest_final_cross_seed_jensen_shannon_nats":
+            outputs[0]["final_mean_cross_seed_jensen_shannon_nats"],
+        "finest_final_cross_seed_jensen_shannon_nats":
+            outputs[-1]["final_mean_cross_seed_jensen_shannon_nats"],
         "resolutions": outputs,
         "source_stationarity_validated": False,
         "reactor_criticality_validated": False,
         "nasa_historical_core_validated": False,
         "interpretation": (
             "Repeated measurements use the same genuine statepoint source-bank "
-            "coordinates at each resolution. The monotone-TV check is an exact "
-            "numerical integrity identity. The configurable inverse-Simpson "
+            "coordinates at each resolution. Monotone-TV AND monotone "
+            "Jensen-Shannon (natural-log information) under grid refinement "
+            "are mathematical consistency checks, not statistical evidence "
+            "of stationarity. The configurable inverse-Simpson "
             "diversity fraction is only a screen for duplicated fission-site "
             "positions; even distinct sites may share ancestors. Cross-seed "
             "and adjacent-source TV are descriptive, not uncertainty-calibrated "
