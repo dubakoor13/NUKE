@@ -43,6 +43,30 @@ jobs:
         run: python -m ntr.nerva.validate_core_conjugate_fv
       - name: Check lateral 19-channel Voronoi core conduction physics
         run: python -m ntr.nerva.validate_core_hex_lateral_fv
+      - name: Integrate actual NUKE reconstruction array shapes with 19-channel CLI
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from pathlib import Path
+          Path('build').mkdir(exist_ok=True)
+          np.savez_compressed(
+              'build/core_lateral_synthetic_input.npz',
+              channel_wall_axial_power_w=np.full((1,19,4), 2.0),
+              channel_direct_h2_axial_power_w=np.full((1,19,4), 0.05),
+              branch_mass_flow_kg_s=np.full((1,19),0.003),
+              z_edges_m=np.linspace(0,0.4,5))
+          PY
+          python -m ntr.nerva.run_core_hex_lateral_fv             build/core_lateral_synthetic_input.npz             --inlet-temperature-k 500             --initial-temperature-k 500             --film-w-m2-k 5500             --hydrogen-density-kg-m3 3             --gas-enthalpy-model constant             --fuel-density-kg-m3 1850             --fuel-cp-j-kg-k 1200             --fuel-conductivity-w-m-k 24             --coating-density-kg-m3 6400             --coating-cp-j-kg-k 650             --coating-conductivity-w-m-k 18             --dt-s 0.1 --steps 2             --output build/ci_core_lateral
+          test -s build/ci_core_lateral/core_lateral_19_channel_fields.npz
+          python - <<'PY'
+          import json
+          report=json.load(open('build/ci_core_lateral/core_lateral_19_channel_report.json'))
+          assert report['lateral_face_count']==42
+          assert len(report['results'])==1
+          assert len(report['results'][0]['steps'])==2
+          assert all(s['independent_max_scaled_cell_residual']<1e-6
+                     for s in report['results'][0]['steps'])
+          PY
       - name: Check executable interfaces
         run: |
           python -m ntr.nerva.run_core_conjugate_fv --help
