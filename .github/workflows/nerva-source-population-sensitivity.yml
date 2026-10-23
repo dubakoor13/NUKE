@@ -80,6 +80,7 @@ jobs:
                 --low /repo/build/nerva_source_population/3000 \
                 --high /repo/build/nerva_source_population/6000 \
                 --output /repo/build/nerva_source_population/verified_multiresolution_neutron_physics.json
+              python -c "import json,math; p=json.load(open(\"/repo/build/nerva_source_population/comparison.json\")); assert p[\"both_population_source_information_bounds_verified\"]; assert p[\"low_population\"][\"source_jensen_shannon_and_tv_pinsker_consistent\"]; assert p[\"high_population\"][\"source_jensen_shannon_and_tv_pinsker_consistent\"]; assert all(0<=p[level][\"final_between_seed_jensen_shannon_nats\"]<=math.log(2) for level in (\"low_population\",\"high_population\")); assert not p[\"jensen_shannon_source_differences_are_confidence_intervals\"]; assert not p[\"fission_source_convergence_demonstrated\"]; print(\"PASS: actual OpenMC population-size JSD/TV paired source sensitivity, convergence NOT established\")"
               # The physical Python audit itself asserts actual statepoint/
               # evaluated-data fingerprints and leaves source stationarity unverified.
               # Its exit status is the numerical/physics integrity gate.

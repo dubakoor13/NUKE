@@ -67,7 +67,7 @@ jobs:
                 --short /repo/build/nerva_source_inactive/short \
                 --extended /repo/build/nerva_source_inactive/extended \
                 --output /repo/build/nerva_source_inactive/actual_burnin_comparison.json
-              python -c "import json; r=json.load(open(\"/repo/build/nerva_source_inactive/actual_burnin_comparison.json\")); assert r[\"physical_reactor_core_unchanged\"]; assert r[\"same_number_of_active_tally_generations\"]; assert not r[\"fission_source_stationarity_independently_proven\"]; print(\"PASS: ACTUAL evaluated-data fission-source burn-in sensitivity recorded without convergence claim\")"
+              python -c "import json; r=json.load(open(\"/repo/build/nerva_source_inactive/actual_burnin_comparison.json\")); assert r[\"physical_reactor_core_unchanged\"]; assert r[\"same_number_of_active_tally_generations\"]; assert r[\"both_source_arms_passed_information_inequalities\"]; assert all(r[k][\"nested_JSD_TV_information_bounds_verified\"] for k in (\"source_a\",\"source_b\")); assert not r[\"source_information_divergence_is_a_convergence_probability\"]; assert not r[\"fission_source_stationarity_independently_proven\"]; print(\"PASS: ACTUAL evaluated-data fission-source burn-in sensitivity recorded without convergence claim\")"
             '
 
       - name: Save actual OpenMC source-bank and evaluated data evidence

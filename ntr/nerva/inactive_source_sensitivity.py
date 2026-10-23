@@ -155,6 +155,20 @@ def assess_burnin_evidence(
         resolutions = audit["resolutions"]
         if [x["bins_per_axis"] for x in resolutions] != [2,4,8]:
             raise ValueError("source TV must be checked on nested 2³ 4³ 8³")
+        if (audit.get("nested_jensen_shannon_information_refinement_integrity_passed") is not True
+                or audit.get("jensen_shannon_total_variation_pinsker_inequality_passed") is not True):
+            raise ValueError("native nested-grid Jensen-Shannon source information audit required")
+        prior_js=None
+        for level in resolutions:
+            js=float(level.get("final_mean_cross_seed_jensen_shannon_nats",float("nan")))
+            tv=float(level.get("final_mean_cross_seed_tv",float("nan")))
+            if (not math.isfinite(js) or not math.isfinite(tv)
+                    or not 0<=tv<=1 or not 0<=js<=math.log(2.)+2e-12
+                    or js+2e-12<.5*tv*tv):
+                raise ValueError("source JSD/TV information inequality violated")
+            if prior_js is not None and js+2e-12<prior_js:
+                raise ValueError("source Jensen-Shannon nested grid refinement decreased")
+            prior_js=js
         source = summary["multi_checkpoint_source_bank_trajectory"]
         last = [run["snapshots"][-1] for run in source["runs"]]
         if len(last) != len(summary["runs"]):
@@ -182,6 +196,11 @@ def assess_burnin_evidence(
             "descriptive_k_eff_sem_with_seed_dispersion":sigma,
             "final_mean_spatial_TV_2cube":float(resolutions[0]["final_mean_cross_seed_tv"]),
             "final_mean_spatial_TV_8cube":final_mean_tv,
+            "final_mean_spatial_JSD_nats_2cube":
+                float(resolutions[0]["final_mean_cross_seed_jensen_shannon_nats"]),
+            "final_mean_spatial_JSD_nats_8cube":
+                float(resolutions[-1]["final_mean_cross_seed_jensen_shannon_nats"]),
+            "nested_JSD_TV_information_bounds_verified":True,
             "final_mean_effective_distinct_position_fraction":float(fractions.mean()),
             "final_min_effective_distinct_position_fraction":float(fractions.min()),
             "minimum_effective_fraction_all_checkpoints":
@@ -206,6 +225,11 @@ def assess_burnin_evidence(
                 b["descriptive_k_eff_sem_with_seed_dispersion"]),
         "difference_in_fine_grid_cross_seed_source_TV":
             b["final_mean_spatial_TV_8cube"]-a["final_mean_spatial_TV_8cube"],
+        "difference_in_fine_grid_cross_seed_JSD_nats":
+            b["final_mean_spatial_JSD_nats_8cube"]-
+            a["final_mean_spatial_JSD_nats_8cube"],
+        "both_source_arms_passed_information_inequalities":True,
+        "source_information_divergence_is_a_convergence_probability":False,
         "difference_in_mean_effective_position_fraction":
             b["final_mean_effective_distinct_position_fraction"]-
             a["final_mean_effective_distinct_position_fraction"],
@@ -218,6 +242,9 @@ def assess_burnin_evidence(
             "and correlated fission descendants preclude a causal test or "
             "independent-neutron p-value. Source-site cloning and across-seed "
             "distributions remain diagnostic, not convergence certification. "
+            "The corresponding Jensen-Shannon information differences are "
+            "checked against TV and nested-grid refinement but are NOT "
+            "reactor convergence probabilities or independent fission histories. "
             "No nuclear design, control, enrichment or reactor optimization."
         ),
     }
@@ -253,6 +280,7 @@ def main() -> int:
         print(name,"inactive",item["inactive_generations"],
               "keff",item["k_eff_mean"],
               "cross-seed 8^3 TV",item["final_mean_spatial_TV_8cube"],
+              "cross-seed 8^3 JSD nats",item["final_mean_spatial_JSD_nats_8cube"],
               "effective-site fraction",item["final_mean_effective_distinct_position_fraction"],
               "diversity screen",item["source_diversity_screen_status"])
     print("Source convergence proven: NO; NASA historical core benchmark: NO")

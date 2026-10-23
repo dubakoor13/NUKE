@@ -58,11 +58,15 @@ def fixture(inactive, seeds, k, tv):
         resolution.append({
             "bins_per_axis":side,
             "final_mean_cross_seed_tv":tv*(side/8.),
+            "final_mean_cross_seed_jensen_shannon_nats":
+                .08+0.5*(tv*side/8.)**2,
             "minimum_effective_distinct_position_fraction":.006,
         })
     audit={
         "analysis":"EXACT_SAME_OPENMC_SOURCE_BANKS_ON_NESTED_SPATIAL_GRIDS",
         "grid_resolution_audit_passed":True,
+        "nested_jensen_shannon_information_refinement_integrity_passed":True,
+        "jensen_shannon_total_variation_pinsker_inequality_passed":True,
         "source_stationarity_validated":False,
         "source_diversity_screen_status":"FAIL_SOURCE_CLONING_SCREEN",
         "resolutions":resolution,
@@ -79,6 +83,10 @@ def main() -> int:
     assert good["source_a"]["inactive_generations"]==30
     assert good["source_b"]["inactive_generations"]==110
     assert good["difference_in_fine_grid_cross_seed_source_TV"]<0
+    assert good["difference_in_fine_grid_cross_seed_JSD_nats"]<0
+    assert good["both_source_arms_passed_information_inequalities"]
+    assert not good["source_information_divergence_is_a_convergence_probability"]
+    assert good["source_a"]["nested_JSD_TV_information_bounds_verified"]
     assert good["fission_source_stationarity_independently_proven"] is False
     assert good["historical_nasa_nerva_reactor_validated"] is False
 
@@ -104,7 +112,19 @@ def main() -> int:
 
     bad=deepcopy(b)
     bad["resolutions"][2]["final_mean_cross_seed_tv"]=1.5
-    reject(lambda:assess_burnin_evidence(short,long,a,bad),"spatial total-variation")
+    reject(lambda:assess_burnin_evidence(short,long,a,bad),"information inequality")
+
+    bad=deepcopy(b)
+    bad["resolutions"][2]["final_mean_cross_seed_jensen_shannon_nats"]=.0001
+    reject(lambda:assess_burnin_evidence(short,long,a,bad),"information inequality")
+
+    bad=deepcopy(b)
+    bad["resolutions"][1]["final_mean_cross_seed_jensen_shannon_nats"]=-.1
+    reject(lambda:assess_burnin_evidence(short,long,a,bad),"information inequality")
+
+    bad=deepcopy(b)
+    bad["jensen_shannon_total_variation_pinsker_inequality_passed"]=False
+    reject(lambda:assess_burnin_evidence(short,long,a,bad),"source information audit")
 
     bad=deepcopy(b)
     bad["source_stationarity_validated"]=True
