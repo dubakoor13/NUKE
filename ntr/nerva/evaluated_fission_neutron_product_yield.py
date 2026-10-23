@@ -120,10 +120,26 @@ def _sample_fission_reaction(
             or not np.isfinite(values).all() or np.any(values<0)
             or e[0]<0 or np.any(np.diff(e)<=0)):
         raise ValueError("invalid original evaluated fission reaction energy/XS")
+    # OpenMC separates explicit emitted products from derived quantities.
+    # The independent total neutron yield is often in the top-level HDF5
+    # 'total_nu' record and is attached to Reaction.derived_products.
+    # Ignoring this field falsely classified U235/U238 as uncomparable.
+    # Do not CONSTRUCT a total curve by adding prompt and delayed yields:
+    # that would make the numerical closure tautologically true.
     products = [
-        p for p in fission.products
+        p for p in list(fission.products)+list(fission.derived_products)
         if p.particle=="neutron" and p.emission_mode in MODES
     ]
+    directly_evaluated_modes={
+        mode:sum(1 for p in fission.products
+                 if p.particle=="neutron" and p.emission_mode==mode)
+        for mode in MODES
+    }
+    derived_modes={
+        mode:sum(1 for p in fission.derived_products
+                 if p.particle=="neutron" and p.emission_mode==mode)
+        for mode in MODES
+    }
     # OpenMC Product.yield_ can be a polynomial or a Tabulated1D. ENDF
     # defines Tabulated1D inside its tabulated domain. To avoid extrapolation
     # masquerading as evaluated physics, restrict to the common true domain.
@@ -144,6 +160,9 @@ def _sample_fission_reaction(
             "product_tabulated_domains_overlap_positive_fission":False,
             "no_valid_evaluated_yield_comparison":True,
             "reason":"no shared product yield energy domain",
+            "original_evaluated_product_modes":directly_evaluated_modes,
+            "native_derived_evaluated_product_modes":derived_modes,
+            "mt18_redundant_reaction":bool(fission.redundant),
         }
     eligible=np.flatnonzero((e>=lower)&(e<=upper)&(values>0))
     if len(eligible)<2:
@@ -153,6 +172,9 @@ def _sample_fission_reaction(
             "product_tabulated_domains_overlap_positive_fission":False,
             "no_valid_evaluated_yield_comparison":True,
             "reason":"fewer than two positive-fission energy nodes in native common domain",
+            "original_evaluated_product_modes":directly_evaluated_modes,
+            "native_derived_evaluated_product_modes":derived_modes,
+            "mt18_redundant_reaction":bool(fission.redundant),
         }
     ids=eligible[np.unique(np.linspace(
         0,len(eligible)-1,min(SAMPLED_MAX_ENERGIES_PER_TEMPERATURE,len(eligible)),
@@ -172,6 +194,12 @@ def _sample_fission_reaction(
         "native_temperature_label":temperature,
         "product_tabulated_domains_overlap_positive_fission":True,
         "no_valid_evaluated_yield_comparison":False,
+        "original_evaluated_product_modes":directly_evaluated_modes,
+        "native_derived_evaluated_product_modes":derived_modes,
+        "mt18_redundant_reaction":bool(fission.redundant),
+        "derived_total_is_independent_evaluated_record_not_a_sum":(
+            derived_modes["total"]>0
+        ),
         **analysis,
     }
 
@@ -241,7 +269,7 @@ def audit_executed_fission_product_yield(
             len(samples)==len(comparable),
         "maximum_evaluated_function_relative_yield_mismatch":max_mismatch,
         "real_nuclear_product_function_checks_executed":True,
-        "all_compared_evaluated_yields_under_consistency_screen":True,
+        "all_compared_evaluated_yields_under_consistency_screen":bool(comparable),
         "per_evaluated_fissionable_isotope":rows,
         "energy_domain_extrapolation_performed":False,
         "nuclear_yield_curves_modified":False,
