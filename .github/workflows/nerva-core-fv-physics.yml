@@ -6,6 +6,8 @@ on:
     paths:
       - 'ntr/nerva/core_conjugate_fv.py'
       - 'ntr/nerva/core_hex_lateral_fv.py'
+      - 'ntr/nerva/core_hex_lateral_balance.py'
+      - 'ntr/nerva/run_core_hex_lateral_fv.py'
       - 'ntr/nerva/validate_core_hex_lateral_fv.py'
       - 'ntr/nerva/core_conjugate_fv_diagnostics.py'
       - 'ntr/nerva/validate_core_conjugate_fv.py'
@@ -16,6 +18,8 @@ on:
     paths:
       - 'ntr/nerva/core_conjugate_fv.py'
       - 'ntr/nerva/core_hex_lateral_fv.py'
+      - 'ntr/nerva/core_hex_lateral_balance.py'
+      - 'ntr/nerva/run_core_hex_lateral_fv.py'
       - 'ntr/nerva/validate_core_hex_lateral_fv.py'
       - 'ntr/nerva/core_conjugate_fv_diagnostics.py'
       - 'ntr/nerva/validate_core_conjugate_fv.py'
@@ -39,5 +43,7 @@ jobs:
         run: python -m ntr.nerva.validate_core_conjugate_fv
       - name: Check lateral 19-channel Voronoi core conduction physics
         run: python -m ntr.nerva.validate_core_hex_lateral_fv
-      - name: Check executable interface
-        run: python -m ntr.nerva.run_core_conjugate_fv --help
+      - name: Check executable interfaces
+        run: |
+          python -m ntr.nerva.run_core_conjugate_fv --help
+          python -m ntr.nerva.run_core_hex_lateral_fv --help
