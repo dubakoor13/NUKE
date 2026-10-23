@@ -9,6 +9,7 @@ import math
 
 import numpy as np
 
+from .core_conjugate_fv_diagnostics import audit_core_sector_discrete_energy
 from .core_conjugate_fv import (
     CoreSectorBoundary,CoreSectorGrid,CoreSectorState,CoreSolidLaw,
     solve_core_sector_conjugate,
@@ -47,6 +48,10 @@ def main()->int:
         (steady.state.hydrogen_temperature_k[-1]-b.inlet_temperature_k),
         float(qsol.sum()+qgas.sum()),rel_tol=1e-6,abs_tol=1e-6)
     assert abs(steady.energy_balance_residual_j)<1e-5
+    steady_check=audit_core_sector_discrete_energy(
+        grid,old,steady,b,fuel,coat,qsol,dt_s=None)
+    assert steady_check.max_local_residual_scaled<1e-5
+    assert steady_check.global_residual_scaled<1e-7
 
     # The transient stores heat in both domains and conserves the FIRST law,
     # rather than forcing all generated heat to coolant in one timestep.
@@ -57,6 +62,22 @@ def main()->int:
     assert transient.hydrogen_energy_change_j>=0
     assert abs(transient.energy_balance_residual_j)<1e-5
     assert transient.state.solid_temperature_k.shape==(nz,nr)
+    transient_check=audit_core_sector_discrete_energy(
+        grid,old,transient,b,fuel,coat,qsol,dt_s=0.20)
+    assert transient_check.max_local_residual_scaled<1e-5
+    assert transient_check.global_residual_scaled<1e-7
+
+    # Contact resistance increases the fuel/coating jump at otherwise
+    # unchanged heat deposition, without creating/destroying energy.
+    contact_r=0.0001
+    contact=solve_core_sector_conjugate(
+        grid,old,b,fuel,coat,qsol,
+        fuel_coating_contact_resistance_m2_k_w=contact_r)
+    contact_check=audit_core_sector_discrete_energy(
+        grid,old,contact,b,fuel,coat,qsol,dt_s=None,
+        fuel_coating_contact_resistance_m2_k_w=contact_r)
+    assert contact_check.max_local_residual_scaled<1e-5
+    assert contact.state.solid_temperature_k[0,-1]>steady.state.solid_temperature_k[0,-1]
 
     # Neutron power can be supplied as an explicitly distributed radial/axial
     # deposition field. Never assume the 1-D shape is an actual spatial tally.
@@ -85,7 +106,43 @@ def main()->int:
         grid,old,b0,fuel,coat,np.zeros(nz),dt_s=0.1)
     assert np.max(np.abs(zero.state.solid_temperature_k-500))<1e-6
     assert np.max(np.abs(zero.state.hydrogen_temperature_k-500))<1e-6
+    # Independent continuum check: 1-axial-cell radial conduction with
+    # uniform annular fuel heating, zero coating generation and an insulated
+    # external radius has a closed-form temperature at each fuel radius.
+    # Refining the fuel FV grid should approach that analytical field.
+    def annulus_error(nfuel:int)->float:
+        zm=np.array([0.0,0.20])
+        g=CoreSectorGrid.equivalent_annulus(
+            zm,bore_radius_m=0.00125,coating_thickness_m=0.00005,
+            fuel_sector_area_m2=1.8e-5,coating_cells=2,fuel_cells=nfuel)
+        t=CoreSectorState(np.full(g.shape,500.0),np.full(1,500.0))
+        coeff=CoreSectorBoundary(
+            0.01,500.0,np.array([4500.0]),np.array([0.0]),
+            np.array([1.0e-5]),gas_enthalpy_model="constant")
+        f=CoreSolidLaw(1850.0,1250.0,23.0)
+        c=CoreSolidLaw(6400.0,650.0,19.0)
+        result=solve_core_sector_conjugate(g,t,coeff,f,c,np.array([25.0]))
+        ri=g.r_edges_m[0]
+        rcoat=g.r_edges_m[g.n_coating_cells]
+        outer=g.r_edges_m[-1]
+        rlast=math.sqrt(0.5*sum(x*x for x in g.r_edges_m[-2:]))
+        qprime=25.0/0.20
+        qvol=25.0/(1.8e-5*0.20)
+        expected=(qprime/(2*math.pi*ri*4500.0)
+            +qprime*math.log(rcoat/ri)/(2*math.pi*19.0)
+            +qvol/(2*23.0)*(outer**2*math.log(rlast/rcoat)
+                                -0.5*(rlast**2-rcoat**2)))
+        predicted=(result.state.solid_temperature_k[0,-1]
+                   -result.state.hydrogen_temperature_k[0])
+        check=audit_core_sector_discrete_energy(
+            g,t,result,coeff,f,c,np.array([25.0]),dt_s=None)
+        assert check.max_local_residual_scaled<1e-5
+        return abs(predicted-expected)
+    error_coarse=annulus_error(4)
+    error_fine=annulus_error(32)
+    assert error_fine<error_coarse, (error_coarse,error_fine)
     print("Core radial-axial implicit FV numerical self-test: PASS")
+    print("Independent radial analytical error coarse/fine K:",error_coarse,error_fine)
     print("Steady channel H2 outlet K:",steady.state.hydrogen_temperature_k[-1])
     print("Transient stored solid J:",transient.solid_energy_change_j)
     print("Historical/hot nuclear physics: NOT VALIDATED")
