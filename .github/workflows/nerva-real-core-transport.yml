@@ -9,6 +9,8 @@ on:
       - 'ntr/nerva/source_bank_convergence.py'
       - 'ntr/nerva/source_bank_trajectory.py'
       - 'ntr/nerva/source_resolution_audit.py'
+      - 'ntr/nerva/validate_source_bank_trajectory.py'
+      - 'ntr/nerva/validate_source_resolution_audit.py'
       - 'ntr/nerva/real_core_keff_history_qualification.py'
       - 'ntr/nerva/real_core_keff_autocorrelation.py'
       - 'ntr/nerva/validate_real_core_keff_autocorrelation.py'
@@ -166,6 +168,11 @@ jobs:
               python -m ntr.nerva.source_resolution_audit \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/source_resolution_audit.json
+              # Independently check real OpenMC source populations using
+              # Jensen-Shannon information divergence (natural log) on
+              # identical HDF5 sources scored on 2/4/8 nested grids.
+              # Neither JSD nor TV is a stationarity significance test.
+              python -c "import json,math; p=json.load(open(\"/repo/build/nerva_real_core/source_resolution_audit.json\")); assert p[\"analysis\"]==\"EXACT_SAME_OPENMC_SOURCE_BANKS_ON_NESTED_SPATIAL_GRIDS\"; assert p[\"grid_resolution_audit_passed\"]; assert p[\"nested_jensen_shannon_information_refinement_integrity_passed\"]; assert p[\"jensen_shannon_total_variation_pinsker_inequality_passed\"]; assert [r[\"bins_per_axis\"] for r in p[\"resolutions\"]]==[2,4,8]; assert all(all(0<=v<=math.log(2)+1e-10 for v in r[\"mean_cross_seed_jensen_shannon_nats_per_checkpoint\"]) for r in p[\"resolutions\"]); assert not p[\"source_stationarity_validated\"]; print(\"REAL four-seed OpenMC source Jensen-Shannon and TV nested-grid information consistency: PASS; convergence NOT QUALIFIED\")"
               # Verify saved OpenMC source entropy and k histories are exact
               # prefixes of the same independent-seed neutron run, then
               # compute explicitly non-certifying split-chain k statistics.

@@ -15,6 +15,33 @@ import numpy as np
 from .source_bank_convergence import read_source_bank
 
 
+def jensen_shannon_divergence(p: object, q: object) -> float:
+    """Symmetric KL information in nats, using no pseudocounts.
+
+    Both histogram fractions MUST share the same physical grid. This
+    quantity lies in [0, ln(2)] for any two proper distributions. It
+    contracts under coarsening (information-processing inequality), so
+    an increase in refinement is numerically permissible, while a
+    decrease beyond roundoff indicates an implementation/data error.
+    """
+    first=np.asarray(p,dtype=np.float64)
+    second=np.asarray(q,dtype=np.float64)
+    if (first.ndim<1 or first.shape!=second.shape or first.size<2
+            or not np.isfinite(first).all() or not np.isfinite(second).all()
+            or np.any(first<0) or np.any(second<0)
+            or not np.isclose(first.sum(),1.,rtol=0.,atol=1e-10)
+            or not np.isclose(second.sum(),1.,rtol=0.,atol=1e-10)):
+        raise ValueError("invalid normalized same-grid source distributions for Jensen-Shannon")
+    mid=(first+second)/2.
+    a=first>0
+    b=second>0
+    info=.5*(float(np.sum(first[a]*np.log(first[a]/mid[a])))+
+             float(np.sum(second[b]*np.log(second[b]/mid[b]))))
+    if not np.isfinite(info) or info<-2e-12 or info>np.log(2.)+2e-12:
+        raise ValueError("unphysical source Jensen-Shannon information divergence")
+    return float(max(0.,min(float(np.log(2.)),info)))
+
+
 def source_bank_trajectory(
     seed_snapshots: list[list[Path]],
     *,
@@ -71,6 +98,10 @@ def source_bank_trajectory(
             0.5 * float(np.sum(np.abs(b - a), dtype=np.float64))
             for a, b in zip(ordered, ordered[1:])
         ]
+        step_js = [
+            jensen_shannon_divergence(a,b)
+            for a,b in zip(ordered,ordered[1:])
+        ]
         centroids = np.asarray(
             [meta["spatial_centroid_cm"] for meta in metadata], dtype=float
         )
@@ -86,6 +117,9 @@ def source_bank_trajectory(
             "seed": seed,
             "snapshots": metadata,
             "adjacent_snapshot_total_variation": step_tv,
+            "adjacent_snapshot_jensen_shannon_nats":step_js,
+            "initial_to_final_jensen_shannon_nats":
+                jensen_shannon_divergence(ordered[0],ordered[-1]),
             "adjacent_snapshot_centroid_shift_cm": centroid_steps.tolist(),
             "initial_to_final_total_variation": (
                 0.5 * float(np.abs(ordered[-1] - ordered[0]).sum())
@@ -100,6 +134,8 @@ def source_bank_trajectory(
     n_seeds, n_batches = stack.shape[:2]
     between_seed_tv_by_batch = []
     between_seed_max_tv_by_batch = []
+    between_seed_js_by_batch = []
+    between_seed_max_js_by_batch = []
     pooled_sem_l2_by_batch = []
     for i in range(n_batches):
         bank = stack[:, i]
@@ -109,6 +145,12 @@ def source_bank_trajectory(
         ]
         between_seed_tv_by_batch.append(float(np.mean(pairwise)))
         between_seed_max_tv_by_batch.append(float(np.max(pairwise)))
+        info_pairs=[
+            jensen_shannon_divergence(bank[a],bank[b])
+            for a,b in combinations(range(n_seeds),2)
+        ]
+        between_seed_js_by_batch.append(float(np.mean(info_pairs)))
+        between_seed_max_js_by_batch.append(float(np.max(info_pairs)))
         # Empirical across-SEED spatial variation, not per-neutron iid SEM.
         sem = np.std(bank, axis=0, ddof=1) / np.sqrt(n_seeds)
         pooled_sem_l2_by_batch.append(float(np.linalg.norm(sem.ravel())))
@@ -117,10 +159,17 @@ def source_bank_trajectory(
         item["adjacent_snapshot_total_variation"] for item in run_summaries
     ], dtype=float)
     aggregate_mean = adjacent.mean(axis=0)
+    adjacent_info=np.array([
+        item["adjacent_snapshot_jensen_shannon_nats"] for item in run_summaries
+    ],dtype=float)
     pooled = stack.mean(axis=0)
     pooled_adjacent_tv = [
         0.5 * float(np.abs(pooled[i + 1] - pooled[i]).sum())
         for i in range(n_batches - 1)
+    ]
+    pooled_adjacent_js=[
+        jensen_shannon_divergence(pooled[i],pooled[i+1])
+        for i in range(n_batches-1)
     ]
     return {
         "source_mode": "Actual OpenMC source_bank HDF5; no synthetic substitution",
@@ -133,6 +182,16 @@ def source_bank_trajectory(
             adjacent.max(axis=0).tolist(),
         "ensemble_mean_adjacent_total_variation_by_interval":
             pooled_adjacent_tv,
+        "mean_within_seed_adjacent_jensen_shannon_nats_by_interval":
+            adjacent_info.mean(axis=0).tolist(),
+        "maximum_within_seed_adjacent_jensen_shannon_nats_by_interval":
+            adjacent_info.max(axis=0).tolist(),
+        "ensemble_mean_adjacent_jensen_shannon_nats_by_interval":
+            pooled_adjacent_js,
+        "between_seed_mean_jensen_shannon_nats_by_batch":
+            between_seed_js_by_batch,
+        "between_seed_max_jensen_shannon_nats_by_batch":
+            between_seed_max_js_by_batch,
         "between_seed_mean_total_variation_by_batch":
             between_seed_tv_by_batch,
         "between_seed_max_total_variation_by_batch":
@@ -140,6 +199,8 @@ def source_bank_trajectory(
         "between_seed_spatial_fraction_sem_l2_by_batch":
             pooled_sem_l2_by_batch,
         "runs": run_summaries,
+        "jensen_shannon_divergence_natural_logarithm_and_no_pseudocounts":True,
+        "jensen_shannon_is_stationarity_significance_test":False,
         "source_stationarity_proven": False,
         "historical_nasa_nerva_benchmark_validated": False,
         "interpretation": (
