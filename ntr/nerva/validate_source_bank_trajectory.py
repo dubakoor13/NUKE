@@ -10,8 +10,9 @@ import tempfile
 
 import numpy as np
 
-from .source_bank_trajectory import source_bank_trajectory
-from .validate_source_bank_convergence import fake
+from .source_bank_trajectory import (
+    jensen_shannon_divergence, source_bank_trajectory
+)from .validate_source_bank_convergence import fake
 
 
 def reject(fn, phrase: str) -> None:
@@ -25,6 +26,24 @@ def reject(fn, phrase: str) -> None:
 
 def main() -> int:
     rng = np.random.default_rng(20261021)
+    # Jensen-Shannon information divergence is symmetric, finite and
+    # distinguishes identical and fully disjoint distributions without
+    # arbitrary pseudocounts or support conditioning.
+    p=np.array([1.,0.,0.,0.])
+    q=np.array([0.,1.,0.,0.])
+    assert jensen_shannon_divergence(p,p)==0.
+    assert abs(jensen_shannon_divergence(p,q)-np.log(2))<1e-14
+    assert abs(jensen_shannon_divergence(q,p)-np.log(2))<1e-14
+    x=np.array([.25,.25,.5,0.])
+    y=np.array([.50,0.,.5,0.])
+    js=jensen_shannon_divergence(x,y)
+    tv=.5*np.abs(x-y).sum()
+    assert 0<js<np.log(2)
+    assert tv*tv<=2*js+1e-14
+    reject(lambda:jensen_shannon_divergence([1.,0.],[.5,.6]),"invalid normalized")
+    reject(lambda:jensen_shannon_divergence([1.,0.],[1.,0.,0.]),"invalid normalized")
+    reject(lambda:jensen_shannon_divergence([1.,0.],[-.1,1.1]),"invalid normalized")
+    reject(lambda:jensen_shannon_divergence([1.,0.],[np.nan,1.]),"invalid normalized")
     bounds = (-5., -5., -66.), (5., 5., 66.)
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -48,6 +67,12 @@ def main() -> int:
         assert len(report["ensemble_mean_adjacent_total_variation_by_interval"]) == 4
         assert 0 <= min(report["between_seed_mean_total_variation_by_batch"])
         assert max(report["between_seed_max_total_variation_by_batch"]) <= 1
+        assert report["jensen_shannon_divergence_natural_logarithm_and_no_pseudocounts"]
+        assert report["jensen_shannon_is_stationarity_significance_test"] is False
+        assert len(report["mean_within_seed_adjacent_jensen_shannon_nats_by_interval"])==4
+        assert len(report["between_seed_mean_jensen_shannon_nats_by_batch"])==5
+        assert all(0<=v<=np.log(2)+1e-14 for v in
+                   report["ensemble_mean_adjacent_jensen_shannon_nats_by_interval"])
         assert report["source_stationarity_proven"] is False
         assert report["historical_nasa_nerva_benchmark_validated"] is False
         assert all(
@@ -71,6 +96,8 @@ def main() -> int:
         assert cloned["runs"][0]["minimum_distinct_position_fraction"] == 0.002
         assert cloned["runs"][0]["minimum_inverse_simpson_position_count"] == 2.
         assert max(cloned["runs"][0]["adjacent_snapshot_total_variation"]) == 0.
+        assert max(cloned["runs"][0]["adjacent_snapshot_jensen_shannon_nats"])==0.
+        assert cloned["runs"][0]["initial_to_final_jensen_shannon_nats"]==0.
 
         reject(lambda: source_bank_trajectory(
             trajectories[:3], lower_cm=bounds[0], upper_cm=bounds[1]
