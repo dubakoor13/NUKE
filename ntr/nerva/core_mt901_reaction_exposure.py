@@ -156,6 +156,41 @@ def read_real_material_reactions(path: Path, declared_ids: set[int]) -> dict:
         values = raw_sum[:, [labels.index(s) for s in SCORES]]/n
         if np.any(values < 0):
             raise ValueError("negative actual neutron reaction/tracklength tally")
+        # Independently scored unfiltered whole-domain absorption/nu-fission
+        # must agree with the material partition on the SAME tracklength
+        # estimator, not the separate analog scattering/leakage estimator.
+        global_hits = [
+            item for key, item in group.items()
+            if key.startswith("tally ") and isinstance(item, h5py.Group)
+            and "name" in item
+            and _label(item["name"][()]) == "nerva_global_reaction_tracklength"
+        ]
+        if len(global_hits) != 1:
+            raise ValueError("independent global neutron reaction tally missing/duplicate")
+        g = global_hits[0]
+        if (_label(g["estimator"][()]) != "tracklength"
+                or int(g["n_realizations"][()]) != realizations
+                or int(g["n_filters"][()]) != 0
+                or [_label(x) for x in g["nuclides"][()]] != ["total"]):
+            raise ValueError("whole-domain reaction estimator/provenance differs")
+        global_labels = [_label(x) for x in g["score_bins"][()]]
+        if (len(global_labels) != len(set(global_labels))
+                or any(label not in global_labels for label in
+                       ("absorption", "nu-fission"))):
+            raise ValueError("independent global neutron reaction scores incomplete")
+        graw = np.asarray(g["results"][()], dtype=float)
+        if (graw.shape != (1, len(global_labels), 2)
+                or not np.isfinite(graw).all()):
+            raise ValueError("invalid whole-domain independent neutron reaction moments")
+        for score in ("absorption", "nu-fission"):
+            independently_scored = float(
+                graw[0, global_labels.index(score), 0]/n
+            )
+            material_sum = math.fsum(values[:, SCORES.index(score)].tolist())
+            if (independently_scored < 0 or
+                    abs(independently_scored - material_sum) >
+                    1e-9*max(1.0, abs(independently_scored), abs(material_sum))):
+                raise ValueError("independent whole-domain neutron reaction does not conserve material scores")
         return {
             "seed": seed,
             "completed_batch": batch,
