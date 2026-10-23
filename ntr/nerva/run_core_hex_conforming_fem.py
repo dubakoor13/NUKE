@@ -114,8 +114,9 @@ def load_section(path:Path)->HexTriangleSection:
     return section
 
 
-def save_section(path:Path,mesh:HexTriangleSection)->None:
+def save_section(path:Path|str,mesh:HexTriangleSection)->None:
     mesh.validate()
+    path=Path(path)
     path.parent.mkdir(parents=True,exist_ok=True)
     np.savez_compressed(
         path,xy_m=mesh.xy_m,triangles=mesh.triangles,
