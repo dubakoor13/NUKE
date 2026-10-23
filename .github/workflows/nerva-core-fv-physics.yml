@@ -10,6 +10,10 @@ on:
       - 'ntr/nerva/core_hex_conforming_mesh.py'
       - 'ntr/nerva/core_hex_conforming_fem.py'
       - 'ntr/nerva/core_hex_exterior_surface.py'
+      - 'ntr/nerva/core_hex_interelement_mortar.py'
+      - 'ntr/nerva/core_hex_two_element_fem.py'
+      - 'ntr/nerva/validate_core_hex_interelement_mortar.py'
+      - 'ntr/nerva/validate_core_hex_two_element_fem.py'
       - 'ntr/nerva/validate_core_hex_exterior_surface.py'
       - 'ntr/nerva/core_solid_material_tables.py'
       - 'ntr/nerva/core_hex_conforming_hydraulics.py'
@@ -36,6 +40,10 @@ on:
       - 'ntr/nerva/core_hex_conforming_mesh.py'
       - 'ntr/nerva/core_hex_conforming_fem.py'
       - 'ntr/nerva/core_hex_exterior_surface.py'
+      - 'ntr/nerva/core_hex_interelement_mortar.py'
+      - 'ntr/nerva/core_hex_two_element_fem.py'
+      - 'ntr/nerva/validate_core_hex_interelement_mortar.py'
+      - 'ntr/nerva/validate_core_hex_two_element_fem.py'
       - 'ntr/nerva/validate_core_hex_exterior_surface.py'
       - 'ntr/nerva/core_solid_material_tables.py'
       - 'ntr/nerva/core_hex_conforming_hydraulics.py'
@@ -123,6 +131,10 @@ jobs:
         run: python -m ntr.nerva.validate_core_hex_conforming_hydraulics
       - name: Check external hex contact and greybody boundary thermal numerics
         run: python -m ntr.nerva.validate_core_hex_exterior_surface
+      - name: Check nonmatching two-fuel-element conservative mortar
+        run: python -m ntr.nerva.validate_core_hex_interelement_mortar
+      - name: Check monolithic two-element 3D fuel-H2 thermal physics
+        run: python -m ntr.nerva.validate_core_hex_two_element_fem
       - name: Check executable interfaces
         run: |
           python -m ntr.nerva.run_core_conjugate_fv --help
