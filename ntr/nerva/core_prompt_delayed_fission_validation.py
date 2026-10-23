@@ -54,7 +54,15 @@ def _tally(tallies, name: str, filters: tuple[str,...], active: int,
             or int(t["n_filters"][()]) != len(filters)
             or [_str(x) for x in t["nuclides"][()]] != ["total"]):
         raise ValueError("fission-emission tally estimator/provenance mismatch")
-    filter_ids = np.asarray(t["filters"][()],dtype=int).reshape(-1)
+    # OpenMC 0.15.3 legitimately OMITS the "filters" dataset for native
+    # unfiltered tallies (n_filters=0). A material-filtered tally MUST
+    # include a nonempty matching ID dataset; never fabricate a filter.
+    if len(filters) == 0 and "filters" not in t:
+        filter_ids = np.asarray([], dtype=int)
+    elif "filters" in t:
+        filter_ids = np.asarray(t["filters"][()],dtype=int).reshape(-1)
+    else:
+        raise ValueError("required native neutron fission-emission material filter missing")
     if len(filter_ids) != len(filters):
         raise ValueError("fission-emission native filter length changed")
     mid = []
