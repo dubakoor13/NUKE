@@ -27,7 +27,9 @@ def _tally(group, name, index, scores, means, n, *, material: bool):
     item.create_dataset("estimator",data=np.bytes_("tracklength"))
     item.create_dataset("n_realizations",data=n)
     item.create_dataset("n_filters",data=int(material))
-    item.create_dataset("filters",data=[11] if material else [])
+    if material:
+        item.create_dataset("filters",data=[11])
+    # Genuine OpenMC 0.15.3 unfiltered tallies omit this HDF5 dataset.
     item.create_dataset("nuclides",data=[np.bytes_("total")])
     item.create_dataset("score_bins",data=[np.bytes_(score) for score in scores])
     values=np.asarray(means,dtype=float)
