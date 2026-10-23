@@ -15,6 +15,8 @@ on:
       - 'ntr/nerva/validate_real_neutron_energy_tail_attribution.py'
       - 'ntr/nerva/real_neutron_tail_replica_statistics.py'
       - 'ntr/nerva/validate_real_neutron_tail_replica_statistics.py'
+      - 'ntr/nerva/real_neutron_tail_native_uncertainty.py'
+      - 'ntr/nerva/validate_real_neutron_tail_native_uncertainty.py'
       - 'ntr/nerva/run_fixed_source_core.py'
       - 'ntr/nerva/fixed_source_core_physics.py'
       - 'ntr/nerva/model.py'
@@ -53,6 +55,7 @@ jobs:
               python -m ntr.nerva.validate_real_core_neutron_energy_closure
               python -m ntr.nerva.validate_real_neutron_energy_tail_attribution
               python -m ntr.nerva.validate_real_neutron_tail_replica_statistics
+              python -m ntr.nerva.validate_real_neutron_tail_native_uncertainty
               python -m ntr.nerva.run_fixed_source_fission_branching \
                 --seeds 13007 23011 33013 43019 \
                 --particles 3000 --batches 30 \
@@ -64,6 +67,14 @@ jobs:
               python -m ntr.nerva.real_neutron_energy_tail_attribution \
                 --root /repo/build/nerva_fission_branching \
                 --output /repo/build/nerva_fission_branching/real_neutron_energy_tail_attribution.json
+              # Real first/second moments quantify Monte Carlo sampling
+              # error by physical material, energy tail and reaction score.
+              # The tally has no cross-material covariance: do not fabricate
+              # a whole-core SEM by quadrature of marginal tally errors.
+              python -m ntr.nerva.real_neutron_tail_native_uncertainty \
+                --root /repo/build/nerva_fission_branching \
+                --output /repo/build/nerva_fission_branching/real_neutron_tail_native_uncertainty.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_fission_branching/real_neutron_tail_native_uncertainty.json\")); assert p[\"actual_neutron_statepoints\"]==8 and p[\"independent_seed_pairs\"]==4; assert p[\"native_batch_statistics_per_material_energy_score\"]; assert p[\"summed_material_tail_uncertainties_not_invented\"]; assert not p[\"physical_nuclear_heating_validated\"]; assert not p[\"nasa_nerva_historical_core_validated\"]; print(\"REAL OpenMC material/energy tail batch uncertainty and provenance: PASS\")"
               python -m ntr.nerva.real_neutron_tail_replica_statistics \
                 --input /repo/build/nerva_fission_branching/real_neutron_energy_tail_attribution.json \
                 --output /repo/build/nerva_fission_branching/real_neutron_tail_replica_statistics.json
