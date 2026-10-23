@@ -5,10 +5,13 @@ Synthetic arrays ONLY. Never a substituted fission source evaluation.
 from __future__ import annotations
 
 import numpy as np
+import openmc.data
+from types import SimpleNamespace
 
 from .evaluated_fission_neutron_product_yield import (
     MAX_EVALUATED_YIELD_RELATIVE_MISMATCH,
     assess_evaluated_neutron_product_yields,
+    _sample_fission_reaction,
 )
 
 
@@ -37,6 +40,37 @@ def main()->int:
     assert good["evaluated_yield_consistency_passed_if_all_modes_present"]
     assert not good["beta_effective_calculated"]
     assert good["evaluated_incident_energy_samples"]==4
+
+    # Genuine OpenMC HDF5 formats attach an independent total-nu record
+    # to Reaction.derived_products. A validator that only checks ordinary
+    # Reaction.products misses the nuclear evaluation's true total yield.
+    def neutron_product(mode, vals):
+        product=openmc.data.Product("neutron")
+        product.emission_mode=mode
+        product.yield_=openmc.data.Tabulated1D(e,vals)
+        return product
+
+    native_fission=SimpleNamespace(
+        xs={"294K":SimpleNamespace(x=e,y=np.ones(len(e)))},
+        products=[
+            neutron_product("prompt",prompt),
+            neutron_product("delayed",delayed_a),
+            neutron_product("delayed",delayed_b),
+        ],
+        derived_products=[neutron_product("total",total)],
+        redundant=False,
+    )
+    native_fake=SimpleNamespace(reactions={18:native_fission})
+    native_row=_sample_fission_reaction(native_fake,"synthetic isotope","294K")
+    assert native_row["all_total_prompt_delayed_yield_modes_available"]
+    assert native_row["derived_total_is_independent_evaluated_record_not_a_sum"]
+    assert native_row["original_evaluated_product_modes"]["total"]==0
+    assert native_row["native_derived_evaluated_product_modes"]["total"]==1
+    assert native_row["maximum_relative_total_minus_prompt_delayed_yield_mismatch"]<1e-13
+    native_fission.derived_products=[]
+    uncomparable=_sample_fission_reaction(native_fake,"synthetic isotope","294K")
+    assert not uncomparable["all_total_prompt_delayed_yield_modes_available"]
+    assert uncomparable["missing_modes"]==["total"]
 
     tiny=assess_evaluated_neutron_product_yields(
         e,{"total":[total*(1+4e-6)],"prompt":[prompt],
