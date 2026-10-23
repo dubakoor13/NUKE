@@ -112,7 +112,7 @@ def main() -> int:
 
     bad=deepcopy(b)
     bad["resolutions"][2]["final_mean_cross_seed_tv"]=1.5
-    reject(lambda:assess_burnin_evidence(short,long,a,bad),"spatial total-variation")
+    reject(lambda:assess_burnin_evidence(short,long,a,bad),"information inequality")
 
     bad=deepcopy(b)
     bad["resolutions"][2]["final_mean_cross_seed_jensen_shannon_nats"]=.0001
