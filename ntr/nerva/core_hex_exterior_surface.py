@@ -113,6 +113,7 @@ def exterior_heat_coefficients(
     z_edges_m:np.ndarray,
     section:HexTriangleSection,
     exterior:CoreExteriorHeatBoundary,
+    *, edges:np.ndarray|None=None,
 )->tuple[np.ndarray,np.ndarray,np.ndarray,np.ndarray,np.ndarray]:
     """Return real surface wall conductance and effective bath temperature.
 
@@ -122,7 +123,8 @@ def exterior_heat_coefficients(
     'bath temperature' is the conductance-weighted combination of contact
     and radiation environments, and is irrelevant when total h=0.
     """
-    edges=exterior_fuel_edges(section)
+    edges=(exterior_fuel_edges(section) if edges is None
+           else np.asarray(edges,dtype=np.int64))
     z=np.asarray(z_edges_m,dtype=float)
     T=np.asarray(solid_temperature,dtype=float)
     if (z.ndim!=1 or z.size<2 or np.any(np.diff(z)<=0)
