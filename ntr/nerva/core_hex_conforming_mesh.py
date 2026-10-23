@@ -53,7 +53,9 @@ class HexTriangleSection:
     @property
     def triangle_area_m2(self)->np.ndarray:
         p=self.xy_m[self.triangles]
-        return 0.5*np.abs(np.cross(p[:,1]-p[:,0],p[:,2]-p[:,0]))
+        a=p[:,1]-p[:,0]
+        b=p[:,2]-p[:,0]
+        return 0.5*np.abs(a[:,0]*b[:,1]-a[:,1]*b[:,0])
 
     @property
     def triangle_centroid_m(self)->np.ndarray:
