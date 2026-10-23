@@ -56,6 +56,21 @@ def main() -> int:
         resolutions = report["resolutions"]
         assert [r["bins_per_axis"] for r in resolutions] == [2, 4, 8]
         assert report["grid_resolution_audit_passed"] is True
+        assert report["nested_jensen_shannon_information_refinement_integrity_passed"]
+        assert report["jensen_shannon_divergence_nats_not_stationarity_probability"]
+        assert 0<=report["coarsest_final_cross_seed_jensen_shannon_nats"]<=np.log(2)
+        assert (report["finest_final_cross_seed_jensen_shannon_nats"]+2e-12
+                >=report["coarsest_final_cross_seed_jensen_shannon_nats"])
+        for coarse,fine in zip(resolutions,resolutions[1:]):
+            for metric in (
+                "mean_cross_seed_jensen_shannon_nats_per_checkpoint",
+                "maximum_cross_seed_jensen_shannon_nats_per_checkpoint",
+                "mean_within_seed_jensen_shannon_nats_per_interval",
+                "pooled_source_jensen_shannon_nats_per_interval",
+            ):
+                assert len(coarse[metric])==len(fine[metric])
+                assert all(0<=a<=np.log(2)+1e-12 and
+                           b+2e-12>=a for a,b in zip(coarse[metric],fine[metric]))
         assert report["source_diversity_screen_status"] == (
             "NOT_REJECTED_BY_CLONING_SCREEN"
         )
@@ -87,6 +102,7 @@ def main() -> int:
         assert replicated["source_diversity_screen_status"] == (
             "FAIL_SOURCE_CLONING_SCREEN"
         )
+        assert replicated["nested_jensen_shannon_information_refinement_integrity_passed"]
         assert replicated["source_stationarity_validated"] is False
         assert replicated["resolutions"][0][
             "minimum_effective_distinct_position_count"] == 2.
@@ -96,6 +112,13 @@ def main() -> int:
         )
         assert replicated["finest_final_cross_seed_tv"] >= (
             replicated["coarsest_final_cross_seed_tv"]
+        )
+        assert (replicated["finest_final_cross_seed_jensen_shannon_nats"]+2e-12
+                >=replicated["coarsest_final_cross_seed_jensen_shannon_nats"])
+        assert all(
+            all(abs(v)<2e-12 for v in item[
+                "mean_within_seed_jensen_shannon_nats_per_interval"
+            ]) for item in replicated["resolutions"]
         )
 
         reject(lambda: audit_source_grids(
