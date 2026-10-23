@@ -136,6 +136,54 @@ def _physical_identity(a: dict, b: dict) -> None:
         raise ValueError("reactor physics or Monte Carlo batch schedule differs")
 
 
+def assess_native_spatial_information_series(source: dict) -> dict:
+    """Source-shape information at EXACTLY the already scored 4³ grid.
+
+    Matched JSD/TV diagnostics must satisfy JSD >= TV²/2 for natural
+    logarithms. This is a deterministic identity, not an iid neutron
+    significance test or evidence of fission-source stationarity.
+    """
+    if source.get("jensen_shannon_divergence_natural_logarithm_and_no_pseudocounts") is not True:
+        raise ValueError("real OpenMC source missing unmodified Jensen-Shannon provenance")
+    batches=source.get("saved_batches")
+    if not isinstance(batches,list) or len(batches)<3:
+        raise ValueError("real source checkpoint schedule missing")
+    series=(
+        ("between_seed_mean_total_variation_by_batch",
+         "between_seed_mean_jensen_shannon_nats_by_batch",len(batches)),
+        ("mean_within_seed_adjacent_total_variation_by_interval",
+         "mean_within_seed_adjacent_jensen_shannon_nats_by_interval",
+         len(batches)-1),
+    )
+    outputs={}
+    for tv_name,js_name,length in series:
+        tv=source.get(tv_name)
+        js=source.get(js_name)
+        if (not isinstance(tv,list) or not isinstance(js,list)
+                or len(tv)!=length or len(js)!=length):
+            raise ValueError("source Jensen-Shannon / TV checkpoint arrays missing or misaligned")
+        checked_tv=[_checked_float(v,"source TV") for v in tv]
+        checked_js=[_checked_float(v,"source Jensen-Shannon information") for v in js]
+        if any(not 0<=t<=1 or not 0<=j<=math.log(2)+2e-12
+               or j+2e-12<.5*t*t
+               for t,j in zip(checked_tv,checked_js)):
+            raise ValueError("source JSD/TV Pinsker information inequality violated")
+        outputs[js_name]=checked_js
+    return {
+        "final_between_seed_jensen_shannon_nats":
+            outputs["between_seed_mean_jensen_shannon_nats_by_batch"][-1],
+        "mean_adjacent_jensen_shannon_nats":mean(
+            outputs["mean_within_seed_adjacent_jensen_shannon_nats_by_interval"]
+        ),
+        "source_jensen_shannon_and_tv_pinsker_consistent":True,
+        "source_information_is_convergence_proof":False,
+        "checkpoint_information_by_batch_nats":
+            outputs["between_seed_mean_jensen_shannon_nats_by_batch"],
+        "temporal_information_by_interval_nats":
+            outputs["mean_within_seed_adjacent_jensen_shannon_nats_by_interval"],
+    }
+
+
 def assess_population_sensitivity(low_root: Path, high_root: Path) -> dict:
     """Numerical sensitivity only; no independent-source convergence claim."""
     low, low_provs, low_sources = _load_evidence(Path(low_root))
@@ -177,6 +225,7 @@ def assess_population_sensitivity(low_root: Path, high_root: Path) -> dict:
             not 0 <= v <= 1 for v in temporal
         ):
             raise ValueError("source trajectory TV intervals invalid")
+        js=assess_native_spatial_information_series(source)
         k = _checked_float(
             summary["run_statistics"]["inverse_variance_mean_keff"],
             "ensemble k-effective", strictly_positive=True
@@ -199,6 +248,7 @@ def assess_population_sensitivity(low_root: Path, high_root: Path) -> dict:
             "adjacent_source_total_variation_by_interval": temporal,
             "minimum_effective_source_positions": min(effective),
             "maximum_effective_source_positions": max(effective),
+            **js,
         }
 
     small = _stats(low, low_sources)
@@ -235,7 +285,18 @@ def assess_population_sensitivity(low_root: Path, high_root: Path) -> dict:
             large["mean_adjacent_source_total_variation"] -
             small["mean_adjacent_source_total_variation"]
         ),
+        "change_in_final_between_seed_source_JSD_nats":(
+            large["final_between_seed_jensen_shannon_nats"] -
+            small["final_between_seed_jensen_shannon_nats"]
+        ),
+        "change_in_mean_adjacent_source_JSD_nats":(
+            large["mean_adjacent_jensen_shannon_nats"] -
+            small["mean_adjacent_jensen_shannon_nats"]
+        ),
+        "both_population_source_information_bounds_verified":True,
+        "jensen_shannon_source_differences_are_confidence_intervals":False,
         "fission_source_convergence_demonstrated": False,
+        "source_site_effective_count_is_genealogically_independent_neutron_count":False,
         "nasa_nerva_historical_model_validated": False,
         "interpretation": (
             "Sensitivity to generation population at FIXED geometry, materials, "
@@ -244,6 +305,9 @@ def assess_population_sensitivity(low_root: Path, high_root: Path) -> dict:
             "and source-shape TV are observed sample properties, not proof of "
             "independent fission histories. Population-size agreement in k-eff "
             "does not prove equilibrium source or remove evaluated-data bias. "
+            "The independently scored symmetric JSD (natural logarithms) "
+            "and TV are constrained by Pinsker's mathematical inequality, "
+            "but neither supplies an independent-fission-source p-value. "
             "This comparison is a numerical transport experiment, not a "
             "criticality design optimization or hot NERVA benchmark."
         ),
@@ -266,7 +330,9 @@ def main() -> int:
             "keff", item["ensemble_mean_keff"],
             "source-site ESS", item["final_mean_inverse_simpson_effective_positions"],
             "cross-seed TV", item["final_between_seed_source_total_variation"],
-            "time-adjacent TV", item["mean_adjacent_source_total_variation"]
+            "time-adjacent TV", item["mean_adjacent_source_total_variation"],
+            "cross-seed JSD nats",item["final_between_seed_jensen_shannon_nats"],
+            "time-adjacent JSD nats",item["mean_adjacent_jensen_shannon_nats"]
         )
     print("Fission-source convergence demonstrated: NO")
     print("Real-population sensitivity report:", args.output)
