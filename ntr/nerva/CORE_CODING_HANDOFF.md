@@ -115,3 +115,31 @@ The coupled hydrogen solver remains SUBSONIC and QUASI-STEADY only,
 with prescribed flow rates/inlet pressure and screening correlations.
 True hydrodynamic transient and detailed property sourcing are
 still major *coding* work, not simply deferred validation.
+
+## Coding increment: outer hex losses and monolithic two-element contact
+
+New modules, committed to this branch:
+- `core_hex_exterior_surface.py`: identify actual exposed perimeter
+  triangle edges; add prescribed thermal contact and exact-secant
+  Stefan–Boltzmann radiation to the conforming 3D FE heat equation.
+- `core_hex_interelement_mortar.py`: positive-semidefinite Galerkin
+  contact stiffness based on shared *physical* side overlap, supporting
+  nonmatching side edge subdivisions with exact P1×P1 Gauss quadrature.
+- `core_hex_two_element_fem.py`: monolithic coupled heat equation for
+  two independent 3D fuel/coating FE geometries, 38 H2 axial streams
+  and the symmetric A↔B mortar flux (steady and backward-Euler).
+- `run_core_hex_conforming_fem.py` now accepts explicit contact-bath
+  and greybody radiative boundary options; steady compressible H2
+  coupled path also accepts those fields.
+- Basic code smoke checks: `validate_core_hex_exterior_surface.py`,
+  `validate_core_hex_interelement_mortar.py`,
+  `validate_core_hex_two_element_fem.py`.
+- Full equations are in
+  [CORE_INTERELEMENT_THERMAL_PHYSICS.md](CORE_INTERELEMENT_THERMAL_PHYSICS.md).
+
+**Important coding scope:** The true monolithic inter-element solution
+currently supports **two** elements (not a full reactor array, no
+tie-tubes/moderator paths). This is distinct from an external prescribed
+thermal bath. Its contact conductance is a user-supplied material/
+mechanical constitutive coefficient, not a calibrated NERVA number.
+The existing external perimeter ZrC and hot nuclear physics gaps persist.
