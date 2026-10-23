@@ -49,6 +49,24 @@ class HexTriangleSection:
             raise ValueError("zero-length channel wall")
         if len(np.unique(tri))!=len(xy):
             raise ValueError("orphan mesh nodes")
+        # Topological integrity: internal fuel/coating edges are shared
+        # by two triangular elements and every coolant boundary segment
+        # belongs to exactly one coating triangle. Never rely only on
+        # coordinate proximity to label a hydrogen wall.
+        three=np.concatenate((tri[:,[0,1]],tri[:,[1,2]],tri[:,[2,0]]))
+        ordered=np.sort(three,axis=1)
+        unique,inverse,counts=np.unique(
+            ordered,axis=0,return_inverse=True,return_counts=True)
+        if np.any(counts>2):
+            raise ValueError("non-manifold solid triangle interface")
+        edge_owner={tuple(int(x) for x in edge):[] for edge in unique}
+        owners=np.tile(material,3)
+        for edge,material_id in zip(ordered,owners):
+            edge_owner[tuple(int(x) for x in edge)].append(int(material_id))
+        for wall_edge in np.sort(edges,axis=1):
+            owners_here=edge_owner.get(tuple(int(x) for x in wall_edge),[])
+            if owners_here!=[1]:
+                raise ValueError("coolant wall must border exactly one ZrC element")
 
     @property
     def triangle_area_m2(self)->np.ndarray:
