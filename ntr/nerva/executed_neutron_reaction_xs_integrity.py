@@ -81,6 +81,44 @@ def assess_evaluated_neutron_xs_curve(
     }
 
 
+def inspect_native_reaction_temperature_keys(
+    mt: int, evaluated_labels: list[str], reaction_labels: set[str]
+) -> dict:
+    """Keep explicit 0K elastic scattering auxiliary data distinct.
+
+    OpenMC may retain a dedicated 0K elastic reaction for Doppler broadening
+    rejection correction (DBRC), outside the transported kT material
+    evaluations. This is NOT a missing hot-temperature table nor evidence
+    of 0K reactor physics. Never treat it as an ordinary energy-grid node.
+    """
+    if (type(mt) is not int or mt not in SCATTER_CAPTURE_FISSION_MTS
+            or not evaluated_labels or len(evaluated_labels)!=len(set(evaluated_labels))
+            or any(not isinstance(label,str) or not label for label in evaluated_labels)
+            or any(not isinstance(label,str) or not label for label in reaction_labels)):
+        raise ValueError("invalid native neutron cross-section temperature provenance")
+    ordinary=set(evaluated_labels)
+    missing=ordinary-reaction_labels
+    allowed_extras={"0K"} if mt==2 else set()
+    unrecognized_extras=(reaction_labels-ordinary)-allowed_extras
+    if missing:
+        raise ValueError(
+            "present evaluated neutron MT="+str(mt)+
+            " missing requested transport-temperature slices: "+repr(sorted(missing))
+        )
+    if unrecognized_extras:
+        raise ValueError(
+            "unexpected native neutron reaction temperature slice: "+
+            repr(sorted(unrecognized_extras))
+        )
+    return {
+        "all_evaluated_transport_temperature_slices_present":True,
+        "extra_0K_elastic_scattering_reaction_separately_recorded":
+            mt==2 and "0K" in (reaction_labels-ordinary),
+        "auxiliary_0K_is_not_an_executed_material_temperature":True,
+        "unmatched_native_temperature_slices":[],
+    }
+
+
 def audit_executed_neutron_reaction_xs(
     summary: Path, index: Path
 ) -> dict:
@@ -129,11 +167,9 @@ def audit_executed_neutron_reaction_xs(
                 raise ValueError("native evaluated reaction has no temperature-indexed XS")
             # A reaction existing without one of the validated temperatures
             # is incomplete input; do not fabricate that temperature.
-            if set(reaction.xs) != set(labels):
-                raise ValueError(
-                    f"present evaluated neutron MT={mt} lacks a validated "
-                    f"temperature slice for {nuclide}"
-                )
+            native_temperature_evidence=inspect_native_reaction_temperature_keys(
+                mt,labels,set(reaction.xs)
+            )
             curves = []
             for label in labels:
                 curve = reaction.xs[label]
@@ -157,6 +193,7 @@ def audit_executed_neutron_reaction_xs(
                 "mt":mt,
                 "reaction_present":True,
                 "presence_required_for_all_nuclides":False,
+                "native_temperature_key_qualification":native_temperature_evidence,
                 "evaluated_temperature_curves":curves,
             })
         rows.append({
