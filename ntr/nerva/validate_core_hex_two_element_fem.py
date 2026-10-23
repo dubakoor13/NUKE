@@ -54,10 +54,12 @@ def main()->int:
     assert np.max(steady.element_a.solid_temperature_k)>np.min(
         steady.element_b.solid_temperature_k)
     transient=solve_two_element_conforming_core(
-        a,b,z,sa,sb,ba,bb,fuel,coating,qa,qb,contact,dt_s=.2)
+        a,b,z,sa,sb,ba,bb,fuel,coating,qa,qb,contact,
+        dt_s=.2,tolerance_k=1e-11)
     assert transient.contact_a_to_b_w>0.
     assert abs(transient.combined_first_law_residual)<1e-5
-    assert abs(transient.element_a_first_law_residual)<1e-5
+    assert abs(transient.element_a_first_law_residual)<1e-5, (
+        transient.element_a_first_law_residual)
     assert abs(transient.element_b_first_law_residual)<1e-5
 
     # Exactly zero mortar conductivity matches two isolated local
