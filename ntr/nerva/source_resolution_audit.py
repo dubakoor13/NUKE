@@ -126,6 +126,31 @@ def audit_source_grids(
                 for run in snapshots
             ],
         }
+        # Universal information-theoretic Pinsker inequality for Jensen-
+        # Shannon (natural logs): JSD(P,Q) >= TV(P,Q)^2/2. Applied to
+        # real within-seed, between-seed and pooled spatial comparisons.
+        # Average JSD also exceeds (average TV)^2/2 by Jensen's inequality.
+        for tv_key, info_key in (
+            ("mean_cross_seed_tv_per_checkpoint",
+             "mean_cross_seed_jensen_shannon_nats_per_checkpoint"),
+            ("maximum_cross_seed_tv_per_checkpoint",
+             "maximum_cross_seed_jensen_shannon_nats_per_checkpoint"),
+            ("mean_within_seed_tv_per_interval",
+             "mean_within_seed_jensen_shannon_nats_per_interval"),
+            ("pooled_mean_source_tv_per_interval",
+             "pooled_source_jensen_shannon_nats_per_interval"),
+        ):
+            tv=record[tv_key]
+            info=record[info_key]
+            if (len(tv)!=len(info)
+                    or any(not math.isfinite(j) or j<-2e-12
+                           or j>math.log(2.)+2e-12
+                           or j+2e-12<0.5*v*v
+                           for v,j in zip(tv,info))):
+                raise ValueError(
+                    "source Jensen-Shannon/total-variation information "
+                    "inequality violated on genuine neutron source banks"
+                )
         if reference is not None:
             if record["all_checkpoint_statepoint_sha256"] != reference[
                     "all_checkpoint_statepoint_sha256"]:
@@ -186,6 +211,7 @@ def audit_source_grids(
         "analysis": "EXACT_SAME_OPENMC_SOURCE_BANKS_ON_NESTED_SPATIAL_GRIDS",
         "grid_resolution_audit_passed": True,
         "nested_jensen_shannon_information_refinement_integrity_passed":True,
+        "jensen_shannon_total_variation_pinsker_inequality_passed":True,
         "jensen_shannon_divergence_nats_not_stationarity_probability":True,
         "source_diversity_screen_threshold_fraction": minimum_effective_fraction,
         "source_diversity_screen_status": (
