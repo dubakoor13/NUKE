@@ -12,6 +12,7 @@ on:
       - 'ntr/nerva/core_hex_exterior_surface.py'
       - 'ntr/nerva/core_hex_interelement_mortar.py'
       - 'ntr/nerva/core_hex_two_element_fem.py'
+      - 'ntr/nerva/run_core_hex_two_element_fem.py'
       - 'ntr/nerva/validate_core_hex_interelement_mortar.py'
       - 'ntr/nerva/validate_core_hex_two_element_fem.py'
       - 'ntr/nerva/validate_core_hex_exterior_surface.py'
@@ -42,6 +43,7 @@ on:
       - 'ntr/nerva/core_hex_exterior_surface.py'
       - 'ntr/nerva/core_hex_interelement_mortar.py'
       - 'ntr/nerva/core_hex_two_element_fem.py'
+      - 'ntr/nerva/run_core_hex_two_element_fem.py'
       - 'ntr/nerva/validate_core_hex_interelement_mortar.py'
       - 'ntr/nerva/validate_core_hex_two_element_fem.py'
       - 'ntr/nerva/validate_core_hex_exterior_surface.py'
@@ -141,3 +143,4 @@ jobs:
           python -m ntr.nerva.run_core_hex_lateral_fv --help
           python -m ntr.nerva.run_core_hex_radial_lateral_fv --help
           python -m ntr.nerva.run_core_hex_conforming_fem --help
+          python -m ntr.nerva.run_core_hex_two_element_fem --help
