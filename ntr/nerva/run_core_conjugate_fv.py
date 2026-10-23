@@ -24,6 +24,7 @@ from .core_conjugate_fv import (
     CoreSolidLaw,solve_core_sector_conjugate,
 )
 from .fuel_sector_geometry import fuel_sector_fuel_areas_cm2
+from .core_conjugate_fv_diagnostics import audit_core_sector_discrete_energy
 
 
 def parse_args()->argparse.Namespace:
@@ -50,6 +51,7 @@ def parse_args()->argparse.Namespace:
     p.add_argument("--dt-s",type=float,default=None,
                    help="Transient backward-Euler timestep; omit for steady.")
     p.add_argument("--steps",type=int,default=1)
+    p.add_argument("--fuel-coating-contact-resistance-m2-k-w",type=float,default=0.0)
     p.add_argument("--fuel-radial-cells",type=int,default=8)
     p.add_argument("--coating-radial-cells",type=int,default=2)
     p.add_argument("--element-index",type=int,default=None,
@@ -132,9 +134,19 @@ def main()->int:
                 np.full(nz,a.initial_gas_temperature_k))
             run=[]
             for step in range(a.steps):
+                old_state=state
                 result=solve_core_sector_conjugate(
                     grid,state,boundary,fuel,coat,qsolid[e,c],
-                    dt_s=a.dt_s)
+                    dt_s=a.dt_s,
+                    fuel_coating_contact_resistance_m2_k_w=(
+                        a.fuel_coating_contact_resistance_m2_k_w))
+                audit=audit_core_sector_discrete_energy(
+                    grid,old_state,result,boundary,fuel,coat,qsolid[e,c],
+                    dt_s=a.dt_s,
+                    fuel_coating_contact_resistance_m2_k_w=(
+                        a.fuel_coating_contact_resistance_m2_k_w))
+                if audit.max_local_residual_scaled>1e-5 or audit.global_residual_scaled>1e-7:
+                    raise RuntimeError("cellwise core FV heat/enthalpy conservation not closed")
                 state=result.state
                 run.append({
                     "step":step+1,
@@ -149,6 +161,8 @@ def main()->int:
                     "solid_stored_energy_J":result.solid_energy_change_j,
                     "gas_stored_energy_J":result.hydrogen_energy_change_j,
                     "combined_first_law_residual":result.energy_balance_residual_j,
+                    "independent_cellwise_max_scaled_residual":audit.max_local_residual_scaled,
+                    "independent_global_scaled_residual":audit.global_residual_scaled,
                     "residual_units":"J" if result.transient else "W",
                 })
             solids.append(state.solid_temperature_k)
@@ -176,6 +190,8 @@ def main()->int:
         "steady":a.dt_s is None,"dt_s":a.dt_s,
         "radial_mesh_coating":a.coating_radial_cells,
         "radial_mesh_fuel":a.fuel_radial_cells,
+        "fuel_coating_contact_resistance_m2_k_w":a.fuel_coating_contact_resistance_m2_k_w,
+        "discrete_energy_audit":"independent, per cell",
         "channel_results":results,
     }
     (a.output/"core_conjugate_report.json").write_text(
