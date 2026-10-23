@@ -48,6 +48,8 @@ class CoupledCoreHydraulicStep:
     hydraulic_temperature_k: np.ndarray # [z,19]
     pressure_friction_loss_pa: np.ndarray
     pressure_acceleration_loss_pa: np.ndarray
+    stagnation_energy_residual_w: np.ndarray
+    momentum_residual_pa: np.ndarray
     thermal_hydraulic_temperature_error_k: float
     iterations: int
     physical_nerva_validation: bool = False
@@ -155,6 +157,8 @@ def solve_conforming_core_with_hydraulics(
         new_T=np.empty_like(htc)
         new_dp_f=np.empty_like(htc)
         new_dp_acc=np.empty_like(htc)
+        new_energy_balance=np.empty_like(htc)
+        new_momentum_balance=np.empty_like(htc)
         for c in range(19):
             wall=np.asarray(thermal.wall_to_hydrogen_w[:,c],dtype=float)
             if np.min(wall)<-1e-10:
@@ -180,6 +184,8 @@ def solve_conforming_core_with_hydraulics(
             new_film[:,c]=result.heat_transfer_coefficient_w_m2_k
             new_dp_f[:,c]=result.friction_pressure_loss_pa
             new_dp_acc[:,c]=result.acceleration_pressure_loss_pa
+            new_energy_balance[:,c]=result.energy_residual_w
+            new_momentum_balance[:,c]=result.momentum_residual_pa
             previous_p=float(inlet_p[c])
             previous_t=float(inlet_t[c])
             mass_flux=float(flow[c]/area)
@@ -210,6 +216,8 @@ def solve_conforming_core_with_hydraulics(
                 hydraulic_temperature_k=new_T,
                 pressure_friction_loss_pa=new_dp_f,
                 pressure_acceleration_loss_pa=new_dp_acc,
+                stagnation_energy_residual_w=new_energy_balance,
+                momentum_residual_pa=new_momentum_balance,
                 thermal_hydraulic_temperature_error_k=temp_error,
                 iterations=outer)
         htc=relaxation*new_film+(1-relaxation)*htc
