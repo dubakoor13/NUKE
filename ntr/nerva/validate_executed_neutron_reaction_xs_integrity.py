@@ -6,6 +6,7 @@ import numpy as np
 from .executed_neutron_reaction_xs_integrity import (
     SCATTER_CAPTURE_FISSION_MTS,
     assess_evaluated_neutron_xs_curve,
+    inspect_native_reaction_temperature_keys,
 )
 
 
@@ -20,6 +21,23 @@ def reject(fn, msg: str) -> None:
 
 def main() -> int:
     assert SCATTER_CAPTURE_FISSION_MTS == (2, 18, 102)
+    # OpenMC permits a separate zero-K *elastic only* auxiliary
+    # evaluation for Doppler broadening, not an actual transport temperature.
+    zero_k=inspect_native_reaction_temperature_keys(
+        2,["294K","600K"],{"294K","600K","0K"}
+    )
+    assert zero_k["extra_0K_elastic_scattering_reaction_separately_recorded"]
+    assert zero_k["all_evaluated_transport_temperature_slices_present"]
+    no_extra=inspect_native_reaction_temperature_keys(
+        18,["294K","600K"],{"294K","600K"}
+    )
+    assert not no_extra["extra_0K_elastic_scattering_reaction_separately_recorded"]
+    reject(lambda:inspect_native_reaction_temperature_keys(
+        2,["294K","600K"],{"294K","0K"}),"missing requested transport-temperature")
+    reject(lambda:inspect_native_reaction_temperature_keys(
+        18,["294K"],{"294K","0K"}),"unexpected native neutron reaction")
+    reject(lambda:inspect_native_reaction_temperature_keys(
+        102,["294K"],{"294K","1000K"}),"unexpected native neutron reaction")
     xs=assess_evaluated_neutron_xs_curve(
         "TestNuclide",18,"600K",
         np.array([1e6,1.5e6,2e6,10e6],dtype=float),
