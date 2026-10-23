@@ -11,7 +11,6 @@ import math
 from pathlib import Path
 import numpy as np
 from .config import NervaConfig
-from .fuel_sector_geometry import inner_fuel_hex_vertices_cm
 from .layout import coolant_channel_positions
 
 
@@ -67,7 +66,11 @@ def make_nerva_hex_triangle_section(
     coating_mesh_size_m:float=8e-5,
     output_msh:Path|None=None,
 )->HexTriangleSection:
-    """Conforming Gmsh planes: hex minus 19 rings, plus 19 coating annuli."""
+    """Conforming outer-element hex minus 19 bores plus their coating annuli.
+
+    The external perimeter ZrC skin is not explicitly meshed. The inner
+    fuel hex would cut six bore coatings, so never use it as this envelope.
+    """
     cfg=config or NervaConfig()
     cfg.validate()
     if any(not math.isfinite(x) or x<=0 for x in
@@ -86,7 +89,29 @@ def make_nerva_hex_triangle_section(
         gmsh.option.setNumber("General.Terminal",0)
         gmsh.model.add("NUKE_NERVA_19_bores_thermal")
         geo=gmsh.model.geo
-        vertices=np.asarray(inner_fuel_hex_vertices_cm(cfg),float)*0.01
+        # The inner-fuel hex (outer ZrC perimeter removed) intersects six
+        # of the outer bore coatings in the currently documented NUKE
+        # surrogate: margin -0.00363 cm. The outer fuel ELEMENT hex
+        # physically contains them, with only +0.00137 cm clearance.
+        # Do not move/enlarge bores or pretend the outer coating is meshed.
+        side=cfg.fuel_edge_length_cm*0.01
+        x=0.5*math.sqrt(3)*side
+        vertices=np.array([
+            [0.,side],[-x,side/2],[-x,-side/2],
+            [0.,-side],[x,-side/2],[x,side/2]
+        ],dtype=float)
+        # Every coated hole must fit strictly inside the external hex.
+        radius=cfg.coated_channel_radius_cm*0.01
+        for cx_cm,cy_cm in coolant_channel_positions(cfg):
+            pt=np.array([cx_cm,cy_cm],dtype=float)*0.01
+            for edge_start,edge_end in zip(vertices,np.roll(vertices,-1,axis=0)):
+                vector=edge_end-edge_start
+                inward=(vector[0]*(pt-edge_start)[1]-
+                        vector[1]*(pt-edge_start)[0])/np.linalg.norm(vector)
+                if inward<=radius:
+                    raise ValueError(
+                        "NUKE coated coolant bore overlaps external hex boundary; "
+                        "refusing invalid conforming geometry")
         points=[geo.addPoint(float(x),float(y),0.,fuel_mesh_size_m)
                 for x,y in vertices]
         boundary=[geo.addLine(points[j],points[(j+1)%6]) for j in range(6)]
