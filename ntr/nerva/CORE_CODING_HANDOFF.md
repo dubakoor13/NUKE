@@ -92,3 +92,26 @@ adding yet another disconnected thermal demonstration model.
 
 Use Python for core numerics and software smoke first. Do not claim
 C++ port complete until this physical code scope is actually implemented.
+
+## Latest coding increment: tabulated thermophysics and H2 momentum coupling
+
+New modules (see CORE_TABULATED_THERMAL_HYDRAULICS.md):
+- core_solid_material_tables.py — temperature-dependent fuel and coating
+  conductivity/specific heat tables, exact cp(T) internal-energy integral,
+  no silent extrapolation beyond supplied temperature range.
+- core_hex_conforming_hydraulics.py — optional steady outer fixed point
+  joining conforming 3-D fuel/ZrC/H2 thermal FEM to the existing NUKE
+  compressible hydrogen 1-D mass/momentum/stagnation-energy solver.
+- core_hex_conforming_fem.py accepts signed steady kinetic-energy flux
+  correction, essential when the pressure solver updates H2 velocity.
+- run_core_hex_conforming_fem.py supports --fuel-material-npz,
+  --coating-material-npz, --couple-hydraulics and --inlet-pressure-pa;
+  exports separate hydraulic NPZ and energy/momentum residual metrics.
+- validate_core_solid_material_tables.py and
+  validate_core_hex_conforming_hydraulics.py perform numerical-only
+  execution checks, including CLI source/table/pressure integration.
+
+The coupled hydrogen solver remains SUBSONIC and QUASI-STEADY only,
+with prescribed flow rates/inlet pressure and screening correlations.
+True hydrodynamic transient and detailed property sourcing are
+still major *coding* work, not simply deferred validation.
