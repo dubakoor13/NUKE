@@ -6,6 +6,9 @@ on:
     paths:
       - 'ntr/nerva/core_conjugate_fv.py'
       - 'ntr/nerva/core_hex_lateral_fv.py'
+      - 'ntr/nerva/core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/core_hex_radial_lateral_balance.py'
+      - 'ntr/nerva/validate_core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_lateral_balance.py'
       - 'ntr/nerva/run_core_hex_lateral_fv.py'
       - 'ntr/nerva/validate_core_hex_lateral_fv.py'
@@ -18,6 +21,9 @@ on:
     paths:
       - 'ntr/nerva/core_conjugate_fv.py'
       - 'ntr/nerva/core_hex_lateral_fv.py'
+      - 'ntr/nerva/core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/core_hex_radial_lateral_balance.py'
+      - 'ntr/nerva/validate_core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_lateral_balance.py'
       - 'ntr/nerva/run_core_hex_lateral_fv.py'
       - 'ntr/nerva/validate_core_hex_lateral_fv.py'
@@ -43,6 +49,8 @@ jobs:
         run: python -m ntr.nerva.validate_core_conjugate_fv
       - name: Check lateral 19-channel Voronoi core conduction physics
         run: python -m ntr.nerva.validate_core_hex_lateral_fv
+      - name: Validate unified radial-axial-lateral 19-channel thermal FV
+        run: python -m ntr.nerva.validate_core_hex_radial_lateral_fv
       - name: Integrate actual NUKE reconstruction array shapes with 19-channel CLI
         run: |
           python - <<'PY'
