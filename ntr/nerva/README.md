@@ -1095,3 +1095,33 @@ conductivity/heat storage, nonlinear frozen NASA-7 H2 enthalpy, first-law
 conservation, and NUKE reconstruction file integration. Qualified
 high-temperature OpenMC local energy deposition and historical NERVA
 validation remain outstanding.
+
+## Conforming 19-bore hex fuel/coating thermal mesh (Python)
+
+The opt-in `core_hex_conforming_mesh.py` generator builds a conforming
+triangle cross section of the existing 19-coolant-bore hexagonal fuel-element
+demonstrator, with **actual circular coolant voids and separate meshed ZrC
+coating annuli**. The solver in `core_hex_conforming_fem.py` extrudes
+those triangles axially as six-node prism finite elements, solving
+three-dimensional solid heat conduction with a simultaneous 19-channel
+implicit hydrogen enthalpy model. This is a new fidelity tier beyond the
+earlier equivalent-annulus/Voronoi thermal closures.
+
+Use `python -m ntr.nerva.run_core_hex_conforming_fem --help` for its
+NUKE reconstruction adapter. It accepts source power projected from
+channel-heating arrays or an externally supplied explicit
+`[element,axial,triangle]` energy-deposition array. The two source
+origins are kept distinct in the JSON provenance.
+
+Read [CORE_CONFORMING_3D_THERMAL.md](CORE_CONFORMING_3D_THERMAL.md) for
+equations, interface heat fluxes, mesh assumptions, inputs and limits.
+Gmsh is optional for building meshes; cached NPZ triangles work
+without Gmsh. The real 19-bore mesher was smoke-tested and generated
+65,796 triangles / 34,024 nodes at one example mesh resolution.
+
+Important: the original inner-fuel-hex envelope overlaps six coolant
+coating rings; the mesher uses the configured **full outer element hex**
+and does not yet model the external perimeter coating. It is not a
+historically certified NERVA fuel-element mesh. Hot OpenMC nuclear
+deposition, thermophysical calibration, coolant pressure/momentum and
+full physical qualification remain separate work.
