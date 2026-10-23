@@ -1148,3 +1148,33 @@ for equations, source semantics, CLI flags and physics/coding limitations.
 The code does **not** claim historical reactor-core qualification,
 physically evaluated hot nuclear energy deposition, or a validated
 nuclear/thermal fixed point.
+
+## Fuel-element perimeter physics and conservative inter-element conduction
+
+The conforming 3D fuel/ZrC/H2 solver supports optional heat exchange at
+the *actual exposed hex perimeter*: a prescribed external thermal
+contact conductance, reservoir temperature, greybody emissivity and
+radiative environment temperature. The boundary flux is integrated
+with a consistent FE surface matrix and is included in the first-law
+heat-loss ledger. Use `--outer-contact-w-m2-k`,
+`--outer-contact-temperature-k`, `--outer-emissivity` and
+`--outer-radiation-temperature-k` with
+`run_core_hex_conforming_fem.py`. No unreported boundary-temperature
+defaults are used for active heat transfer.
+
+For physical exchange **between two modeled fuel elements** rather
+than a prescribed heat bath, the new
+`core_hex_interelement_mortar.py` builds a symmetric conservative
+contact matrix across physically aligned element sides, even if their
+P1 mesh edge divisions are different. The
+`core_hex_two_element_fem.py` solver combines that contact with two
+independent conforming fuel/ZrC volumetric conduction systems and all
+38 H2 axial energy streams in one monolithic nonlinear sparse system.
+Equal-and-opposite interface heat appears in the two separate
+first-law ledgers and cancels in the combined energy balance.
+
+See [CORE_INTERELEMENT_THERMAL_PHYSICS.md](CORE_INTERELEMENT_THERMAL_PHYSICS.md)
+for the contact/radiation weak forms, exact numerical interface
+quadrature, input domains and remaining limitations. **This is a
+two-element thermal solver**, not a complete multi-element nuclear
+reactor array, and it has not been historically validated.
