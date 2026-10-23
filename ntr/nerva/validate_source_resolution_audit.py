@@ -57,6 +57,7 @@ def main() -> int:
         assert [r["bins_per_axis"] for r in resolutions] == [2, 4, 8]
         assert report["grid_resolution_audit_passed"] is True
         assert report["nested_jensen_shannon_information_refinement_integrity_passed"]
+        assert report["jensen_shannon_total_variation_pinsker_inequality_passed"]
         assert report["jensen_shannon_divergence_nats_not_stationarity_probability"]
         assert 0<=report["coarsest_final_cross_seed_jensen_shannon_nats"]<=np.log(2)
         assert (report["finest_final_cross_seed_jensen_shannon_nats"]+2e-12
@@ -103,6 +104,7 @@ def main() -> int:
             "FAIL_SOURCE_CLONING_SCREEN"
         )
         assert replicated["nested_jensen_shannon_information_refinement_integrity_passed"]
+        assert replicated["jensen_shannon_total_variation_pinsker_inequality_passed"]
         assert replicated["source_stationarity_validated"] is False
         assert replicated["resolutions"][0][
             "minimum_effective_distinct_position_count"] == 2.
