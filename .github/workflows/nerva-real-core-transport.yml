@@ -10,6 +10,8 @@ on:
       - 'ntr/nerva/source_bank_trajectory.py'
       - 'ntr/nerva/source_resolution_audit.py'
       - 'ntr/nerva/real_core_keff_history_qualification.py'
+      - 'ntr/nerva/real_core_keff_autocorrelation.py'
+      - 'ntr/nerva/validate_real_core_keff_autocorrelation.py'
       - 'ntr/nerva/core_criticality_physical_qualification.py'
       - 'ntr/nerva/validate_core_criticality_physical_qualification.py'
       - 'ntr/nerva/validate_real_core_keff_history_qualification.py'
@@ -122,6 +124,7 @@ jobs:
               python -m ntr.nerva.validate_source_bank_convergence
               python -m ntr.nerva.validate_source_bank_trajectory
               python -m ntr.nerva.validate_real_core_keff_history_qualification
+              python -m ntr.nerva.validate_real_core_keff_autocorrelation
               python -m ntr.nerva.validate_core_criticality_physical_qualification
               python -m ntr.nerva.validate_source_resolution_audit
               python -m ntr.nerva.validate_source_energy_audit
@@ -171,6 +174,14 @@ jobs:
                 --spatial-audit /repo/build/nerva_real_core/source_resolution_audit.json \
                 --output /repo/build/nerva_real_core/real_core_keff_history_qualification.json
               python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/real_core_keff_history_qualification.json\")); assert p[\"all_checkpoint_keff_and_entropy_prefixes_verified\"]; assert p[\"four_seed_split_chain_generation_k\"][\"independent_seed_count\"]==4; assert not p[\"spatial_fission_source_stationarity_validated\"]; print(\"Real eigenvalue generation-history integrity verified; spatial source stationarity NOT ESTABLISHED\")"
+              # Genuine OpenMC eigenvalue batch k history correlations and
+              # nonoverlapping block-mean variances (not k_combined SEM).
+              # Fission genealogy and source stationarity are NOT proven.
+              python -m ntr.nerva.real_core_keff_autocorrelation \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --history /repo/build/nerva_real_core/real_core_keff_history_qualification.json \
+                --output /repo/build/nerva_real_core/real_core_keff_autocorrelation.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/real_core_keff_autocorrelation.json\")); assert p[\"independent_rng_seed_count\"]==4; assert p[\"real_native_terminal_hdf5_count\"]==4; assert p[\"all_earlier_statepoint_k_entropy_prefix_checks_reconciled\"]; assert p[\"all_per_seed_multilag_and_block_variance_checks_completed\"]; assert all(x[\"active_batches\"]>=40 and x[\"initial_positive_sequence_tau_diagnostic\"]>=1 and len(x[\"blocked_generation_mean_diagnostics\"])>=3 for x in p[\"per_real_seed\"]); assert not p[\"spatial_source_stationarity_demonstrated\"]; assert not p[\"fully_calibrated_reactor_uncertainty_established\"]; print(\"REAL OpenMC four-seed multilag eigenvalue autocorrelation and nonoverlapping block variance: PASS (no stationarity claim)\")"
               python -m ntr.nerva.core_criticality_physical_qualification \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --spatial-audit /repo/build/nerva_real_core/source_resolution_audit.json \
