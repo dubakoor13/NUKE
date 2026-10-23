@@ -42,6 +42,8 @@ class NervaConfig:
     hydrogen_density_g_cm3: float = 0.0030
     hydrogen_temperature_k: float = 600.0
     fuel_temperature_k: float | None = None  # None retains legacy default OpenMC behavior
+    zrc_temperature_k: float | None = None  # physically instantiated ZrC coating
+    reflector_temperature_k: float | None = None  # physically instantiated Be reflector
     # 'evaluated-bound' enables chemically bound thermal scattering in
     # specific PURE moderators/reflectors, but only when all required
     # evaluated S(alpha,beta) HDF5 kernels exist in cross_sections.xml.
@@ -197,10 +199,15 @@ class NervaConfig:
                 "evaluated-bound thermal scattering requires explicit "
                 "bound_solid_temperature_k and matching evaluated S(a,b)"
             )
-        if self.fuel_temperature_k is not None and (
-            not math.isfinite(self.fuel_temperature_k) or self.fuel_temperature_k <= 0
+        for label, kelvin in (
+            ("fuel", self.fuel_temperature_k),
+            ("ZrC coating", self.zrc_temperature_k),
+            ("Be reflector", self.reflector_temperature_k),
         ):
-            raise ValueError("fuel temperature must be positive and finite")
+            if kelvin is not None and (
+                not math.isfinite(kelvin) or kelvin <= 0
+            ):
+                raise ValueError(label + " temperature must be positive and finite")
         if not math.isfinite(self.hydrogen_temperature_k) or self.hydrogen_temperature_k <= 0:
             raise ValueError("hydrogen temperature must be positive and finite")
         if not math.isfinite(self.hydrogen_density_g_cm3) or self.hydrogen_density_g_cm3 <= 0:
