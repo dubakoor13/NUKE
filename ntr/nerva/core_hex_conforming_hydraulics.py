@@ -30,6 +30,7 @@ from .nasa_hydrogen import hydrogen_state, T_MIN, T_MAX
 from .thermal import HydrogenProperties, nusselt_number
 from .compressible_channel import solve_fuel_channel_compressible
 from .core_hex_conforming_mesh import HexTriangleSection
+from .core_hex_exterior_surface import CoreExteriorHeatBoundary
 from .core_hex_conforming_fem import (
     ConformingCoreState, ConformingCoreStep, solve_conforming_core_thermal,
 )
@@ -70,6 +71,7 @@ def solve_conforming_core_with_hydraulics(
     channel_diameter_m: float|None = None,
     roughness_m: float = 1e-6,
     props: HydrogenProperties|None = None,
+    exterior_boundary: CoreExteriorHeatBoundary|None = None,
     max_mach: float = 0.85,
     relaxation: float = 0.55,
     max_outer_iterations: int = 30,
@@ -149,7 +151,8 @@ def solve_conforming_core_with_hydraulics(
         # physical thermal energy accumulation between outer passes.
         thermal=solve_conforming_core_thermal(
             section,z,initial,boundary,fuel,coating,solid_power_w,
-            dt_s=None,hydrogen_kinetic_power_w=correction)
+            dt_s=None,hydrogen_kinetic_power_w=correction,
+            exterior_boundary=exterior_boundary)
         new_film=np.empty_like(htc)
         new_correction=np.empty_like(correction)
         new_p=np.empty_like(htc)
