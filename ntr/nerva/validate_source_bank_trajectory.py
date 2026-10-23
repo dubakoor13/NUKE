@@ -12,7 +12,8 @@ import numpy as np
 
 from .source_bank_trajectory import (
     jensen_shannon_divergence, source_bank_trajectory
-)from .validate_source_bank_convergence import fake
+)
+from .validate_source_bank_convergence import fake
 
 
 def reject(fn, phrase: str) -> None:
