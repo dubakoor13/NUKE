@@ -110,7 +110,7 @@ def assess_fission_emission_window(
             or material_sums.shape != (len(ids),3)
             or material_reference.shape != (len(ids),)
             or not ids or len(set(ids)) != len(ids)
-            or set(ids) < reachable or not reachable
+            or not reachable <= set(ids) or not reachable
             or not np.isfinite(global_sums).all()
             or not np.isfinite(material_sums).all()
             or not np.isfinite(material_reference).all()
