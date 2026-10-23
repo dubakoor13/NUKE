@@ -231,7 +231,10 @@ def audit_real_core_neutron_energy_score_support(
         "all_checked_energy_filters_within_evaluated_isotope_support":True,
         "all_score_partitions_per_checkpoint":details,
         "per_score_evaluated_incident_energy_coverage":diagnostics,
-        "unfiltered_and_energy_filtered_material_scores_reconciled":True,
+        "unfiltered_and_energy_filtered_material_scores_reconciled":all(
+            item["all_statepoint_material_energy_windows_numerically_closed"]
+            for item in diagnostics.values()
+        ),
         "all_possible_neutron_collision_energies_observed":False,
         "energy_window_underflow_and_overflow_individually_identified":False,
         "hot_nuclear_data_or_bound_scattering_qualified":False,
