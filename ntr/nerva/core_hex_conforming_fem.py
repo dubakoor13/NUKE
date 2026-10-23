@@ -94,6 +94,7 @@ def solve_conforming_core_thermal(
     solid_power_w:np.ndarray,
     *,
     dt_s:float|None=None,
+    hydrogen_kinetic_power_w:np.ndarray|None=None,
     max_iterations:int=60,
     tolerance_k:float=1e-8,
     relaxation:float=0.8,
@@ -115,6 +116,19 @@ def solve_conforming_core_thermal(
     nz=len(z)-1
     boundary.validate(nz)
     power=_source_array(section,z,solid_power_w)
+    # Steady compressible channel momentum coupling supplies the signed
+    # kinetic-energy change -mdot*(v_out^2-v_in^2)/2 per H2 cell.
+    # Without this, prescribing pressure loss while solving only static
+    # gas enthalpy would violate stagnation-energy conservation.
+    kinetic=np.zeros((nz,19),dtype=float)
+    if hydrogen_kinetic_power_w is not None:
+        kinetic=np.asarray(hydrogen_kinetic_power_w,dtype=float)
+        if (kinetic.shape!=(nz,19) or not np.isfinite(kinetic).all()):
+            raise ValueError("kinetic power must be finite [z,19] W")
+        if dt_s is not None:
+            raise ValueError(
+                "quasi-steady kinetic-power correction is not supported "
+                "with transient H2 inventory; use steady state only")
     nxy=len(section.xy_m)
     solid_initial=np.asarray(previous.solid_temperature_k,dtype=float)
     gas_initial=np.asarray(previous.hydrogen_temperature_k,dtype=float)
@@ -214,7 +228,7 @@ def solve_conforming_core_thermal(
         for i in range(nz):
             for c in range(19):
                 idx=ns+i*19+c
-                rhs[idx]+=float(boundary.direct_hydrogen_power_w[i,c])
+                rhs[idx]+=float(boundary.direct_hydrogen_power_w[i,c]+kinetic[i,c])
                 if dt_s is not None:
                     gas_capacity=(boundary.hydrogen_mass_kg[i,c]*
                         _gas_secant(float(gas_initial[i,c]),
@@ -287,7 +301,8 @@ def solve_conforming_core_thermal(
         boundary.mdot_kg_s[c]*
         _gas_enthalpy(float(gas[-1,c]),gas_law)
         for c in range(19))
-    source_total=float(power.sum()+np.sum(boundary.direct_hydrogen_power_w))
+    source_total=float(power.sum()+np.sum(boundary.direct_hydrogen_power_w)+
+                       np.sum(kinetic))
     residual=(stored_solid+stored_gas-
               (source_total+enthalpy_in-enthalpy_out)*
               (dt_s if dt_s is not None else 1.))
