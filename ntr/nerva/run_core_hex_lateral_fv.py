@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from .core_conjugate_fv import CoreSolidLaw
+from .core_hex_lateral_balance import audit_hex_core_cell_energy
 from .core_hex_lateral_fv import (
     HexSectorNetwork,HexCoolantBoundary,HexCoreState,solve_hex_core_conjugate
 )
@@ -92,11 +93,18 @@ def main()->int:
             np.full((nz,19),a.initial_temperature_k))
         history=[]
         for step in range(a.steps):
+            preceding=initial
             solve=solve_hex_core_conjugate(
                 geometry,z,initial,boundary,fuel,coat,qsolid[el].T,
                 dt_s=a.dt_s,
                 fuel_coating_contact_resistance_m2_k_w=(
                     a.contact_resistance_m2_k_w))
+            audit=audit_hex_core_cell_energy(
+                geometry,z,preceding,solve,boundary,fuel,coat,qsolid[el].T,
+                dt_s=a.dt_s,contact_resistance_m2_k_w=(
+                    a.contact_resistance_m2_k_w))
+            if audit.maximum_scaled_cell_residual>1e-6 or audit.global_scaled_residual>1e-7:
+                raise RuntimeError("independent lateral fuel/coating/H2 first-law failure")
             initial=solve.state
             history.append({
                 "step":step+1,"iterations":solve.iterations,
@@ -109,6 +117,8 @@ def main()->int:
                 "total_solid_nuclear_power_W":float(qsolid[el].sum()),
                 "total_direct_H2_nuclear_power_W":float(qhyd[el].sum()),
                 "first_law_residual":solve.energy_residual,
+                "independent_max_scaled_cell_residual":audit.maximum_scaled_cell_residual,
+                "independent_global_scaled_residual":audit.global_scaled_residual,
                 "residual_units":"J" if solve.transient else "W",
             })
         rows.append({"element_instance":int(el),"steps":history})
