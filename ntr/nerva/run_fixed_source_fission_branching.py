@@ -102,6 +102,18 @@ def main() -> int:
         "flux", "absorption", "fission", "nu-fission", "heating-local",
     ]
     model.tallies.append(window)
+    # Score the WHOLE simulated domain without a MaterialFilter as a
+    # separate estimator. Its SUMSQ includes correlations among physical
+    # materials, unlike the individual marginal per-material errors.
+    # Compare its mean to the material-resolved integrals; any discrepancy
+    # remains a physical scoring/coverage failure, never a fitted correction.
+    global_window = openmc.Tally(name="nerva_global_energy_window_tail")
+    global_window.filters = [openmc.EnergyFilter(ENERGY_WINDOW_TAIL_EDGES_EV)]
+    global_window.scores = [
+        "flux", "absorption", "fission", "nu-fission", "heating-local",
+    ]
+    global_window.estimator = "tracklength"
+    model.tallies.append(global_window)
     model.settings.run_mode = "fixed source"
     model.settings.inactive = 0
     model.settings.statepoint = {"batches": [args.batches]}
