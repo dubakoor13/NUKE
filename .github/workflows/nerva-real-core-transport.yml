@@ -18,6 +18,8 @@ on:
       - 'ntr/nerva/validate_core_criticality_physical_qualification.py'
       - 'ntr/nerva/validate_real_core_keff_history_qualification.py'
       - 'ntr/nerva/source_energy_audit.py'
+      - 'ntr/nerva/real_fission_source_neutron_energy_support.py'
+      - 'ntr/nerva/validate_real_fission_source_neutron_energy_support.py'
       - 'ntr/nerva/source_phase_space_audit.py'
       - 'ntr/nerva/source_direction_physics_audit.py'
       - 'ntr/nerva/source_clone_moment_closure.py'
@@ -142,6 +144,7 @@ jobs:
               python -m ntr.nerva.validate_nuclear_data
               python -m ntr.nerva.validate_core_material_temperature_qualification
               python -m ntr.nerva.validate_executed_neutron_temperature_energy_grid
+              python -m ntr.nerva.validate_real_fission_source_neutron_energy_support
               python -m ntr.nerva.validate_executed_neutron_reaction_xs_integrity
               python -m ntr.nerva.validate_evaluated_fission_neutron_product_yield
               python -m ntr.nerva.validate_heating_data_qualification
@@ -197,6 +200,16 @@ jobs:
               python -m ntr.nerva.source_energy_audit \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --output /repo/build/nerva_real_core/source_energy_audit.json
+              # Genuine 20 saved source-bank neutron emission energies are
+              # cross-checked against all reachable evaluated isotope HDF5
+              # incident-energy domains at every native library temperature.
+              # Source coverage is NOT a collision spectrum qualification.
+              python -m ntr.nerva.real_fission_source_neutron_energy_support \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --source-energy /repo/build/nerva_real_core/source_energy_audit.json \
+                --output /repo/build/nerva_real_core/real_fission_source_neutron_energy_support.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/real_fission_source_neutron_energy_support.json\")); assert p[\"real_independent_source_seeds\"]==4; assert p[\"genuine_source_hdf5_checkpoint_count\"]==20; assert p[\"physically_reachable_material_ids\"]==[19,20,21,22]; assert p[\"physically_used_neutron_nuclide_count\"]==13; assert p[\"emitted_source_bank_energy_weight_conserved\"]; assert 0<=p[\"max_fraction_of_source_weight_outside_common_incident_domain\"]<=1; assert not p[\"transport_collision_energy_coverage_proven\"]; assert not p[\"hot_operating_core_neutron_physics_qualified\"]; assert not p[\"fission_source_stationarity_qualified\"]; print(\"REAL 20-statepoint neutron emission versus evaluated XS energy-grid support audited; collision-spectrum coverage NOT qualified\")"
               python -m ntr.nerva.source_phase_space_audit \
                 --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
                 --spatial-audit /repo/build/nerva_real_core/source_resolution_audit.json \
