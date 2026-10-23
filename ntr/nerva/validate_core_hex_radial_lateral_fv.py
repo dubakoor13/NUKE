@@ -109,6 +109,28 @@ def main()->int:
     assert abs(transient.first_law_residual)<1e-5
     assert audit_t.max_relative_cell_residual<1e-7
 
+    # Frozen molecular H2 NASA-7: use nonconstant cp(T) while conserving
+    # stored H2 mass times enthalpy, not an arbitrary reference cp*T.
+    molecular_h2=HexCoolantBoundary(
+        mdot_kg_s=gas.mdot_kg_s,
+        inlet_temperature_k=np.full(ns,850.),
+        hydrogen_mass_kg=gas.hydrogen_mass_kg,
+        film_w_m2_k=gas.film_w_m2_k,
+        direct_hydrogen_power_w=qh,
+        hydrogen_model="nasa7-h2",
+    )
+    warm=RadialHexState(
+        np.full((nz,ns,nr),850.),np.full((nz,ns),850.))
+    thermo=solve_radial_hex_core(
+        mesh,warm,molecular_h2,fuel,coat,Q,
+        dt_s=0.15,tolerance_k=1e-10)
+    thermo_audit=audit_radial_hex_energy(
+        mesh,warm,thermo,molecular_h2,fuel,coat,Q,dt_s=0.15)
+    assert thermo.stored_solid_energy_j>0
+    assert thermo.stored_hydrogen_energy_j>0
+    assert thermo_audit.max_relative_cell_residual<1e-7
+    assert abs(thermo.first_law_residual)<1e-5
+
     # Explicit 3-D cell-wise heating equivalent to volume-distributed
     # 2-D [z,19] sources must give the identical result.
     volume=mesh.volumes_m3.copy()
@@ -164,6 +186,7 @@ def main()->int:
     print("  independent max local scaled residual:",audit.max_relative_cell_residual)
     print("  global steady first-law residual W:",full.first_law_residual)
     print("  global transient first-law residual J:",transient.first_law_residual)
+    print("  NASA-7 H2 transient first-law residual J:",thermo.first_law_residual)
     print("  hot OpenMC/NASA physical validation: NOT ESTABLISHED")
     return 0
 
