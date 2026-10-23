@@ -13,6 +13,9 @@ from .core_hex_conforming_fem import (
 )
 from .core_hex_lateral_fv import HexCoolantBoundary
 from .core_conjugate_fv import CoreSolidLaw
+from .core_hex_conforming_power import (
+    CartesianSolidPower,project_cartesian_deposition_to_prisms,
+)
 
 
 def toy_section()->HexTriangleSection:
@@ -41,6 +44,21 @@ def main()->int:
     section=toy_section()
     z=np.array([0.,0.10,0.20])
     nz=len(z)-1
+    # Exact material-separated voxel->prism integration: each uniform
+    # material power density must equal its triangle volume times W/cm3.
+    source=CartesianSolidPower(
+        x_edges_cm=np.array([-50.,0.,50.]),
+        y_edges_cm=np.array([-50.,0.,50.]),
+        z_edges_cm=np.array([0.,5.,15.,20.]),
+        fuel_density_w_cm3=np.full((2,2,3),2.),
+        coating_density_w_cm3=np.full((2,2,3),3.))
+    projection=project_cartesian_deposition_to_prisms(section,z,source)
+    area=section.triangle_area_m2
+    for i in range(nz):
+        expected=(area*1e6*(z[i+1]-z[i]) *
+                  np.where(section.material==0,2.,3.))
+        assert np.allclose(projection.solid_prism_power_w[i],expected,
+                           rtol=1e-10,atol=1e-6)
     q=np.zeros((nz,len(section.triangles)))
     q[:,section.material==0]=2.0
     initial=ConformingCoreState(
