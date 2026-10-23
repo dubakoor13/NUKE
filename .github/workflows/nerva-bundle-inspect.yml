@@ -1,0 +1,56 @@
+name: NERVA core bundle safe inventory
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nerva-bundle-inspect.yml'
+      - 'NERVA-CORE-BUNDLE.zip'
+  push:
+    paths:
+      - '.github/workflows/nerva-bundle-inspect.yml'
+
+jobs:
+  archive-inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect ZIP central directory and bounded documentation preview (no extraction)
+        shell: python
+        run: |
+          from pathlib import Path
+          from collections import Counter
+          from zipfile import ZipFile
+          import hashlib, json, re
+          path = Path('NERVA-CORE-BUNDLE.zip')
+          print('BUNDLE_INVENTORY_START')
+          print('bytes:', path.stat().st_size)
+          print('sha256:', hashlib.file_digest(open(path,'rb'),'sha256').hexdigest())
+          with ZipFile(path) as z:
+              entries = z.infolist()
+              files = [x for x in entries if not x.is_dir()]
+              print('zip_entries:',len(entries),'files:',len(files),'total_uncompressed:',sum(x.file_size for x in files))
+              print('extensions:',json.dumps(Counter(Path(x.filename).suffix.lower() for x in files).most_common(30)))
+              print('ENTRY_LIST_START')
+              for x in entries[:450]:
+                  print(json.dumps({'name':x.filename,'size':x.file_size,'compressed':x.compress_size},ensure_ascii=False))
+              print('ENTRY_LIST_END')
+              interesting=[]
+              for x in files:
+                  filename=Path(x.filename).name.lower()
+                  if re.search(r'(readme|manifest|summary|inventory|index|license|notes|status|documentation|structure|overview|contents|validation|report)',filename):
+                      if x.file_size<=180000 and Path(x.filename).suffix.lower() in ('.txt','.md','.rst','.csv','.json','.yaml','.yml',''):
+                          interesting.append(x)
+              print('DOCUMENT_PREVIEWS_START')
+              for x in interesting[:22]:
+                  print('### DOCUMENT:',x.filename)
+                  print(z.read(x)[:8500].decode('utf-8',errors='replace'))
+                  print('### END_DOCUMENT:',x.filename)
+              print('DOCUMENT_PREVIEWS_END')
+              source=[x for x in files if Path(x.filename).suffix.lower() in ('.f','.for','.f77','.f90','.f95','.py','.cpp','.c','.h','.hxx','.hpp','.m')]
+              print('SOURCE_SAMPLE_START')
+              for x in source[:16]:
+                  if x.file_size<250000:
+                      print('### SOURCE:',x.filename)
+                      print(z.read(x)[:1600].decode('utf-8',errors='replace'))
+              print('SOURCE_SAMPLE_END')
+          print('BUNDLE_INVENTORY_END')
