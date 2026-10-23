@@ -9,6 +9,8 @@ on:
       - 'ntr/nerva/core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_conforming_mesh.py'
       - 'ntr/nerva/core_hex_conforming_fem.py'
+      - 'ntr/nerva/core_hex_exterior_surface.py'
+      - 'ntr/nerva/validate_core_hex_exterior_surface.py'
       - 'ntr/nerva/core_solid_material_tables.py'
       - 'ntr/nerva/core_hex_conforming_hydraulics.py'
       - 'ntr/nerva/validate_core_solid_material_tables.py'
@@ -33,6 +35,8 @@ on:
       - 'ntr/nerva/core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_conforming_mesh.py'
       - 'ntr/nerva/core_hex_conforming_fem.py'
+      - 'ntr/nerva/core_hex_exterior_surface.py'
+      - 'ntr/nerva/validate_core_hex_exterior_surface.py'
       - 'ntr/nerva/core_solid_material_tables.py'
       - 'ntr/nerva/core_hex_conforming_hydraulics.py'
       - 'ntr/nerva/validate_core_solid_material_tables.py'
@@ -117,6 +121,8 @@ jobs:
         run: python -m ntr.nerva.validate_core_solid_material_tables
       - name: Check 3D fuel FEM and H2 quasi-steady compressible momentum coupling
         run: python -m ntr.nerva.validate_core_hex_conforming_hydraulics
+      - name: Check external hex contact and greybody boundary thermal numerics
+        run: python -m ntr.nerva.validate_core_hex_exterior_surface
       - name: Check executable interfaces
         run: |
           python -m ntr.nerva.run_core_conjugate_fv --help
