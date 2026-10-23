@@ -48,6 +48,8 @@ on:
       - 'ntr/nerva/core_mt901_reaction_exposure.py'
       - 'ntr/nerva/tallies.py'
       - 'ntr/nerva/core_prompt_delayed_fission_validation.py'
+      - 'ntr/nerva/core_fission_emission_native_uncertainty.py'
+      - 'ntr/nerva/validate_core_fission_emission_native_uncertainty.py'
       - 'ntr/nerva/validate_core_prompt_delayed_fission_validation.py'
       - 'ntr/nerva/validate_core_mt901_reaction_exposure.py'
       - 'ntr/nerva/validate_executed_material_kerma_qualification.py'
@@ -133,6 +135,7 @@ jobs:
               python -m ntr.nerva.validate_real_core_material_transport_support
               python -m ntr.nerva.validate_core_mt901_reaction_exposure
               python -m ntr.nerva.validate_core_prompt_delayed_fission_validation
+              python -m ntr.nerva.validate_core_fission_emission_native_uncertainty
               python -m ntr.nerva.run_real_core_replicas \
                 --rings 3 --particles 3000 --batches 120 --inactive 30 \
                 --source-bank-batches 40 60 80 100 120 \
@@ -253,6 +256,17 @@ jobs:
                 --material-kerma /repo/build/nerva_real_core/executed_material_kerma_qualification.json \
                 --output /repo/build/nerva_real_core/core_prompt_delayed_fission_validation.json
               python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/core_prompt_delayed_fission_validation.json\")); assert p[\"independent_seed_count\"]==4; assert p[\"checked_native_statepoint_checkpoints\"]==20; assert p[\"active_source_windows_per_seed\"]==5; assert p[\"independently_evaluated_prompt_delayed_total_yield_consistency_screen_passed\"]; assert p[\"maximum_observed_prompt_delayed_relative_yield_mismatch\"] < p[\"evaluated_yield_relative_mismatch_screen\"]; assert 0<p[\"four_seed_delayed_emission_fraction_mean\"]<1; assert not p[\"beta_eff_calculated\"]; assert not p[\"nasa_historical_nerva_core_validated\"]; print(\"REAL OpenMC total=prompt+delayed neutron production and native material closure: PASS\")"
+              # Physically executed native OpenMC neutron-generation SUMSQ
+              # and SUM moments for independent total, prompt and delayed
+              # evaluated fission emission tallies, from 4 real seeds and
+              # 5 truly disjoint active-generation windows. Covariance between
+              # different scores and genealogical stationarity stay UNPROVEN.
+              python -m ntr.nerva.core_fission_emission_native_uncertainty \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --prompt-emission /repo/build/nerva_real_core/core_prompt_delayed_fission_validation.json \
+                --output /repo/build/nerva_real_core/core_fission_emission_native_uncertainty.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/core_fission_emission_native_uncertainty.json\")); assert p[\"independent_seed_count\"]==4; assert p[\"verified_hdf5_statepoint_count\"]==20; assert p[\"disjoint_active_windows_per_seed\"]==5; assert p[\"marginal_native_batch_moments_verified\"]; assert p[\"largest_native_delayed_emission_batch_relative_sem_in_windows\"]>0; assert not p[\"inter_score_covariance_recoverable_from_marginal_hdf5_moments\"]; assert not p[\"cauchy_ratio_bound_is_confidence_interval\"]; assert not p[\"fission_source_stationarity_demonstrated\"]; print(\"REAL OpenMC native prompt/delayed neutron production second moments: PASS; covariance and beta_eff remain unqualified\")"
+
               # Independently verify that REAL native HDF5 neutron
               # tracklength is positive in ALL executed materials and
               # exactly zero in every unplaced materials.xml entry,
