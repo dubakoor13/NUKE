@@ -125,7 +125,7 @@ def main() -> int:
             t=h["tallies/tally 1/results"]
             t[0,2,1]=0
         reject(lambda:audit_native_fission_emission_uncertainty(
-            summary_file,emission_file),"batch Cauchy identity")
+            summary_file,emission_file),"native second-moment identity")
         fake(sp,batch=60)
         with h5py.File(sp,"r+") as h:
             h["seed"][...]=13007
