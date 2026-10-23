@@ -56,7 +56,8 @@ def main()->int:
     # The transient stores heat in both domains and conserves the FIRST law,
     # rather than forcing all generated heat to coolant in one timestep.
     transient=solve_core_sector_conjugate(
-        grid,old,b,fuel,coat,qsol,dt_s=0.20)
+        grid,old,b,fuel,coat,qsol,dt_s=0.20,
+        tolerance_k=1e-10)
     assert transient.iterations>=2
     assert transient.solid_energy_change_j>0
     assert transient.hydrogen_energy_change_j>=0
@@ -65,7 +66,10 @@ def main()->int:
     transient_check=audit_core_sector_discrete_energy(
         grid,old,transient,b,fuel,coat,qsol,dt_s=0.20)
     assert transient_check.max_local_residual_scaled<1e-5
-    assert transient_check.global_residual_scaled<1e-7
+    assert transient_check.global_residual_scaled<1e-7, (
+        transient_check.global_residual_scaled,
+        transient_check.max_local_residual_scaled,
+        transient.energy_balance_residual_j)
 
     # Contact resistance increases the fuel/coating jump at otherwise
     # unchanged heat deposition, without creating/destroying energy.
