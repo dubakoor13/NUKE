@@ -1074,3 +1074,24 @@ fidelity limits, CLI example, and synthetic tests. Execute with
 `element_channel_power_reconstruction.npz` layout and outputs
 `core_lateral_19_channel_fields.npz` plus a JSON heat-budget report.
 It rejects independently audited local/global energy-conservation failures.
+
+## Unified radial–axial–lateral 19-channel solver
+
+`core_hex_radial_lateral_fv.py` now combines **radial coating/fuel finite
+volumes, axial conduction and the 42 shared Voronoi lateral heat-transfer
+interfaces** in a single implicit sparse thermal/hydrogen solve. It is
+a reduced-order annulus/Voronoi hybrid, **not** a true 3-D conforming
+hexagonal fuel mesh.
+
+Run with `python -m ntr.nerva.run_core_hex_radial_lateral_fv --help`;
+read [CORE_UNIFIED_RADIAL_LATERAL_PHYSICS.md](CORE_UNIFIED_RADIAL_LATERAL_PHYSICS.md)
+for exact thermal equations, conservative interfaces and current physics
+limitations. `core_hex_radial_lateral_balance.py` independently audits
+each radial/axial/lateral solid control volume and each hydrogen bin.
+
+The dedicated core FV CI verifies consistency with the previous isolated
+radial solver, transverse heat flux, temperature-dependent solid
+conductivity/heat storage, nonlinear frozen NASA-7 H2 enthalpy, first-law
+conservation, and NUKE reconstruction file integration. Qualified
+high-temperature OpenMC local energy deposition and historical NERVA
+validation remain outstanding.
