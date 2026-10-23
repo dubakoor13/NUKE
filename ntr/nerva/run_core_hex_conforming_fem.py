@@ -248,6 +248,7 @@ def main()->int:
         raise ValueError("invalid fuel element index")
     all_s=[];all_g=[];all_wall=[];reports=[]
     hydraulic_pressure=[];hydraulic_mach=[];hydraulic_film=[]
+    hydraulic_friction=[];hydraulic_acceleration=[];hydraulic_kinetic=[]
     for elem in selections:
         if detail is not None:
             source=detail[elem]
@@ -306,6 +307,12 @@ def main()->int:
                 "residual_units":"J" if sol.transient else "W",
                 "hydraulic_outer_iterations":(
                     hydraulic.iterations if hydraulic is not None else None),
+                "max_stagnation_energy_residual_W":(
+                    float(np.max(np.abs(hydraulic.stagnation_energy_residual_w)))
+                    if hydraulic is not None else None),
+                "max_momentum_residual_Pa":(
+                    float(np.max(np.abs(hydraulic.momentum_residual_pa)))
+                    if hydraulic is not None else None),
                 "max_hydraulic_mach":(
                     float(np.max(hydraulic.mach_number))
                     if hydraulic is not None else None),
@@ -321,6 +328,9 @@ def main()->int:
             hydraulic_pressure.append(hydraulic.pressure_pa)
             hydraulic_mach.append(hydraulic.mach_number)
             hydraulic_film.append(hydraulic.film_w_m2_k)
+            hydraulic_friction.append(hydraulic.pressure_friction_loss_pa)
+            hydraulic_acceleration.append(hydraulic.pressure_acceleration_loss_pa)
+            hydraulic_kinetic.append(hydraulic.kinetic_correction_w)
     args.output.mkdir(parents=True,exist_ok=True)
     np.savez_compressed(
         args.output/"conforming_core_3d_fields.npz",
@@ -335,7 +345,10 @@ def main()->int:
             args.output/"conforming_core_hydraulics.npz",
             pressure_pa=np.stack(hydraulic_pressure),
             mach_number=np.stack(hydraulic_mach),
-            heat_transfer_coefficient_w_m2_k=np.stack(hydraulic_film))
+            heat_transfer_coefficient_w_m2_k=np.stack(hydraulic_film),
+            friction_pressure_loss_pa=np.stack(hydraulic_friction),
+            acceleration_pressure_loss_pa=np.stack(hydraulic_acceleration),
+            kinetic_power_correction_w=np.stack(hydraulic_kinetic))
     report={
         "model":"conforming XY triangle x axial P1 element thermal FEM",
         "geometry_is_original_nuke_demonstration":True,
