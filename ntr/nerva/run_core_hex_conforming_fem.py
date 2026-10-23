@@ -32,6 +32,9 @@ from .core_hex_conforming_fem import (
     ConformingCoreState,solve_conforming_core_thermal,
 )
 from .core_hex_lateral_fv import HexCoolantBoundary
+from .core_hex_conforming_power import (
+    CartesianSolidPower,project_cartesian_deposition_to_prisms,
+)
 
 
 def parse_args()->argparse.Namespace:
@@ -44,6 +47,9 @@ def parse_args()->argparse.Namespace:
     p.add_argument("--coating-mesh-size-m",type=float,default=8e-5)
     p.add_argument("--detailed-source",type=Path,default=None,
                    help="Optional NPZ with solid_prism_power_w [element,z,triangle].")
+    p.add_argument("--material-separated-mesh-heating",type=Path,default=None,
+                   help="NPZ with explicit FUEL/ZrC material W/cm3 fields and "
+                        "Cartesian dimension/bounds; requires --element-index.")
     p.add_argument("--element-index",type=int,default=None)
     p.add_argument("--inlet-temperature-k",type=float,required=True)
     p.add_argument("--initial-temperature-k",type=float,required=True)
@@ -128,6 +134,11 @@ def main()->int:
     args=parse_args()
     if args.steps<1 or (args.dt_s is None and args.steps!=1):
         raise ValueError("steady solves require one step, transient steps>=1")
+    if args.detailed_source and args.material_separated_mesh_heating:
+        raise ValueError("select exactly one spatial deposition source")
+    if args.material_separated_mesh_heating and args.element_index is None:
+        raise ValueError("material-separated Cartesian source needs a "
+                         "specific element instance")
     if (not np.isfinite(args.hydrogen_density_kg_m3)
             or args.hydrogen_density_kg_m3<=0):
         raise ValueError("positive H2 inventory density required")
@@ -164,6 +175,28 @@ def main()->int:
         if (detail.shape!=(fuel_power.shape[0],nz,len(section.triangles))
                 or not np.isfinite(detail).all() or np.any(detail<0)):
             raise ValueError("detailed spatial deposition shape mismatch")
+    voxel_source=None
+    if args.material_separated_mesh_heating:
+        with np.load(args.material_separated_mesh_heating,allow_pickle=False) as d:
+            needed=("dimension","lower_left_cm","upper_right_cm",
+                    "fuel_material_power_density_w_cm3",
+                    "coating_material_power_density_w_cm3")
+            if not set(needed).issubset(d.files):
+                raise KeyError("material-specific evaluated deposition fields "
+                               "are required; generic heating cannot substitute")
+            dim=np.asarray(d["dimension"],dtype=int)
+            low=np.asarray(d["lower_left_cm"],dtype=float)
+            high=np.asarray(d["upper_right_cm"],dtype=float)
+            if (dim.shape!=(3,) or low.shape!=(3,) or high.shape!=(3,)
+                    or np.any(dim<1) or np.any(high<=low)):
+                raise ValueError("invalid energy mesh geometry")
+            edges=[np.linspace(low[i],high[i],int(dim[i])+1)
+                   for i in range(3)]
+            voxel_source=CartesianSolidPower(
+                *edges,
+                np.asarray(d["fuel_material_power_density_w_cm3"],dtype=float),
+                np.asarray(d["coating_material_power_density_w_cm3"],dtype=float))
+        voxel_source.validate()
     fuel=CoreSolidLaw(args.fuel_density_kg_m3,args.fuel_cp_j_kg_k,
                       args.fuel_conductivity_w_m_k)
     coat=CoreSolidLaw(args.coating_density_kg_m3,args.coating_cp_j_kg_k,
@@ -174,9 +207,14 @@ def main()->int:
         raise ValueError("invalid fuel element index")
     all_s=[];all_g=[];all_wall=[];reports=[]
     for elem in selections:
-        mapped,sector=channel_power_to_fuel_triangles(
-            section,fuel_power[elem,:,:].T,cfg)
-        source=(detail[elem] if detail is not None else mapped)
+        if detail is not None:
+            source=detail[elem]
+        elif voxel_source is not None:
+            source=project_cartesian_deposition_to_prisms(
+                section,z,voxel_source).solid_prism_power_w
+        else:
+            source,_=channel_power_to_fuel_triangles(
+                section,fuel_power[elem,:,:].T,cfg)
         mass=(args.hydrogen_density_kg_m3*
               np.pi*(cfg.channel_radius_cm*0.01)**2*
               np.diff(z)[:,None]*np.ones((1,19)))
@@ -224,8 +262,11 @@ def main()->int:
     report={
         "model":"conforming XY triangle x axial P1 element thermal FEM",
         "geometry_is_original_nuke_demonstration":True,
-        "source_kind":("provided triangle-prism deposition" if detail is not None
-                       else "channel_to_triangle_nearest-site projection"),
+        "source_kind":(
+            "provided triangle-prism deposition" if detail is not None
+            else "material-separated exact voxel-to-prism deposition"
+            if voxel_source is not None
+            else "channel_to_triangle_nearest-site projection"),
         "local_kerma_data_qualified":False,
         "historical_NERVA_reference_validated":False,
         "mesh_nodes":int(len(section.xy_m)),
