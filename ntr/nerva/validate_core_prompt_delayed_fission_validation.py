@@ -84,6 +84,17 @@ def main()->int:
     assert not output["effective_delayed_neutron_fraction_beta_eff_computed"]
     assert output["material_source_per_generation_source"][2]["nu-fission"]==0
 
+    # The evaluated total and prompt/delayed neutron-yield tables can have
+    # independently interpolated values differing by a few parts per million.
+    slightly_mismatched=np.array([.3,.2979975,.002])
+    matched_materials=np.array([slightly_mismatched,[0.,0.,0.],[0.,0.,0.]])
+    near=assess_fission_emission_window(
+        slightly_mismatched,matched_materials,.3,
+        np.array([.3,0.,0.]),ids,{19,20},
+        number_of_active_batches=10
+    )
+    assert 1e-6 < near["maximum_relative_evaluated_yield_mismatch"] < 1e-4
+
     reject(lambda:assess_fission_emission_window(
         sums,np.array([[.3,.25,.002],[0.,0.,0.],[0.,0.,0.]]),
         .3,np.array([.3,0.,0.]),ids,{19,20},number_of_active_batches=10),
