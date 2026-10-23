@@ -46,6 +46,9 @@ on:
       - 'ntr/nerva/real_core_material_transport_support.py'
       - 'ntr/nerva/validate_real_core_material_transport_support.py'
       - 'ntr/nerva/core_mt901_reaction_exposure.py'
+      - 'ntr/nerva/tallies.py'
+      - 'ntr/nerva/core_prompt_delayed_fission_validation.py'
+      - 'ntr/nerva/validate_core_prompt_delayed_fission_validation.py'
       - 'ntr/nerva/validate_core_mt901_reaction_exposure.py'
       - 'ntr/nerva/validate_executed_material_kerma_qualification.py'
       - 'ntr/nerva/audit_kerma_coverage.py'
@@ -129,6 +132,7 @@ jobs:
               python -m ntr.nerva.validate_executed_material_kerma_qualification
               python -m ntr.nerva.validate_real_core_material_transport_support
               python -m ntr.nerva.validate_core_mt901_reaction_exposure
+              python -m ntr.nerva.validate_core_prompt_delayed_fission_validation
               python -m ntr.nerva.run_real_core_replicas \
                 --rings 3 --particles 3000 --batches 120 --inactive 30 \
                 --source-bank-batches 40 60 80 100 120 \
@@ -239,6 +243,16 @@ jobs:
                 --material-kerma /repo/build/nerva_real_core/executed_material_kerma_qualification.json \
                 --output /repo/build/nerva_real_core/core_mt901_reaction_exposure.json
               python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/core_mt901_reaction_exposure.json\")); assert p[\"actual_independent_seed_count\"]==4; assert p[\"material_regions_without_verified_mt901\"]==[19,20,21,22]; assert all(p[\"ensemble\"][s][\"between_seed_mean_missing_data_exposure_fraction\"]==1. for s in (\"flux\",\"absorption\",\"fission\",\"nu-fission\")); assert not p[\"fraction_of_missing_reactor_heating_calculated\"]; assert not p[\"thermal_power_normalization_allowed\"]; print(\"REAL OpenMC four-seed material reaction exposure: all sampled activity lacks qualified MT901; reactor heat NOT inferred\")"
+
+              # Physics, not reactor design: evaluated prompt/delayed neutron
+              # emission source across each actual root-reachable material,
+              # 4 random seeds x 5 disjoint active-generation windows.
+              # The simple delayed fraction is NOT adjoint-weighted beta_eff.
+              python -m ntr.nerva.core_prompt_delayed_fission_validation \
+                --summary /repo/build/nerva_real_core/real_core_transport_summary.json \
+                --material-kerma /repo/build/nerva_real_core/executed_material_kerma_qualification.json \
+                --output /repo/build/nerva_real_core/core_prompt_delayed_fission_validation.json
+              python -c "import json; p=json.load(open(\"/repo/build/nerva_real_core/core_prompt_delayed_fission_validation.json\")); assert p[\"independent_seed_count\"]==4; assert p[\"checked_native_statepoint_checkpoints\"]==20; assert p[\"active_source_windows_per_seed\"]==5; assert p[\"independently_evaluated_prompt_delayed_total_yield_consistency_screen_passed\"]; assert p[\"maximum_observed_prompt_delayed_relative_yield_mismatch\"] < p[\"evaluated_yield_relative_mismatch_screen\"]; assert 0<p[\"four_seed_delayed_emission_fraction_mean\"]<1; assert not p[\"beta_eff_calculated\"]; assert not p[\"nasa_historical_nerva_core_validated\"]; print(\"REAL OpenMC total=prompt+delayed neutron production and native material closure: PASS\")"
               # Independently verify that REAL native HDF5 neutron
               # tracklength is positive in ALL executed materials and
               # exactly zero in every unplaced materials.xml entry,
