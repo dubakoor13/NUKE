@@ -10,6 +10,10 @@ values. More reactor elements/tie tubes and physical verification are later.
 from __future__ import annotations
 
 import numpy as np
+import json
+import sys
+import tempfile
+from pathlib import Path
 from .validate_core_hex_conforming_fem import toy_section
 from .validate_core_hex_interelement_mortar import split_one_outer_edge
 from .core_hex_interelement_mortar import assemble_two_element_contact_mortar
@@ -73,6 +77,60 @@ def main()->int:
     assert alone.contact_a_to_b_w==0.
     assert np.max(steady.element_a.solid_temperature_k) < (
         np.max(alone.element_a.solid_temperature_k))
+    # Runnable application path: cached meshes + distinct source prism
+    # arrays + actual NUKE [element,19,z] flow/heating NPZ.
+    from .run_core_hex_conforming_fem import save_section
+    from .run_core_hex_two_element_fem import main as run_pair_cli
+    with tempfile.TemporaryDirectory() as tmp:
+        root=Path(tmp)
+        mesh_a=root/"a.npz";mesh_b=root/"b.npz"
+        data=root/"reconstruction.npz"
+        power_a=root/"power_a.npz";power_b=root/"power_b.npz"
+        output=root/"results"
+        save_section(mesh_a,a);save_section(mesh_b,b)
+        np.savez_compressed(
+            data,
+            channel_wall_axial_power_w=np.zeros((2,19,2)),
+            channel_direct_h2_axial_power_w=np.zeros((2,19,2)),
+            branch_mass_flow_kg_s=np.full((2,19),0.01),
+            z_edges_m=z)
+        np.savez_compressed(power_a,solid_prism_power_w=qa)
+        np.savez_compressed(power_b,solid_prism_power_w=qb)
+        old_argv=sys.argv
+        try:
+            sys.argv=[
+                "run_core_hex_two_element_fem",str(data),
+                "--mesh-a",str(mesh_a),"--mesh-b",str(mesh_b),
+                "--element-a-index","0","--element-b-index","1",
+                "--origin-b-x-m","0.8","--origin-b-y-m","0",
+                "--normal-x","1","--normal-y","0",
+                "--contact-conductance-w-m2-k","80",
+                "--power-a-npz",str(power_a),
+                "--power-b-npz",str(power_b),
+                "--inlet-temperature-a-k","650",
+                "--inlet-temperature-b-k","500",
+                "--initial-temperature-a-k","650",
+                "--initial-temperature-b-k","500",
+                "--gas-density-kg-m3","3",
+                "--gas-film-w-m2-k","1200",
+                "--bore-diameter-m","0.002",
+                "--hydrogen-model","constant",
+                "--fuel-density-kg-m3","1850",
+                "--fuel-cp-j-kg-k","1250",
+                "--fuel-conductivity-w-m-k","23",
+                "--coating-density-kg-m3","6400",
+                "--coating-cp-j-kg-k","650",
+                "--coating-conductivity-w-m-k","19",
+                "--output",str(output)]
+            assert run_pair_cli()==0
+        finally:
+            sys.argv=old_argv
+        report=json.loads((output/"two_element_conforming_report.json").read_text())
+        assert report["contact_overlap_pairs"]==2
+        assert report["steps"][0]["contact_heat_a_to_b_w"]>0.
+        with np.load(output/"two_element_conforming_fields.npz") as fields:
+            assert fields["hydrogen_a_temperature_k"].shape==(2,19)
+            assert fields["hydrogen_b_temperature_k"].shape==(2,19)
     print("Nonmatching two fuel elements + 38 H2 streams monolithic 3D FEM: PASS")
     print("Interface area m2:",contact.interface_area_m2)
     print("Steady A->B heat W:",steady.contact_a_to_b_w)
