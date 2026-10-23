@@ -55,6 +55,8 @@ def build_materials(config: NervaConfig) -> dict[str, openmc.Material]:
 
     zrc = openmc.Material(name="ZrC protective coating")
     zrc.set_density("g/cm3", config.zrc_density_g_cm3)
+    if config.zrc_temperature_k is not None:
+        zrc.temperature = config.zrc_temperature_k
     zrc.add_element("Zr", 1.0, percent_type="ao")
     zrc.add_element("C", 1.0, percent_type="ao")
 
@@ -91,6 +93,12 @@ def build_materials(config: NervaConfig) -> dict[str, openmc.Material]:
     if config.bound_solid_temperature_k is not None:
         for solid in (reflector, graphite, zrh):
             solid.temperature = config.bound_solid_temperature_k
+
+    # The physical Be reflector may operate at a different temperature
+    # from hypothetical/unplaced graphite and ZrH surrogate regions.
+    # Explicit Be temperature wins over the legacy shared-solid selector.
+    if config.reflector_temperature_k is not None:
+        reflector.temperature = config.reflector_temperature_k
 
     if config.thermal_scattering_treatment == "evaluated-bound":
         for key, tables in EVALUATED_BOUND_THERMAL_TABLES.items():
