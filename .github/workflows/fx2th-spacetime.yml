@@ -1,0 +1,29 @@
+name: FX2-TH space-time neutronics
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/fx2th_diffusion.py'
+      - 'ntr/nerva/fx2th_spacetime.py'
+      - 'ntr/nerva/validate_fx2th_spacetime.py'
+      - '.github/workflows/fx2th-spacetime.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/fx2th_diffusion.py'
+      - 'ntr/nerva/fx2th_spacetime.py'
+      - 'ntr/nerva/validate_fx2th_spacetime.py'
+      - '.github/workflows/fx2th-spacetime.yml'
+
+jobs:
+  coupled-spatial-precursor-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deterministic numerical dependencies
+        run: python -m pip install 'numpy>=1.26' 'scipy>=1.11'
+      - name: Run 14 space-time neutronics conservation and integration checks
+        run: python -m ntr.nerva.validate_fx2th_spacetime
