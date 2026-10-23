@@ -88,12 +88,26 @@ def _tally(tallies, name: str, filters: tuple[str,...], active: int,
     return raw[:,[names.index(score) for score in selected],:],mid
 
 
-def _close(total: np.ndarray, parts: np.ndarray, label: str) -> float:
+# Prompt, delayed and total evaluated yields may have independently
+# tabulated/interpolated incident-energy functions. Their sum is a
+# consistency SCREEN, not an exact identity at floating-point epsilon.
+# This is a deliberately visible engineering screen, NOT cross-section
+# uncertainty, not fitted data, and not reactor beta_eff accuracy.
+EVALUATED_YIELD_MAX_RELATIVE_MISMATCH = 1e-4
+
+
+def _close(total: np.ndarray, parts: np.ndarray, label: str,
+           *, independently_tabulated_yields: bool = False) -> float:
     gap = np.asarray(total,dtype=float)-np.asarray(parts,dtype=float)
-    scale = np.maximum(
-        1e-10,np.maximum(np.abs(total),np.abs(parts))
+    scale = np.maximum(1e-10,np.maximum(np.abs(total),np.abs(parts)))
+    # Different tallies of the SAME evaluated nu-fission score must
+    # numerically agree extremely closely. Distinct nuclear-data yield
+    # functions may legitimately differ by evaluation/interpolation.
+    relative_tolerance = (
+        EVALUATED_YIELD_MAX_RELATIVE_MISMATCH
+        if independently_tabulated_yields else 3e-10
     )
-    if np.any(np.abs(gap) > 3e-8*scale + 3e-12):
+    if np.any(np.abs(gap) > relative_tolerance*scale + 3e-12):
         raise ValueError("genuine OpenMC fission-emission closure failed: "+label)
     return float(np.max(np.abs(gap)))
 
@@ -138,11 +152,13 @@ def assess_fission_emission_window(
     # from prompt + delayed.
     residuals = {
         "global_total_minus_prompt_delayed":_close(
-            global_sums[0],global_sums[1]+global_sums[2],"global total=prompt+delayed"
+            global_sums[0],global_sums[1]+global_sums[2],"global total=prompt+delayed",
+            independently_tabulated_yields=True
         ),
         "material_total_minus_prompt_delayed":_close(
             material_sums[:,0],material_sums[:,1]+material_sums[:,2],
-            "material total=prompt+delayed"
+            "material total=prompt+delayed",
+            independently_tabulated_yields=True
         ),
         "global_minus_summed_material_total":_close(
             global_sums,material_sums.sum(axis=0),"material-to-global source"
@@ -176,6 +192,17 @@ def assess_fission_emission_window(
         "zero_observed_fission_source_is_not_proof_of_zero_physical_fission":
             total == 0.,
         "maximum_absolute_raw_window_closure_per_score":max(residuals.values()),
+        "maximum_relative_evaluated_yield_mismatch": float(
+            max(
+                abs(global_sums[0]-global_sums[1]-global_sums[2])/
+                max(abs(global_sums[0]),1e-10),
+                np.max(
+                    abs(material_sums[:,0]-material_sums[:,1]-material_sums[:,2])/
+                    np.maximum(abs(material_sums[:,0]),1e-10)
+                ),
+            )
+        ),
+        "evaluated_yield_relative_mismatch_screen":EVALUATED_YIELD_MAX_RELATIVE_MISMATCH,
         "independent_conservation_residuals":residuals,
         "effective_delayed_neutron_fraction_beta_eff_computed":False,
     }
@@ -328,14 +355,20 @@ def audit_real_fission_emission(summary_file: Path,
             fractions.std(ddof=1)/math.sqrt(len(fractions))
         ),
         "runs":run_rows,
-        "prompt_plus_delayed_closes_total_in_all_genuine_windows":True,
+        "independently_evaluated_prompt_delayed_total_yield_consistency_screen_passed":True,
+        "maximum_observed_prompt_delayed_relative_yield_mismatch":max(
+            w["maximum_relative_evaluated_yield_mismatch"]
+            for r in run_rows for w in r["windows"]
+        ),
+        "evaluated_yield_relative_mismatch_screen":EVALUATED_YIELD_MAX_RELATIVE_MISMATCH,
         "beta_eff_calculated":False,
         "fission_source_stationarity_demonstrated":False,
         "operating_temperature_nuclear_data_qualified":False,
         "nasa_historical_nerva_core_validated":False,
         "interpretation":(
             "OpenMC native evaluated prompt/delayed neutron emission is "
-            "reconciled against independent total production scores across "
+            "compared with separately evaluated total neutron-production "
+            "functions (a visible numerical discrepancy, not an exact identity) across "
             "each material and five disjoint active-generation windows. "
             "Four-seed SEM is descriptive due to within-source genealogy. "
             "The source emission fraction is NOT adjoint importance-weighted "
@@ -354,7 +387,9 @@ def main() -> int:
     out=audit_real_fission_emission(args.summary,args.material_kerma)
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(out,indent=2,allow_nan=False)+"\n")
-    print("REAL OpenMC prompt/delayed neutron emission: 20 HDF5 window closures PASS")
+    print("REAL OpenMC prompt/delayed production: 20 HDF5 evaluated-yield consistency screens PASS")
+    print("Maximum independent evaluated-yield relative mismatch:",
+          out["maximum_observed_prompt_delayed_relative_yield_mismatch"])
     print("Evaluated delayed emission fractions:",[
         x["evaluated_delayed_emission_fraction"] for x in out["runs"]
     ])
