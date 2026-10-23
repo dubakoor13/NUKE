@@ -14,15 +14,17 @@ from .core_hex_interelement_mortar import assemble_two_element_contact_mortar
 
 
 def split_one_outer_edge(base:HexTriangleSection)->HexTriangleSection:
-    xy=np.vstack((base.xy_m,np.array([[0.4,0.0]])))
+    # Element B faces A with its LEFT x=-0.4 side; subdivide that
+    # physically shared side, not its opposite/right-side perimeter.
+    xy=np.vstack((base.xy_m,np.array([[-0.4,0.0]])))
     newnode=len(xy)-1
     tri=[]
     material=[]
     hits=0
     for nodes,mat in zip(base.triangles,base.material):
-        if mat==0 and set((9,10)).issubset(set(nodes)):
-            v=int(next(k for k in nodes if k not in (9,10)))
-            tri.extend(((v,9,newnode),(v,newnode,10)))
+        if mat==0 and set((11,8)).issubset(set(nodes)):
+            v=int(next(k for k in nodes if k not in (11,8)))
+            tri.extend(((v,11,newnode),(v,newnode,8)))
             material.extend((mat,mat))
             hits+=1
         else:
