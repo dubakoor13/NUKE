@@ -1125,3 +1125,26 @@ and does not yet model the external perimeter coating. It is not a
 historically certified NERVA fuel-element mesh. Hot OpenMC nuclear
 deposition, thermophysical calibration, coolant pressure/momentum and
 full physical qualification remain separate work.
+
+## Temperature-tabulated fuel/ZrC and coupled compressible H2 (Python)
+
+The conforming 3-D core fuel-element solver now accepts optional
+`--fuel-material-npz` and `--coating-material-npz` tables containing
+temperature [K], conductivity [W/(m K)] and heat capacity [J/(kg K)].
+The source code uses exact piecewise-linear cp(T) energy integrals and
+fails closed on out-of-range material temperatures; no historical NERVA
+tables are bundled or assumed.
+
+A separate optional `--couple-hydraulics` mode joins the conforming
+3-D fuel/coating FEM to NUKE's existing quasi-steady subsonic H2
+momentum/stagnation-enthalpy solver and iterates film coefficients,
+pressure/Mach fields and kinetic-energy corrections to steady consistency.
+The runner requires `--hydrogen-model nasa7-h2` and
+`--inlet-pressure-pa`. Transient fluid momentum and reacting or
+real-fluid hydrogen are not supported in this option.
+
+See [CORE_TABULATED_THERMAL_HYDRAULICS.md](CORE_TABULATED_THERMAL_HYDRAULICS.md)
+for equations, source semantics, CLI flags and physics/coding limitations.
+The code does **not** claim historical reactor-core qualification,
+physically evaluated hot nuclear energy deposition, or a validated
+nuclear/thermal fixed point.
