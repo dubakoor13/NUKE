@@ -298,8 +298,8 @@ def solve_core_sector_conjugate(
         vals:list[float]=[]
         rhs=np.zeros(total,dtype=float)
         def add(i:int,j:int,g:float)->None:
-            if not math.isfinite(g) or g<0:
-                raise ValueError("nonphysical thermal conductance")
+            if not math.isfinite(g):
+                raise ValueError("nonfinite coupled matrix coefficient")
             rows.append(i);cols.append(j);vals.append(g)
         def index(i:int,j:int)->int:
             return i*nr+j
