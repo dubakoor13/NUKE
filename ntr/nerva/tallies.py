@@ -177,6 +177,21 @@ def build_tallies(
     global_tracklength.scores = ["absorption", "nu-fission"]
     tallies.append(global_tracklength)
 
+    # Evaluated fission-emission physics: TOTAL = PROMPT + DELAYED
+    # neutron production at the actual incident-neutron energy.
+    # The native unfiltered tracklength tally is an independent whole-core
+    # reference; this is not adjoint-weighted effective delayed fraction.
+    global_emission = openmc.Tally(
+        name="nerva_global_fission_emission"
+    )
+    global_emission.estimator = "tracklength"
+    if config.photon_transport:
+        global_emission.filters = [openmc.ParticleFilter(["neutron"])]
+    global_emission.scores = [
+        "nu-fission", "prompt-nu-fission", "delayed-nu-fission"
+    ]
+    tallies.append(global_emission)
+
     if fuel_material is None and materials is not None:
         fuel_material = materials.get("fuel")
 
@@ -529,6 +544,21 @@ def build_tallies(
                 "heating-local",
             ]
             tallies.append(material_transport)
+
+            # Delayed and prompt neutron yields from evaluated microscopic
+            # fission product data in every declared material, including
+            # materials that are not instantiated in the root geometry.
+            material_emission = openmc.Tally(
+                name="nerva_material_fission_emission"
+            )
+            material_emission.estimator = "tracklength"
+            material_emission.filters = [
+                openmc.MaterialFilter(material_list)
+            ]
+            material_emission.scores = [
+                "nu-fission", "prompt-nu-fission", "delayed-nu-fission"
+            ]
+            tallies.append(material_emission)
 
         energy_filter = openmc.EnergyFilter(_energy_edges(config))
 
