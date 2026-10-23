@@ -30,6 +30,10 @@ from scipy.sparse.linalg import spsolve
 from .core_conjugate_fv import CoreSolidLaw, _gas_enthalpy, _gas_secant
 from .core_hex_lateral_fv import HexCoolantBoundary
 from .core_hex_conforming_mesh import HexTriangleSection
+from .core_hex_exterior_surface import (
+    CoreExteriorHeatBoundary, exterior_fuel_edges,
+    exterior_heat_coefficients, exterior_boundary_power,
+)
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,7 @@ class ConformingCoreStep:
     first_law_residual: float             # W steady, J transient
     iterations: int
     transient: bool
+    exterior_heat_loss_w: float = 0.0
 
 
 def _triangle_operators(xy:np.ndarray,tri:np.ndarray
@@ -95,6 +100,7 @@ def solve_conforming_core_thermal(
     *,
     dt_s:float|None=None,
     hydrogen_kinetic_power_w:np.ndarray|None=None,
+    exterior_boundary:CoreExteriorHeatBoundary|None=None,
     max_iterations:int=60,
     tolerance_k:float=1e-8,
     relaxation:float=0.8,
@@ -163,6 +169,12 @@ def solve_conforming_core_thermal(
     wall_channel=np.asarray(section.wall_channel,dtype=int)
     wall_length=np.linalg.norm(
         xy[wall_edges[:,0]]-xy[wall_edges[:,1]],axis=1)
+    outer_edges=(exterior_fuel_edges(section) if exterior_boundary is not None
+                 else None)
+    if outer_edges is not None:
+        exterior_boundary.expanded(nz,len(outer_edges))
+        outer_length=np.linalg.norm(
+            xy[outer_edges[:,1]]-xy[outer_edges[:,0]],axis=1)
 
     for iteration in range(1,max_iterations+1):
         row:list[int]=[]
@@ -224,6 +236,26 @@ def solve_conforming_core_thermal(
                     val.append(-float(w))
                 diag[gidx]+=float(wall_mat.sum())
 
+        # External contact / radiation to an EXPLICITLY prescribed reservoir.
+        # Consistent quadratic 4-node surface matrix, same formulation as
+        # the H2 wall coupling but without a solved external gas node.
+        if outer_edges is not None:
+            _,ext_h,ext_bath,_,_=exterior_heat_coefficients(
+                solid,z,section,exterior_boundary,edges=outer_edges)
+            for i in range(nz):
+                mz=dz[i]*mass_1d
+                for e,(a,b) in enumerate(outer_edges):
+                    h=float(ext_h[i,e])
+                    if h==0.:
+                        continue
+                    nodes=np.array((a,b,a+nxy*(i+1),b+nxy*(i+1)),
+                                   dtype=int)
+                    nodes[:2]+=i*nxy
+                    matrix=h*outer_length[e]*np.kron(mz,m_edge)
+                    dense_block(nodes,matrix)
+                    weights=matrix.sum(axis=1)
+                    for node_index,w in zip(nodes,weights):
+                        rhs[int(node_index)]+=float(w*ext_bath[i,e])
         # Hydrogen enthalpy storage, direct nuclear heating, implicit upwind.
         for i in range(nz):
             for c in range(19):
@@ -301,16 +333,22 @@ def solve_conforming_core_thermal(
         boundary.mdot_kg_s[c]*
         _gas_enthalpy(float(gas[-1,c]),gas_law)
         for c in range(19))
+    exterior_loss=0.
+    if exterior_boundary is not None:
+        _,exterior_loss=exterior_boundary_power(
+            solid,z,section,exterior_boundary)
     source_total=float(power.sum()+np.sum(boundary.direct_hydrogen_power_w)+
                        np.sum(kinetic))
     residual=(stored_solid+stored_gas-
-              (source_total+enthalpy_in-enthalpy_out)*
+              (source_total+enthalpy_in-enthalpy_out-exterior_loss)*
               (dt_s if dt_s is not None else 1.))
-    scale=max(1.,source_total,abs(enthalpy_in-enthalpy_out))
+    scale=max(1.,abs(source_total),abs(enthalpy_in-enthalpy_out),
+              abs(exterior_loss))
     scale*=dt_s if dt_s is not None else 1.
     if abs(residual)>balance_tolerance*scale+1e-6:
         raise RuntimeError(
             f"conforming core conjugate first-law failure: {residual:g}")
     return ConformingCoreStep(
         ConformingCoreState(solid,gas),wall,stored_solid,stored_gas,
-        enthalpy_in,enthalpy_out,residual,iteration,dt_s is not None)
+        enthalpy_in,enthalpy_out,residual,iteration,dt_s is not None,
+        exterior_loss)
