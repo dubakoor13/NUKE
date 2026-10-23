@@ -1054,3 +1054,23 @@ inputs and validity limits. The equal-area annuli approximate Voronoi
 sectors: there is **no** true lateral 3-D hex solid conduction yet. The
 existing NNDC cold transport data do **not** supply qualified hot-core
 local nuclear deposition for this solver.
+
+## Laterally coupled 19-channel fuel thermal physics
+
+The new `core_hex_lateral_fv.py` solves fuel, ZrC coating and H2 temperatures
+for all 19 coolant-channel-associated Voronoi fuel sectors **together**.
+Shared interior Voronoi faces conduct heat laterally; each sector also conducts
+axially and transfers heat through its coating into its own H2 channel.
+
+Unlike the independent equivalent-annulus solver above, lateral conduction
+between the 19 channels is nonzero. The model remains a *reduced-order
+19-sector finite-volume energy network*, **not** a fully resolved 2D/3D fuel
+mesh. The two solvers are opt-in alternatives and have not yet been
+combined into a genuinely radial-resolved 3D cross-channel model.
+
+See [CORE_HEX_LATERAL_PHYSICS.md](CORE_HEX_LATERAL_PHYSICS.md) for equations,
+fidelity limits, CLI example, and synthetic tests. Execute with
+`python -m ntr.nerva.run_core_hex_lateral_fv --help`. It reads the existing
+`element_channel_power_reconstruction.npz` layout and outputs
+`core_lateral_19_channel_fields.npz` plus a JSON heat-budget report.
+It rejects independently audited local/global energy-conservation failures.
