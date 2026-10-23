@@ -7,6 +7,10 @@ on:
       - 'ntr/nerva/core_conjugate_fv.py'
       - 'ntr/nerva/core_hex_lateral_fv.py'
       - 'ntr/nerva/core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/core_hex_conforming_mesh.py'
+      - 'ntr/nerva/core_hex_conforming_fem.py'
+      - 'ntr/nerva/run_core_hex_conforming_fem.py'
+      - 'ntr/nerva/validate_core_hex_conforming_fem.py'
       - 'ntr/nerva/run_core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_radial_lateral_balance.py'
       - 'ntr/nerva/validate_core_hex_radial_lateral_fv.py'
@@ -23,6 +27,10 @@ on:
       - 'ntr/nerva/core_conjugate_fv.py'
       - 'ntr/nerva/core_hex_lateral_fv.py'
       - 'ntr/nerva/core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/core_hex_conforming_mesh.py'
+      - 'ntr/nerva/core_hex_conforming_fem.py'
+      - 'ntr/nerva/run_core_hex_conforming_fem.py'
+      - 'ntr/nerva/validate_core_hex_conforming_fem.py'
       - 'ntr/nerva/run_core_hex_radial_lateral_fv.py'
       - 'ntr/nerva/core_hex_radial_lateral_balance.py'
       - 'ntr/nerva/validate_core_hex_radial_lateral_fv.py'
@@ -95,8 +103,11 @@ jobs:
               assert data["hydrogen_temperature_k"].shape==(1,4,19)
               assert np.isfinite(data["solid_temperature_k"]).all()
           PY
+      - name: Check conforming fuel/coating prism thermal FEM smoke
+        run: python -m ntr.nerva.validate_core_hex_conforming_fem
       - name: Check executable interfaces
         run: |
           python -m ntr.nerva.run_core_conjugate_fv --help
           python -m ntr.nerva.run_core_hex_lateral_fv --help
           python -m ntr.nerva.run_core_hex_radial_lateral_fv --help
+          python -m ntr.nerva.run_core_hex_conforming_fem --help
