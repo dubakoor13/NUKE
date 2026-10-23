@@ -66,7 +66,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=None,
                         help="Explicit independent OpenMC random seed for statistical replicas.")
     parser.add_argument("--fuel-temperature-k", type=float,
-                        help="Uniform OpenMC fuel surrogate temperature for snapshot feedback.")
+                        help="Actual fuel material neutron temperature [K], requiring evaluated XS.")
+    parser.add_argument("--zrc-temperature-k", type=float,
+                        help="Actual ZrC protective coating neutron temperature [K].")
+    parser.add_argument("--reflector-temperature-k", type=float,
+                        help="Actual Be reflector neutron temperature [K].")
     parser.add_argument("--hydrogen-temperature-k", type=float,
                         help="Uniform OpenMC hydrogen material temperature for snapshot feedback.")
     parser.add_argument("--hydrogen-density-g-cm3", type=float,
@@ -196,6 +200,8 @@ def main() -> int:
         bound_solid_temperature_k=args.bound_solid_temperature_k,
         bound_nearest_temperature_tolerance_k=args.bound_nearest_temperature_tolerance_k,
         fuel_temperature_k=args.fuel_temperature_k,
+        zrc_temperature_k=args.zrc_temperature_k,
+        reflector_temperature_k=args.reflector_temperature_k,
         hydrogen_temperature_k=(args.hydrogen_temperature_k if args.hydrogen_temperature_k is not None
                                 else NervaConfig.hydrogen_temperature_k),
         hydrogen_density_g_cm3=(args.hydrogen_density_g_cm3 if args.hydrogen_density_g_cm3 is not None
@@ -285,6 +291,8 @@ def main() -> int:
     )
 
     if (args.fuel_temperature_k is not None
+            or args.zrc_temperature_k is not None
+            or args.reflector_temperature_k is not None
             or args.hydrogen_temperature_k is not None
             or config.thermal_scattering_treatment == "evaluated-bound") and not temperature_audit[
         "model_explicit_temperature_coverage_ok"
@@ -335,6 +343,8 @@ def main() -> int:
             "statepoint_batches": args.statepoint_batches,
             "control_drum_angle_deg": config.control_drum_angle_deg,
             "fuel_temperature_k": config.fuel_temperature_k,
+            "zrc_temperature_k": config.zrc_temperature_k,
+            "reflector_temperature_k": config.reflector_temperature_k,
             "hydrogen_temperature_k": config.hydrogen_temperature_k,
             "thermal_scattering_treatment": config.thermal_scattering_treatment,
             "bound_solid_temperature_k": config.bound_solid_temperature_k,
