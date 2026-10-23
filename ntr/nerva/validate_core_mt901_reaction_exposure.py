@@ -34,6 +34,7 @@ def fake_hdf5(path: Path, *, bad_second: bool = False) -> None:
     scored = np.zeros((4, 4, 2), dtype=float)
     scored[:, :, 0] = mean*n
     scored[:, :, 1] = (mean**2 + 1e-2)*n
+    scored[3, :, :] = 0.
     if bad_second:
         scored[0, 1, 1] = 0.
     with h5py.File(path, "w") as state:
@@ -58,6 +59,24 @@ def fake_hdf5(path: Path, *, bad_second: bool = False) -> None:
         t.create_dataset("nuclides", data=[np.bytes_("total")])
         t.create_dataset("score_bins", data=[np.bytes_(x) for x in SCORES])
         t.create_dataset("results", data=scored)
+        global_t = tallies.create_group("tally 14")
+        global_t.create_dataset(
+            "name", data=np.bytes_("nerva_global_reaction_tracklength")
+        )
+        global_t.create_dataset("estimator", data=np.bytes_("tracklength"))
+        global_t.create_dataset("n_realizations", data=n)
+        global_t.create_dataset("n_filters", data=0)
+        global_t.create_dataset("filters", data=np.asarray([], dtype=int))
+        global_t.create_dataset("nuclides", data=[np.bytes_("total")])
+        global_t.create_dataset("score_bins", data=[
+            np.bytes_("absorption"), np.bytes_("nu-fission")
+        ])
+        gresults = np.zeros((1,2,2))
+        gresults[0,0,0] = scored[:, 1, 0].sum()
+        gresults[0,1,0] = scored[:, 3, 0].sum()
+        gresults[0,0,1] = n*(.45+.04+.02)**2 + 1.
+        gresults[0,1,1] = n*(.14)**2 + 1.
+        global_t.create_dataset("results", data=gresults)
 
 
 def main() -> int:
@@ -121,6 +140,11 @@ def main() -> int:
         fake_hdf5(file)
         reject(lambda: read_real_material_reactions(file, {19,20,21,25}),
                "material inventory")
+        fake_hdf5(file)
+        with h5py.File(file, "r+") as h:
+            h["tallies/tally 14/results"][0,0,0] += 0.03*90
+        reject(lambda: read_real_material_reactions(file, set(ids)),
+               "independent whole-domain neutron reaction does not conserve")
     print("Reactor material MT901 reaction-exposure regressions: PASS (synthetic)")
     print("Actual OpenMC C++ HDF5 physical evidence required in separate CI")
     return 0
