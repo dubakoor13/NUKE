@@ -205,10 +205,17 @@ class MonolithicFeedbackTests(unittest.TestCase):
 
     def test_invalid_state_mesh_and_timesteps_refused(self):
         tab,y0,t0,c=fixture()
+        five=ThermalCells(
+            solid_heat_capacity_j_k=np.ones(5),
+            hydrogen_heat_capacity_j_k=np.ones(5),
+            wall_conductance_w_k=np.zeros(5),
+            hydrogen_mass_flow_kg_s=np.zeros(5),
+            hydrogen_cp_j_kg_k=np.ones(5),
+            inlet_temperature_k=np.full(5,300.),
+        )
         with self.assertRaisesRegex(ValueError,"cells"):
-            advance_monolithic_rz_core(tab,y0,t0,
-                replace(c,solid_heat_capacity_j_k=np.ones(5)),.1,
-                explicit_synthetic_deposition)
+            advance_monolithic_rz_core(
+                tab,y0,t0,five,.1,explicit_synthetic_deposition)
         with self.assertRaisesRegex(ValueError,"times"):
             advance_monolithic_rz_core(tab,y0,replace(t0,time_s=.2),c,.1,
                 explicit_synthetic_deposition)
