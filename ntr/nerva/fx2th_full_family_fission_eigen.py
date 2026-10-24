@@ -96,8 +96,16 @@ def assemble_family_fission(data: SpatialFamilyData) -> ResolvedFissionMatrices:
         pblocks.append(np.outer(chi_p[c],prompt))
         for f in range(nf):
             dblocks[f].append(np.outer(chi_d[c,f],births*beta[c,:,f]))
-    p=block_diag(pblocks,format="csc")
-    delayed=tuple(block_diag(chunks,format="csc") for chunks in dblocks)
+    # Use sparse *matrix* inputs for predictable SciPy sparse types, and
+    # eliminate explicit numerical zeros; a beta=0 family has no operator.
+    p=block_diag([csc_matrix(b) for b in pblocks],format="csc")
+    p.eliminate_zeros()
+    delayed_list=[]
+    for chunks in dblocks:
+        f=block_diag([csc_matrix(b) for b in chunks],format="csc")
+        f.eliminate_zeros()
+        delayed_list.append(f)
+    delayed=tuple(delayed_list)
     total=p.copy()
     for mat in delayed:
         total=total+mat
