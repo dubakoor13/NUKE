@@ -63,7 +63,7 @@ NUKE_REAL_CORE_EVIDENCE_PATH=/path/to/nerva-real-openmc-four-seed-core-evidence.
   python -m ntr.nerva.validate_real_source_checkpoint_drift
 ```
 
-`.github/workflows/nerva-real-source-checkpoints.yml` downloads the original archived 2026-10-23 ZIP from GitHub, verifies its **whole-artifact pinned SHA-256**, reruns the native twenty-HDF5 audit, and uses real evidence for regression and corruption-detection tests. No synthetic statepoint is substituted if the source archive is unavailable. A workflow failing because the source artifact expires is an actual evidence-preservation issue, not permission to replace real transport with test doubles.
+`.github/workflows/nerva-real-source-checkpoints.yml` uses GitHub's official artifact-download action against **the original executed workflow run 39933618638 and exact artifact name**, validates all 20 source checkpoint HDF5 bytes against the original archive's per-file SHA-256 observations, reruns the native audit, and exercises ZIP corruption-detection tests on a **separately repackaged ZIP made from those verified native files**. This repackaged ZIP is NOT the original source ZIP and is NOT claimed to have its original archive SHA. The **original source ZIP** was separately obtained using GitHub's download-artifact connector and independently measured SHA-256 `cf05ab907bee76b198d3dc4736a84c6d560f3a8c2d753b78b5605c4826e53274`. No synthetic statepoint is substituted if the source artifact is unavailable. Its 2026-11-13 expiry is a genuine preservation blocker, not permission to fabricate transport evidence.
 
 ## Physical work remaining
 
@@ -74,3 +74,7 @@ NUKE_REAL_CORE_EVIDENCE_PATH=/path/to/nerva-real-openmc-four-seed-core-evidence.
 - Independently compare genuine transport and thermal output with source-traceable NASA measurements before claiming historical NERVA reactor fidelity.
 
 **Stage 22 acceptance: independently rechecked native source checkpoint observations, NOT validated reactor criticality, hot operation, heating or NASA historical fidelity.**
+
+### Verified Stage 22 CI
+
+[GitHub Actions run 40131111531](https://github.com/dubakoor13/NUKE/actions/runs/40131111531) **completed successfully** with **7/7 tests passed** on the committed native source-bank diagnostic and its fixed binary-evidence regression. Includes byte-tampered middle HDF5 rejection and cross-linked summary JSON tampering rejection; no tests skipped. The separate broad NERVA model-check workflow is not treated as passed without its final conclusion.
