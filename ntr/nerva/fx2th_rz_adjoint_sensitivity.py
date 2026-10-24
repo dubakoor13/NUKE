@@ -250,8 +250,15 @@ def evaluate_core_eigen_sensitivity(
         any(not np.all(np.isfinite(x.data))
             for x in (d_fission.prompt,*d_fission.delayed_by_family))):
         raise ValueError("tangent operators must be finite")
-    phi=np.asarray(ref.forward_flux).flatten()
-    psi=np.asarray(ref.adjoint_flux).flatten()
+    forward=np.asarray(ref.forward_flux,dtype=float)
+    adjoint=np.asarray(ref.adjoint_flux,dtype=float)
+    if (forward.shape!=(data.cells,data.groups) or
+        adjoint.shape!=(data.cells,data.groups) or
+        not np.all(np.isfinite(forward)) or
+        not np.all(np.isfinite(adjoint))):
+        raise ValueError("eigen reference shapes or coefficients are invalid")
+    phi=forward.flatten()
+    psi=adjoint.flatten()
     base=assemble_family_fission(data).total
     norm=float(psi@(base@phi))
     if not math.isfinite(norm) or norm<=0:
@@ -259,6 +266,18 @@ def evaluate_core_eigen_sensitivity(
     k=float(ref.keff)
     if not math.isfinite(k) or k<=0:
         raise ArithmeticError("invalid keff reference")
+    # A source identifier alone cannot establish the physical matrix state.
+    # Check both eigenspaces against the ACTUAL current A,F operators.
+    A=data.integrated_loss
+    fwd=A@phi-(base@phi)/k
+    adj=A.T@psi-(base.T@psi)/k
+    sf=max(1e-30,float(np.linalg.norm(A@phi,ord=np.inf)),
+                      float(np.linalg.norm((base@phi)/k,ord=np.inf)))
+    sa=max(1e-30,float(np.linalg.norm(A.T@psi,ord=np.inf)),
+                      float(np.linalg.norm((base.T@psi)/k,ord=np.inf)))
+    if (np.linalg.norm(fwd,ord=np.inf)/sf>1e-7 or
+        np.linalg.norm(adj,ord=np.inf)/sa>1e-7):
+        raise ValueError("stale forward/adjoint eigen reference for current nuclear matrices")
     # Component contributions are derivatives of ln(k), not dk.
     loss=-k*float(psi@(d_loss@phi))/norm
     prompt=float(psi@(d_fission.prompt@phi))/norm
