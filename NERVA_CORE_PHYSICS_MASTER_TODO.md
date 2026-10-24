@@ -1,6 +1,6 @@
 # NUKE / NERVA — MASTER CORE PHYSICS, NUMERICS, EVIDENCE AND VALIDATION TODO
 
-**As-of:** 2026-10-25 (Stage 23 multiresolution real-source audit)  
+**As-of:** 2026-10-25 (Stage 24 authentic neutron and heating-score audit)  
 **Repository:** https://github.com/dubakoor13/NUKE  
 **Working snapshot:** feature/nerva-real-transport-evidence-gates-stage21-20261025 (Stage 21, stacked on PR #132)  
 **Relationship to main:** IMPORTANT — much of the Stage 6–20 FX2-TH chain is in OPEN, STACKED PULL REQUESTS, NOT MERGED INTO main.  
@@ -219,6 +219,20 @@ The HDF5 observations demonstrate severe mesh-resolution sensitivity; a fine his
 - [ ] **EVIDENCE-13 [P0]** Long-term archive exact native HDF5 checkpoints and evaluated nuclear-data manifests; the original Actions artifact expires 2026-11-13.
 
 No additional code for real hot transport or heating is added by this observation stage. It refines the **source-quality diagnosis**, not the physical fidelity of NERVA geometry or fuel/coolant material data.
+
+### 3.3D Stage 24 — genuine HDF5 neutron economy and missing local deposited power (2026-10-25)
+
+A native read-only HDF5 audit compares the **same cold original four executed OpenMC statepoints** across mesh, material, material×incident-energy, global tracklength, analog neutron transport and native leakage tallies; see [Stage 24 original HDF5 audit](ntr/nerva/NERVA_STAGE24_NATIVE_NEUTRON_HEATING_AUDIT.md). No new simulated reactor state or fuel parameters were created.
+
+- The original measured **per starting neutron** analog absorption ~0.039667, native leakage ~1.023856, and within-generation multiplicative scattering net ~0.063522. The directly observed population balance closes: absorption+leakage−net multiplicative scattering = **1**, without adding fission daughters banked for the NEXT generation.
+- Original native tracklength absorption ~0.039915 and tracklength banked nu-fission ~0.011688 per source; multiple tally filters sampling the same histories agree on their corresponding total reaction rates, but they are NOT independent statistical samples.
+- **Critical missing hot-core energy input confirmed:** nonzero `heating` and `kappa-fission` native energy scores cannot be substituted for an actual material-disjoint deposited neutron+photon energy map. The original executed `heating-local` first AND second moments remain identically zero in the whole-core mesh, material and material-energy tallies. The physical local power field is therefore **UNAVAILABLE** and Stage 19/20 core thermal feedback cannot be promoted from synthetic deposition to a real NERVA hot-core prediction.
+- [x] **EVIDENCE-14 [P0]** Independently read native executed HDF5 tally first/second moments across original mesh/material/material-energy/global score representations and verify per-seed agreement.
+- [x] **EVIDENCE-15 [P0]** Verify native total-neutron conservation with multiplicative scattering and actual vacuum leakage, keeping fission bank progeny out of the same-generation population accounting.
+- [x] **EVIDENCE-16 [P0]** Prove real cold-surrogate zero `heating-local` raw moments across score filters and fail closed on physical core-W normalization despite nonzero `heating` and `kappa-fission` scores.
+- [ ] **EVIDENCE-17 [P0]** Obtain actual **nonzero physically qualified local neutron/photon heating** from independently stationary, matched hot transport; validate material disjointness, leakage and source-rate/power normalization before coupling Stage 20.
+
+**Neutron-economy accounting pass is not source-stationarity, criticality, hot-material or historical NERVA qualification.** Remaining source-cloning and data/thermal/geometry blockers are unchanged.
 
 ### 3.4 Immediate merge/integration TODO
 
@@ -647,6 +661,12 @@ Append a dated record to this document or a linked work log after each implement
 - [NERVA_STAGE23_REAL_SOURCE_MULTISCALE_AUDIT.md](ntr/nerva/NERVA_STAGE23_REAL_SOURCE_MULTISCALE_AUDIT.md) describes Stage 23 native HDF5 cross-seed TV and JS across 2³/4³/8³/16³ and radial/axial projections; no new reactor-model parameter was tuned.
 - Mean real between-seed batch-120 TV ranges from ~0.364 at 2³ to ~0.988 at 16³; about 98% of fine 16³ spatial source cells are empty. Such fine-grid source TV must not be presented as a calibrated source-convergence probability.
 - **Outstanding P0:** independently qualified source stationarity and genealogies; archive preservation before November 13; actual evaluated hot nuclear data, local neutron/photon heating, and NASA hold-out benchmarks.
+
+### Latest iteration: Stage 24 native executed neutron economy and heating score (2026-10-25)
+
+- [NERVA_STAGE24_NATIVE_NEUTRON_HEATING_AUDIT.md](ntr/nerva/NERVA_STAGE24_NATIVE_NEUTRON_HEATING_AUDIT.md) documents actual analog absorption/leakage/scattering and independent global/partitioned tracklength scores from the original four OpenMC HDF5 files, with machine-verifiable first and second moments.
+- The original cold transport neutron population identity closes in each seed, but `heating-local` remains exactly ZERO, while `heating` and `kappa-fission` are nonzero. The latter are **not** accepted as a substitute for physical neutron+photon material-specific thermal power.
+- The key physics blockers remain: independent source stationarity, real evaluated hot XS, real deposited heat/projection/power source and NASA historical measurements.
 
 ## 14. Most important next action
 

@@ -1,0 +1,64 @@
+name: NUKE actual OpenMC neutron ledger and heating provenance
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_native_tally_physics_ledger.py'
+      - 'ntr/nerva/validate_real_native_tally_physics_ledger.py'
+      - '.github/workflows/nerva-native-tally-physics.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_native_tally_physics_ledger.py'
+      - 'ntr/nerva/validate_real_native_tally_physics_ledger.py'
+      - '.github/workflows/nerva-native-tally-physics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify-actual-native-neutron-and-heating-ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install actual statepoint readers
+        run: python -m pip install 'numpy>=1.26' 'h5py>=3.10'
+      - name: Download ONLY original executed four-seed OpenMC evidence
+        uses: actions/download-artifact@v4
+        with:
+          repository: dubakoor13/NUKE
+          run-id: 39933618638
+          name: nerva-real-openmc-four-seed-core-evidence
+          github-token: ${{ github.token }}
+          path: build/native
+      - name: Require original HDF5 sources and the complete audit manifests
+        run: |
+          test -f build/native/real_core_transport_summary.json
+          test -f build/native/heating_data_qualification.json
+          for seed in 13007 23011 33013 43019; do
+            test -s "build/native/seed_$seed/statepoint.120.h5"
+          done
+      - name: Audit the original native HDF5 neutron and heating score ledger
+        run: |
+          python -m ntr.nerva.real_native_tally_physics_ledger build/native \
+            --output build/observed_native_neutron_energy_ledger.json
+      - name: Repackage verified originals only for destructive integrity regressions
+        run: (cd build/native && zip -qr ../regression-native.zip .)
+      - name: Eight original-data and provenance-tamper tests
+        env:
+          NUKE_REAL_CORE_EVIDENCE_PATH: build/regression-native.zip
+        run: python -m ntr.nerva.validate_real_native_tally_physics_ledger
+      - name: Preserve small derived read-only ledger report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage24-genuine-openmc-neutron-heating-ledger
+          path: build/observed_native_neutron_energy_ledger.json
+          if-no-files-found: warn
