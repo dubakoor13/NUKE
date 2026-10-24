@@ -50,10 +50,11 @@ _HASH = re.compile(r"^[0-9a-f]{64}$")
 def _array(value, name: str, shape: tuple[int,...],
            *, positive: bool = False) -> np.ndarray:
     a=np.asarray(value,dtype=float)
-    if (a.shape!=shape or not np.all(np.isfinite(a))
-            or np.any(a<=0) if positive else
-            a.shape!=shape or not np.all(np.isfinite(a)) or np.any(a<0)):
-        raise ValueError(f"{name} must be finite {'positive' if positive else 'nonnegative'} {shape}")
+    if (a.shape!=shape or not np.all(np.isfinite(a)) or
+            np.any(a<=0 if positive else a<0)):
+        raise ValueError(
+            f"{name} must be finite {'positive' if positive else 'nonnegative'} {shape}"
+        )
     return a
 
 
