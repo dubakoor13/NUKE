@@ -225,5 +225,13 @@ class AdaptiveFamilyTests(unittest.TestCase):
         self.assertEqual(result.attempted_steps,len(result.steps)+result.rejected_steps)
 
 
+    def test_nonfinite_initial_time_and_subresolution_interval_rejected(self):
+        d=model();s=initial(d)
+        for t in (-.1,float("nan"),float("inf")):
+            with self.subTest(t=t),self.assertRaises(ValueError):
+                advance_adaptive_core(d,replace(s,time_s=t),.1,initial_dt_s=.01)
+        with self.assertRaisesRegex(ValueError,"time resolution"):
+            advance_adaptive_core(d,s,1e-16,initial_dt_s=1e-16)
+
 if __name__=="__main__":
     unittest.main(verbosity=2)
