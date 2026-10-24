@@ -93,11 +93,20 @@ def advance_resolved_rz_feedback(
             raise ValueError("external nuclear source must be nonnegative [cell,group]")
     else:
         source=None
-    # Verify initial data and table range before computing first trial.
+    # Effective homogenization must not conceal a ring temperature
+    # outside the table's evaluated T range. Every physical fuel ring
+    # whose properties contribute to the average must be covered.
+    knots=np.asarray(table.temperature_knots_k,dtype=float)
+    def check_fuel_coverage(state):
+        t=np.asarray(state.fuel_temperature_k,dtype=float)
+        if np.any(t<knots[0]) or np.any(t>knots[-1]):
+            raise ValueError("individual fuel ring temperature outside nuclear-data table domain")
+    check_fuel_coverage(old_thermal)
     sample_rz_temperature_tables(table,effective_solid_temperature_for_xs(
         geometry,old_thermal))
     trial=old_thermal
     for iteration in range(1,max_iterations+1):
+        check_fuel_coverage(trial)
         fuel_average=effective_solid_temperature_for_xs(geometry,trial)
         sampled=sample_rz_temperature_tables(table,fuel_average)
         data=sampled.material
@@ -106,6 +115,7 @@ def advance_resolved_rz_feedback(
         if not isinstance(deposition,ConjugateCoreDeposition):
             raise TypeError("nuclear callback must return ConjugateCoreDeposition")
         thermal=advance_conjugate_core(geometry,old_thermal,deposition,dt_s)
+        check_fuel_coverage(thermal.state)
         diff=max(
             float(np.max(np.abs(thermal.state.fuel_temperature_k-
                                 trial.fuel_temperature_k))),
