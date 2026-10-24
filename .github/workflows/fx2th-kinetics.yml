@@ -1,0 +1,27 @@
+name: FX2-TH kinetics numerical checks
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/fx2th_kinetics.py'
+      - 'ntr/nerva/validate_fx2th_kinetics.py'
+      - '.github/workflows/fx2th-kinetics.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/fx2th_kinetics.py'
+      - 'ntr/nerva/validate_fx2th_kinetics.py'
+      - '.github/workflows/fx2th-kinetics.yml'
+
+jobs:
+  point-kinetics-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install numerical test dependency
+        run: python -m pip install 'numpy>=1.24'
+      - name: Run twelve independent numerical checks
+        run: python -m ntr.nerva.validate_fx2th_kinetics
