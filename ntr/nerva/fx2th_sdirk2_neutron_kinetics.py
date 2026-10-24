@@ -37,6 +37,7 @@ from scipy.sparse import bmat, csc_matrix, coo_matrix, diags, identity
 from scipy.sparse.linalg import splu
 
 from .fx2th_family_spacetime import SpatialFamilyData, SpatialFamilyState
+from .fx2th_transport_heat_projection import material_fingerprint
 
 
 GAMMA = 1.0 - 1.0 / math.sqrt(2.0)
@@ -48,6 +49,7 @@ class CoreOperator:
     external_source: np.ndarray
     neutron_mass: np.ndarray
     source_id: str
+    material_fingerprint_sha256: str
     cells: int
     groups: int
     families: int
@@ -192,7 +194,7 @@ def build_core_operator(
     b = np.r_[np.asarray((q*v[:, None])).ravel()/M, np.zeros(L)]
     if not np.all(np.isfinite(G.data)) or not np.all(np.isfinite(b)):
         raise ArithmeticError("nonfinite coupled neutron/precursor generator")
-    return CoreOperator(G, b, M, data.source_id, nc, ng, nf)
+    return CoreOperator(G, b, M, data.source_id, material_fingerprint(data), nc, ng, nf)
 
 
 def _population(y: np.ndarray, op: CoreOperator) -> float:
@@ -248,8 +250,9 @@ def advance_sdirk2(
     """One fully coupled two-stage implicit step with conservation audit."""
     if op.cells != data.cells or op.groups != data.groups or op.families != data.families:
         raise ValueError("operator and nuclear data dimensions do not match")
-    if op.source_id != data.source_id:
-        raise ValueError("operator and nuclear-data provenance mismatch")
+    if (op.source_id != data.source_id or
+            op.material_fingerprint_sha256 != material_fingerprint(data)):
+        raise ValueError("stale neutron operator: nuclear material or source fingerprint mismatch")
     y0 = _valid_state(data, initial)
     y1, r1, r2, balance, relative = _step_with_factorization(
         op, y0, duration_s)
@@ -260,7 +263,7 @@ def advance_sdirk2(
         y1[N:].reshape(op.cells, op.families),
     )
     return SDIRK2Step(
-        state, r1, r2, relative, balance,
+        state, r1, r2, relative, abs(balance),
         float(np.dot(op.neutron_mass, y1[:N])),
         float(np.sum(y1[N:])),
     )
@@ -303,8 +306,10 @@ def advance_sdirk2_adaptive(
         raise TypeError("tolerances must be SDIRK2Tolerances")
     y = _valid_state(data, initial)
     if (op.source_id != data.source_id or
-        op.cells != data.cells or op.groups != data.groups or op.families != data.families):
-        raise ValueError("operator/kinetic parameter contract mismatch")
+        op.cells != data.cells or op.groups != data.groups or
+        op.families != data.families or
+        op.material_fingerprint_sha256 != material_fingerprint(data)):
+        raise ValueError("stale operator/kinetic parameter material fingerprint mismatch")
     if (not math.isfinite(end_time_s) or end_time_s<=initial.time_s
             or not math.isfinite(initial_dt_s) or initial_dt_s<=0):
         raise ValueError("finite end_time and positive starting timestep required")
@@ -326,15 +331,17 @@ def advance_sdirk2_adaptive(
         try:
             # One factorization for a full step; one half-step factorization
             # is reused for BOTH consecutive half steps.
+            solves+=2
             big,r1,r2,bal_b,rel_b=_step_with_factorization(op,y,h)
             half_matrix=identity(op.generator.shape[0],format="csc")-(
                 GAMMA*h/2.)*op.generator
             half_lu=splu(half_matrix)
+            solves+=2
             half,hr1,hr2,bal_h,rel_h=_step_with_factorization(
                 op,y,h/2.,lu=half_lu)
+            solves+=2
             fine,fr1,fr2,bal_f,rel_f=_step_with_factorization(
                 op,half,h/2.,lu=half_lu)
-            solves+=6
             if max(r1,r2,hr1,hr2,fr1,fr2,rel_b,rel_h,rel_f)>cfg.balance_tolerance:
                 raise ArithmeticError("implicit neutron-balance/linear stage residual exceeded limit")
             errors=_error(op,big,fine,cfg)
