@@ -1,0 +1,60 @@
+name: NERVA real OpenMC archived HDF5 evidence and qualification gates
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_transport_evidence_gate.py'
+      - 'ntr/nerva/validate_real_transport_evidence_gate.py'
+      - '.github/workflows/nerva-real-evidence-gate.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_transport_evidence_gate.py'
+      - 'ntr/nerva/validate_real_transport_evidence_gate.py'
+      - '.github/workflows/nerva-real-evidence-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audited-real-openmc-statepoints:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install HDF5/array reader for genuine statepoints
+        run: python -m pip install 'numpy>=1.26' 'h5py>=3.10'
+      - name: Download immutable real OpenMC four-seed artifact, fail closed if unavailable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/real_core_evidence
+          curl -fLSs --retry 3 --retry-delay 2 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/dubakoor13/NUKE/actions/artifacts/12492499186/zip" \
+            -o build/real_core_evidence/real_openmc_20261023.zip
+          echo "cf05ab907bee76b198d3dc4736a84c6d560f3a8c2d753b78b5605c4826e53274  build/real_core_evidence/real_openmc_20261023.zip" | sha256sum -c -
+      - name: Independently audit actual four-seed HDF5 and physical gate status
+        run: |
+          python -m ntr.nerva.real_transport_evidence_gate \
+            build/real_core_evidence/real_openmc_20261023.zip \
+            --expected-archive-sha256 cf05ab907bee76b198d3dc4736a84c6d560f3a8c2d753b78b5605c4826e53274 \
+            --output build/real_core_evidence/verified_real_core_observation.json
+      - name: Regress binary provenance, material, heating, criticality and tamper detection
+        env:
+          NUKE_REAL_CORE_EVIDENCE_PATH: build/real_core_evidence/real_openmc_20261023.zip
+        run: python -m ntr.nerva.validate_real_transport_evidence_gate
+      - name: Upload SMALL audit report only, original evidence stays in source run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage21-real-transport-qualification-observations
+          path: build/real_core_evidence/verified_real_core_observation.json
+          if-no-files-found: warn
