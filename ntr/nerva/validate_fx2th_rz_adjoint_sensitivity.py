@@ -296,5 +296,31 @@ class MaterialSensitivityTests(unittest.TestCase):
                                2.75*s1.d_keff_d_parameter,places=11)
 
 
+    def test_reject_stale_adjoint_and_forward_eigen_reference(self):
+        d=self.data
+        ref=solve_family_eigen(d)
+        changed=replace(d,nu_sigma_f_inv_m=d.nu_sigma_f_inv_m*1.03)
+        tangent=assemble_family_fission_derivative(
+            changed,d_nu_sigma_f_inv_m=changed.nu_sigma_f_inv_m)
+        with self.assertRaisesRegex(ValueError,"stale"):
+            evaluate_core_eigen_sensitivity(
+                changed,csc_matrix(changed.integrated_loss.shape),
+                tangent,eigen=ref)
+
+    def test_adjoints_and_forward_normalization_cancel_from_sensitivity(self):
+        d=self.data
+        f=assemble_family_fission_derivative(
+            d,d_nu_sigma_f_inv_m=self.directions["d_nu_sigma_f_inv_m"])
+        z=csc_matrix(d.integrated_loss.shape)
+        ref=solve_family_eigen(d)
+        first=evaluate_core_eigen_sensitivity(d,z,f,eigen=ref)
+        scaled=replace(ref,forward_flux=ref.forward_flux*3.7,
+                            adjoint_flux=ref.adjoint_flux*0.15)
+        second=evaluate_core_eigen_sensitivity(d,z,f,eigen=scaled)
+        self.assertAlmostEqual(first.d_keff_d_parameter,
+                               second.d_keff_d_parameter,places=12)
+        self.assertAlmostEqual(first.d_log_keff_d_parameter,
+                               second.d_log_keff_d_parameter,places=12)
+
 if __name__=="__main__":
     unittest.main(verbosity=2)
