@@ -208,5 +208,27 @@ class SDIRK2Tests(unittest.TestCase):
                 tolerances=SDIRK2Tolerances(max_attempts=1,max_dt_s=.01))
 
 
+    def test_stale_material_operator_rejected_even_with_same_source_label(self):
+        d=model();s=initial(d)
+        op=build_core_operator(d)
+        different=replace(d,nu_sigma_f_inv_m=d.nu_sigma_f_inv_m*1.01)
+        self.assertEqual(d.source_id,different.source_id)
+        with self.assertRaisesRegex(ValueError,"stale"):
+            advance_sdirk2(op,different,s,.1)
+        with self.assertRaisesRegex(ValueError,"stale"):
+            advance_sdirk2_adaptive(op,different,s,.1,initial_dt_s=.05)
+
+    def test_rejected_stiff_trials_account_for_implicit_work(self):
+        d=model(cells=1,groups=1)
+        d=replace(d,integrated_loss=csc_matrix([[25.]]),
+                  nu_sigma_f_inv_m=np.array([[0.]]))
+        s=SpatialFamilyState(0.,np.array([[1.]]),np.zeros((1,2)))
+        r=advance_sdirk2_adaptive(build_core_operator(d),d,s,.15,
+               initial_dt_s=.15,tolerances=SDIRK2Tolerances(
+               relative=3e-4,max_dt_s=.2))
+        self.assertGreater(r.rejected_steps,0)
+        self.assertGreaterEqual(r.implicit_stage_solves,2*r.attempted_steps)
+        self.assertLessEqual(r.implicit_stage_solves,6*r.attempted_steps)
+
 if __name__=="__main__":
     unittest.main(verbosity=2)
