@@ -1,6 +1,6 @@
 # NUKE / NERVA — MASTER CORE PHYSICS, NUMERICS, EVIDENCE AND VALIDATION TODO
 
-**As-of:** 2026-10-25  
+**As-of:** 2026-10-25 (Stage 22 source checkpoint audit)  
 **Repository:** https://github.com/dubakoor13/NUKE  
 **Working snapshot:** feature/nerva-real-transport-evidence-gates-stage21-20261025 (Stage 21, stacked on PR #132)  
 **Relationship to main:** IMPORTANT — much of the Stage 6–20 FX2-TH chain is in OPEN, STACKED PULL REQUESTS, NOT MERGED INTO main.  
@@ -186,6 +186,19 @@ At Stage 20 commit 3d9f4f29612a756571b655bec9051ea368ccc150:
 - [ ] **EVIDENCE-06 [P0]** Select one historical NASA test configuration and independently benchmark actual transport results; do not tune the cold surrogate to k=1 and call it validation.
 
 The Stage 21 read-only gate implements *binary HDF5 identity, cross-seed XML equivalence, ensemble k recomputation and explicit blocked-physics reporting*; it does NOT close EVIDENCE-02–06. **No real hot operating point has been qualified.**
+
+### 3.3B Stage 22 verified native checkpoint source diversity (2026-10-25)
+
+The Stage 21 genuine archive contains **20 native OpenMC HDF5 source snapshots**, not just four final states: 4 independent seeds × batches 40, 60, 80, 100, 120. The actual Stage 22 code in [NERVA_STAGE22_REAL_SOURCE_DRIFT_AUDIT.md](ntr/nerva/NERVA_STAGE22_REAL_SOURCE_DRIFT_AUDIT.md) independently reads/checks every archived HDF5 checkpoint and verifies exact source-bank SHA, `k_generation`/entropy prefix continuity, seeds/settings, spatial weighted fractions, source-site concentration and descriptive drift against the original real-source reports. **No extra transport simulation, design change or synthetic source is generated.**
+
+- **Measured:** 3000 records/source bank, but only **58–96 exact unique positions** and **20.244–32.321 inverse-Simpson effective source positions** (not independent particle or genealogy counts).
+- **Measured:** mean adjacent-checkpoint within-seed 4³ spatial TV **0.665–0.729**; between-seed checkpoint TV **0.627–0.696**. These are descriptive, NOT posterior source-convergence probabilities or error-bar corrections.
+- **Gate:** the real source-stationarity verdict remains **BLOCKED** because source-cloning diagnostics and temporal/cross-seed source-shape differences are not independently reconciled; a formally small observed k uncertainty does not change this verdict.
+- [x] **EVIDENCE-07 [P0]** Independently reconstruct all 20 actually executed source-bank checkpoint statistics and HDF5 SHA identities, rather than trust archived summary JSON alone.
+- [ ] **EVIDENCE-08 [P0]** Obtain a source-stationary, independently validated real transport *reference* with retained native checkpoint histories, genealogical analysis and stated statistical uncertainty; no arbitrary assumption that simply increasing batch count guarantees convergence.
+- [ ] **EVIDENCE-09 [P0]** Preserve original archived 20-checkpoint binary evidence plus nuclear material manifests beyond **2026-11-13** expiration. Stage 22's small derived audit JSON alone is not sufficient archival evidence.
+
+These tasks sharpen TRAN-02 and EVIDENCE-02/03; **they do not qualify cold surrogate criticality or physical hot NERVA heating**.
 
 ### 3.4 Immediate merge/integration TODO
 
@@ -601,6 +614,13 @@ Append a dated record to this document or a linked work log after each implement
 - **Real physics blocked:** source stationarity not established, `k_eff≈0.011698` far subcritical, hot nuclear-data coverage false, local neutron `heating-local=0`, prescribed power normalization unjustified and historical fidelity unvalidated.
 - **Stage 21 code:** `real_transport_evidence_gate.py`, its real-artifact numerical tests, and CI download of original binary evidence. This is **T-level executed cold surrogate evidence** only, not P/H-level nuclear/thermal qualification.
 - **Immediate action:** EVIDENCE-02 before 2026-11-13, followed by EVIDENCE-03/04/05 and real-history source checks; Stage 6–20 stack remains unmerged.
+
+
+### Latest iteration: Stage 22 real source checkpoint evidence (2026-10-25)
+
+- [NERVA_STAGE22_REAL_SOURCE_DRIFT_AUDIT.md](ntr/nerva/NERVA_STAGE22_REAL_SOURCE_DRIFT_AUDIT.md): read-only actual OpenMC spatial fission-source checkpoint verification with four independent seeds and five native statepoint checkpoints each.
+- Independently reproduced every saved exact-position count, weighted source concentration, spatial histogram entropy/centroid and between-seed/within-seed TV and validated native k/entropy history prefixes.
+- Source convergence still NOT demonstrated; zero qualified local heating, real hot nuclear data, historical core fidelity and artifact preservation remain blockers. No reactor design parameters modified.
 
 ## 14. Most important next action
 
