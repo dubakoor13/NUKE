@@ -159,9 +159,13 @@ def advance_adaptive_core(
     cfg=tolerances if tolerances is not None else AdaptiveTolerances()
     if not isinstance(cfg,AdaptiveTolerances):
         raise TypeError("tolerances must be AdaptiveTolerances")
-    if (not math.isfinite(end_time_s) or end_time_s<=initial.time_s or
+    if (not math.isfinite(initial.time_s) or initial.time_s<0 or
+        not math.isfinite(end_time_s) or end_time_s<=initial.time_s or
         not math.isfinite(initial_dt_s) or initial_dt_s<=0):
-        raise ValueError("finite end_time > initial.time and positive initial_dt required")
+        raise ValueError("finite nonnegative initial time, later end time and positive dt required")
+    time_resolution=16*np.finfo(float).eps*max(abs(end_time_s),abs(initial.time_s),1.)
+    if end_time_s-initial.time_s<=time_resolution:
+        raise ValueError("end time differs from initial by less than numerical time resolution")
     if (not np.all(np.isfinite(initial.flux)) or
         initial.flux.shape!=(data.cells,data.groups) or
         np.any(initial.flux<0) or
@@ -181,7 +185,7 @@ def advance_adaptive_core(
     accepted=attempted=rejected=solves=0
     state=initial
     h=min(cfg.max_dt_s,initial_dt_s)
-    eps_time=16*np.finfo(float).eps*max(abs(end_time_s),1.)
+    eps_time=time_resolution
     while end_time_s-state.time_s>eps_time:
         if attempted >= cfg.max_steps:
             raise RuntimeError("adaptive core integration exceeded maximum attempted steps")
