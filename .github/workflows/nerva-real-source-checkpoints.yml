@@ -1,0 +1,68 @@
+name: NERVA genuine 20-checkpoint OpenMC fission source drift
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_source_checkpoint_drift.py'
+      - 'ntr/nerva/validate_real_source_checkpoint_drift.py'
+      - '.github/workflows/nerva-real-source-checkpoints.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_source_checkpoint_drift.py'
+      - 'ntr/nerva/validate_real_source_checkpoint_drift.py'
+      - '.github/workflows/nerva-real-source-checkpoints.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  independently-audit-native-openmc-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install HDF5 and numerical readers
+        run: python -m pip install 'numpy>=1.26' 'h5py>=3.10'
+      - name: Download native archived 2026-10-23 OpenMC files
+        uses: actions/download-artifact@v4
+        with:
+          repository: dubakoor13/NUKE
+          run-id: 39933618638
+          name: nerva-real-openmc-four-seed-core-evidence
+          github-token: ${{ github.token }}
+          path: build/real_source_checkpoints/native
+      - name: Require twenty original native OpenMC statepoints
+        run: |
+          test -f build/real_source_checkpoints/native/real_core_transport_summary.json
+          for seed in 13007 23011 33013 43019; do
+            for batch in 040 060 080 100 120; do
+              test -s "build/real_source_checkpoints/native/seed_$seed/statepoint.$batch.h5"
+            done
+          done
+      - name: Verify source-bank observations using 20 native OpenMC HDF5 checkpoints
+        run: |
+          python -m ntr.nerva.real_source_checkpoint_drift \
+            build/real_source_checkpoints/native \
+            --output build/real_source_checkpoints/native_source_audit.json
+      - name: Repackage verified downloaded HDF5 files for destructive tamper tests
+        run: |
+          (cd build/real_source_checkpoints/native && zip -qr ../repacked-source.zip .)
+          test -s build/real_source_checkpoints/repacked-source.zip
+      - name: Real-source HDF5 and tampering regression tests
+        env:
+          NUKE_REAL_CORE_EVIDENCE_PATH: build/real_source_checkpoints/repacked-source.zip
+        run: python -m ntr.nerva.validate_real_source_checkpoint_drift
+      - name: Upload compact native source observation report only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage22-real-source-checkpoint-observations
+          path: build/real_source_checkpoints/native_source_audit.json
+          if-no-files-found: warn
