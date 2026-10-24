@@ -1,0 +1,60 @@
+name: NERVA bundle adjoint kinetics offline comparison
+on:
+  push:
+    paths: ['.github/workflows/nerva-bundle-inspect.yml']
+  pull_request:
+    paths: ['.github/workflows/nerva-bundle-inspect.yml']
+permissions: {}
+jobs:
+  kinetics-adjoint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install numerical dependencies
+        run: python -m pip install 'numpy>=1.26' 'scipy>=1.11' 'h5py>=3'
+      - name: Run selected bundle validators and preview source
+        shell: python
+        run: |
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          import json, tempfile, subprocess, sys, os, stat
+          prefix='NERVA-CORE-BUNDLE/ntrv2/nerva/'
+          file_names=[
+            'adjoint.py','delayed_parameters.py','kinetics_transient.py',
+            'heritage/kinetics.py','validate_adjoint.py',
+            'validate_delayed_parameters.py','validate_kinetics_transient.py',
+            'validate_heritage_kinetics.py',
+            'heritage/data/emrich2023_delayed_neutrons.json'
+          ]
+          with ZipFile('NERVA-CORE-BUNDLE.zip') as z:
+              assert z.testzip() is None
+              with tempfile.TemporaryDirectory(prefix='nerva_adj_') as tmp:
+                  root=Path(tmp);pkg=root/'ntr'/'nerva';pkg.mkdir(parents=True)
+                  (root/'ntr'/'__init__.py').write_text('')
+                  for i in z.infolist():
+                      if i.is_dir() or not i.filename.startswith(prefix):continue
+                      rel=i.filename[len(prefix):]; p=PurePosixPath(rel)
+                      if not rel or p.is_absolute() or '..' in p.parts or stat.S_ISLNK(i.external_attr>>16):
+                          raise RuntimeError('Unsafe archive member '+i.filename)
+                      if p.suffix.lower() not in ('.py','.json','.md'):continue
+                      dest=pkg.joinpath(*p.parts);dest.parent.mkdir(parents=True,exist_ok=True)
+                      dest.write_bytes(z.read(i))
+                  env=dict(os.environ,PYTHONPATH=str(root),PYTHONDONTWRITEBYTECODE='1')
+                  for name in ('validate_adjoint','validate_delayed_parameters','validate_kinetics_transient','validate_heritage_kinetics'):
+                      p=subprocess.run([sys.executable,'-m','ntr.nerva.'+name],cwd=root,env=env,
+                                       capture_output=True,text=True,timeout=100)
+                      print('BUNDLE_TEST',name,'exit',p.returncode)
+                      print(p.stdout[-2200:]);print(p.stderr[-1800:])
+                      if p.returncode: raise RuntimeError('Validation failed '+name)
+                  for name in file_names:
+                      try: content=z.read(prefix+name).decode('utf-8')
+                      except KeyError:
+                          print('BUNDLE_MISSING',name);continue
+                      print('SELECTED_SOURCE_JSON:'+json.dumps({'path':name,'source':content},ensure_ascii=True))
+                  print('ADJOINT_BUNDLE_SELECTED_TESTS_SUCCESS')
