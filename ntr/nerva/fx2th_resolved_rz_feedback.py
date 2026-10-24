@@ -35,12 +35,13 @@ from .fx2th_conjugate_fuel_transport import (
     ConjugateCoreDeposition, ConjugateCoreStep,
     advance_conjugate_core, effective_solid_temperature_for_xs,
 )
+from .fx2th_enthalpy_conjugate_core import EnthalpyCoreStep
 
 
 @dataclass(frozen=True)
 class ResolvedFeedbackStep:
     neutron: SpatialFamilyStep
-    thermal: ConjugateCoreStep
+    thermal: ConjugateCoreStep | EnthalpyCoreStep
     iterations: int
     maximum_temperature_residual_k: float
     material_source_id: str
@@ -63,7 +64,7 @@ def advance_resolved_rz_feedback(
     max_iterations: int=100,
     thermal_stepper:Callable[
         [ConjugateCoreGeometry,ConjugateCoreState,ConjugateCoreDeposition,float],
-        ConjugateCoreStep
+        ConjugateCoreStep | EnthalpyCoreStep
     ] | None=None,
 ) -> ResolvedFeedbackStep:
     """Simultaneously converge one physical step, never cascade trial states."""
