@@ -150,8 +150,6 @@ class CartesianBridgeTests(unittest.TestCase):
         d=data(g)
         r=diffusion_eigen_kinetics_reference(d,g)
         self.assertEqual(len(r.beta_effective_by_family),2)
-        self.assertAlmostEqual(sum(r.beta_effective_by_family),
-                               sum(r.beta_unweighted_by_family),places=4) if False else None
         self.assertTrue(all(0.<=b<1. for b in r.beta_effective_by_family))
         self.assertTrue(all(0.<=b<1. for b in r.beta_unweighted_by_family))
 
