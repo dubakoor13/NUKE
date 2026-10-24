@@ -220,8 +220,19 @@ def sample_rz_temperature_tables(
     identity.update(b"NUKE-RZ-MULTIGROUP-T-STATE-v1\x00")
     identity.update(table.source_id.encode("utf-8"))
     identity.update(table.nuclear_manifest_sha256.encode("ascii"))
-    identity.update(np.ascontiguousarray(T,dtype="<f8").tobytes())
-    source=f"{table.source_id}:Tsha256={identity.hexdigest()}"
+    # Preserve the *actual sampled nuclear state* in the identity. A
+    # source ID + declared manifest token cannot detect an edited table.
+    for field in (
+        T, table.reference_grid.radial_edges_m,
+        table.reference_grid.axial_edges_m,
+        table.energy_group_edges_ev,
+        D, sa, ss, nf, cp, beta, cd,
+        table.group_speeds_m_s, table.decay_constants_s_inv,
+    ):
+        values=np.ascontiguousarray(np.asarray(field,dtype="<f8"))
+        identity.update(np.asarray(values.shape,dtype="<i8").tobytes())
+        identity.update(values.tobytes())
+    source=f"{table.source_id}:sample_sha256={identity.hexdigest()}"
     nc=nr*nz;ng=D.shape[-1];nfamily=len(table.decay_constants_s_inv)
     material=rz_to_spatial_families(
         grid,source_id=source,
