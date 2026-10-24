@@ -227,3 +227,7 @@ class RZNumerics(unittest.TestCase):
                 beta_by_incident_group_and_family=np.ones((2,1,2)),
                 delayed_spectra_by_family=np.ones((12,2,1)),
                 decay_constants_s_inv=[.1,1.])
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)
