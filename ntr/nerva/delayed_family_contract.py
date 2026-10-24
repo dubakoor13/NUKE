@@ -12,11 +12,13 @@ Dimensions:
   lambda_family_s_inv                   [family]
   cell_volume_m3                        [cell]
 
-The same energy group ordering is used for incident and emitted groups. The
-bilinear pairing is sum_c,g psi[c,g] * Fphi[c,g] * V[c]. Therefore psi must be
-consistent with the *unintegrated* production operator; if it comes from a
-cell-integrated discrete left eigenproblem, its normalization/volume gauge
-must be converted before passing it here. Never multiply by cell volume twice.
+The same energy group ordering is used for incident and emitted groups.
+The bilinear pairing is sum_c,g psi[c,g] * fission_rate[c,g] * V[c].
+For a conservative FV eigenproblem A=V*L and F=V*fission_operator,
+a left eigenvector of A.T psi=F.T psi/k can be passed here unchanged:
+the family source integral already applies V. Do NOT divide psi by V
+or apply V twice. Other adjoint conventions must be converted to the
+consistent cell-integrated fission pairing before use.
 """
 from __future__ import annotations
 
