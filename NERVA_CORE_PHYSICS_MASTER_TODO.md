@@ -1,8 +1,8 @@
 # NUKE / NERVA — MASTER CORE PHYSICS, NUMERICS, EVIDENCE AND VALIDATION TODO
 
-**As-of:** 2026-10-24  
+**As-of:** 2026-10-25  
 **Repository:** https://github.com/dubakoor13/NUKE  
-**Working snapshot:** feature/fx2th-nasa7-enthalpy-fuel-stage20-20261024 (Stage 20 / PR #132)  
+**Working snapshot:** feature/nerva-real-transport-evidence-gates-stage21-20261025 (Stage 21, stacked on PR #132)  
 **Relationship to main:** IMPORTANT — much of the Stage 6–20 FX2-TH chain is in OPEN, STACKED PULL REQUESTS, NOT MERGED INTO main.  
 **Primary objective:** an evidence-traceable, numerically robust and independently physically benchmarked NERVA-type nuclear thermal rocket **reactor-core** model.  
 **Priority requested:** reactor-core physics, numerics, validation and conservation FIRST. Engine cycle, optimization, UI, and repository housekeeping are secondary unless they block verified core physics.  
@@ -49,7 +49,7 @@
 | OpenMC codebase | Full OpenMC source fork under openmc/ and NERVA modeling scripts | Software/tooling exists; upstream OpenMC tests are distinct | Reproducibly execute and archive a **specific** NERVA-like core with evaluated cross sections and credible statistical convergence | P0 |
 | Core geometry | Hexagonal fuel lattice, 19-channel element, tie/support elements, graphite filler, Be reflector and control drums in NERVA-derived demonstrator | Geometry/export/consistency checks exist | Qualified dimensions, as-built materials, element/rod inventories, thermal expansion, drum absorber geometry and full cross-section map for one chosen historical target | P0 |
 | Materials/nuclear data | OpenMC materials, source/temperature/kerma/thermal-scattering audit modules, source integrity checks | Auditing/guards and surrogate configurations | Manifest of actual evaluated isotope HDF5/temperatures, bound scattering, fission spectra, thermal kernels and data provenance for **every root-reachable material** | P0 |
-| Real criticality and transport QA | run_openmc_transport and real-core convergence/neutron-balance/replica-statistics modules | Algorithms and instrumented reports exist | One archived matching real OpenMC NERVA statepoint ensemble with verified k, source burn-in, uncertainty and core geometry/model hashes | P0 |
+| Real criticality and transport QA | run_openmc_transport and real-core convergence/neutron-balance/replica-statistics modules; **real 4-seed cold surrogate statepoints archived in Actions run 39933618638** | Genuine OpenMC 0.15.3 four-seed neutron-only HDF5 binaries verified; source stationarity and hot model NOT qualified | Independently converged source and matched historical/hot operating configuration, not another mere cold smoke run | P0 |
 | Multigroup diffusion | Stage 2/11 Cartesian and Stage 12 finite-volume cylindrical r-z | Synthetic analytic cylindrical buckling, neutron balance and operator checks | Transport-derived, state-dependent multigroup coefficients on matching geometry; numerical and physical comparison with OpenMC | P0–P1 |
 | Prompt/delayed neutron source | Stage 6/7/15 full delayed-family birth operators | Synthetic equilibrium and family spectrum/adjoint checks | Qualified fission-yield, delayed fractions and spectra from appropriate evaluated data for actual fuel isotopes | P1 |
 | Spatial transient kinetics | Stage 7 backward Euler, Stage 13 adaptive BE, Stage 14 second-order L-stable SDIRK2 | Independent synthetic dense matrix exponential, stiff/time-step tests | Independent transport kinetics benchmarks; consistent physical source normalization / dynamic feedback; control worth | P1 |
@@ -93,7 +93,7 @@ Existing main modules include:
 - fixed_source_core_physics.py; fixed_source_spatial_response.py; fixed_source_fission_branching.py; neutron_economy_uncertainty.py; axial_covariance.py.
 - source_energy_audit.py; source_phase_space_audit.py; source_direction_physics_audit.py; source_history_statistics.py; source_population_sensitivity.py; source_clone_moment_closure.py; source_resolution_audit.py; real_neutron_tail_native_uncertainty.py and real_neutron_tail_replica_statistics.py.
 
-These show serious diagnostic infrastructure, but task TRAN-01 must still identify and archive an actual NERVA-specific successful run, not infer one from names.
+These are real diagnostics, AND actual NERVA-derived **cold surrogate** OpenMC execution evidence was retrieved from GitHub Actions run [39933618638](https://github.com/dubakoor13/NUKE/actions/runs/39933618638), artifact ID 12492499186. It is genuine neutron-only HDF5 execution, but source convergence, criticality, hot material coverage and local heating are all UNQUALIFIED. Task TRAN-01 remains open for the selected, physically traceable/reference operating core with independent source convergence.
 
 ### 2.3 Main-branch thermal, fluids and performance code already present
 
@@ -172,7 +172,20 @@ At Stage 20 commit 3d9f4f29612a756571b655bec9051ea368ccc150:
 - Stage 19 compatibility workflow run [40107100232](https://github.com/dubakoor13/NUKE/actions/runs/40107100232): **success**; previous Stage 18 + Stage 19 core/thermal tests.
 - The broader NERVA model-check run was still in progress at the last observed check. **Do not report that as passed** without checking its final run conclusion.
 - These tests use synthetic nuclear coefficient tables, synthetic geometry/material properties and explicitly provided synthetic deposited heating. The tests prove exercised **discrete equations, units/guards and conservation**, not a physical NERVA reactor state or measured core power.
-- The reviewed Stage 20 repository tree contained **no checked-in file matching a NERVA OpenMC statepoint filename** such as statepoint.h5 or statepoint.N.h5. Upstream OpenMC regression HDF5 files under tests/ are not NERVA statepoint evidence. Real transport artifacts might be stored outside GitHub (runner artifacts, local machines, connected stores): inventory them before saying none have ever been run.
+- Source tree note: the Stage 20 Git tree did not contain NERVA statepoint HDF5 files. **CORRECTED 2026-10-25:** Real OpenMC HDF5 statepoints **are** preserved as an external GitHub Actions artifact from successful run [39933618638](https://github.com/dubakoor13/NUKE/actions/runs/39933618638), artifact ID 12492499186. SHA256 of the original ZIP: `cf05ab907bee76b198d3dc4736a84c6d560f3a8c2d753b78b5605c4826e53274`. Do not conflate absence from Git tree with no real executed simulation. That cold subcritical surrogate still FAILS physical hot NERVA qualification.
+
+### 3.3A CORRECTED real four-seed cold OpenMC evidence (2026-10-25)
+
+**Real transport is already executed, but HOT NERVA PHYSICS is not validated.** A successful GitHub Actions [run 39933618638](https://github.com/dubakoor13/NUKE/actions/runs/39933618638) generated four original binary OpenMC 0.15.3 neutron eigenvalue statepoints (seeds 13007, 23011, 33013, 43019; 120 batches, 30 inactive, 3000 particles/generation, 90 active realizations). The archived ZIP artifact **12492499186**, name `nerva-real-openmc-four-seed-core-evidence`, has SHA256 `cf05ab907bee76b198d3dc4736a84c6d560f3a8c2d753b78b5605c4826e53274`, is 7.1 MiB compressed and GitHub reports expiration **2026-11-13**. Original HDF5 bytes were inspected against reported k and statepoint digests. The mean reported `k_eff=0.01169802857789661` (formal SEM `7.69260125465282e-05`) establishes a strongly subcritical, unqualified **COLD SURROGATE**: independent spatial source convergence **FALSE**, nuclear data only ~293.605913 K (1/4 active materials with explicit temperature), local neutron `heating-local=0` and full reactor power normalization **BLOCKED**. [Stage 21 evidence audit](ntr/nerva/NERVA_STAGE21_REAL_OPENMC_EVIDENCE_AUDIT.md) records the exact provenance and the distinction between authentic real execution and physical validation.
+
+- [x] **EVIDENCE-01 [P0]** Locate actual archived real cold OpenMC four-seed neutron-only source files, download original ZIP and independently inspect statepoint HDF5 native estimators and archive SHA.
+- [ ] **EVIDENCE-02 [P0]** Retain an independently controlled immutable copy with long-term URLs/digests BEFORE the source Actions artifact expires on 2026-11-13; temporary CI artifacts are not a permanent archive.
+- [ ] **EVIDENCE-03 [P0]** Rebuild and qualify an actual source-stationary reference transport ensemble; the present spatial-source cloning / instability report blocks physical k validation.
+- [ ] **EVIDENCE-04 [P0]** Supply verified evaluated hot fuel/reflector/coolant data, density/phase/s(a,b), and actual source physics; one-temperature cold library cannot qualify NERVA operation.
+- [ ] **EVIDENCE-05 [P0]** Produce nonzero statistically resolved, disjoint genuine neutron+photon material heating with justified source/power normalization; reject the archived zero `heating-local` as a physical hot-core heating input.
+- [ ] **EVIDENCE-06 [P0]** Select one historical NASA test configuration and independently benchmark actual transport results; do not tune the cold surrogate to k=1 and call it validation.
+
+The Stage 21 read-only gate implements *binary HDF5 identity, cross-seed XML equivalence, ensemble k recomputation and explicit blocked-physics reporting*; it does NOT close EVIDENCE-02–06. **No real hot operating point has been qualified.**
 
 ### 3.4 Immediate merge/integration TODO
 
@@ -212,8 +225,8 @@ At Stage 20 commit 3d9f4f29612a756571b655bec9051ea368ccc150:
 
 ### 4.3 Genuine neutron and photon transport on selected core
 
-- [ ] **TRAN-01 [P0] — Execute a real cold reference OpenMC run.** Export actual chosen core geometry/materials/settings; run executable against verified evaluated libraries and save statepoint, summary/mesh/tallies, seeds and version. **Acceptance:** reproducible artifact hashes and k/flux/balance diagnostics; no synthetic or mocked run accepted as T evidence.
-- [ ] **TRAN-02 [P0] — Independent source convergence.** Use separately initialized seeds/source banks, suitable inactive generations and source shape/entropy/moment convergence checks, not only k stabilization. **Acceptance:** prescribed independent evidence using existing source_bank_* / replica modules; report any persistent source bias.
+- [ ] **TRAN-01 [P0] — Qualify a real transport reference, building on an ALREADY EXECUTED cold surrogate.** Four actual cold NERVA-derived surrogate statepoints from 2026-10-23 are archived and their exact hashes verified (see Stage 21). The selected historical target, stationary fission source, physical criticality and hot data are NOT met. **Acceptance:** run a source-convergence-qualified, geometrically traceable reference with evaluated data, preserve genuine statepoints/seed evidence, and report the original cold surrogate separately as unqualified.
+- [ ] **TRAN-02 [P0] — Independent source convergence (KNOWN BLOCKER in genuine cold surrogate).** The actual 2026-10-23 four-seed run reported source cloning and no spatial source stationarity despite formally stable k. Use separately initialized seeds/source banks, suitable inactive generations and source shape/entropy/moment convergence checks, not only k stabilization. **Acceptance:** prescribed independent evidence using existing source_bank_* / replica modules; report any persistent source bias.
 - [ ] **TRAN-03 [P0] — Statistical k and tally convergence.** Retain active-batch histories, autocorrelation and appropriate effective sample size, independent ensembles and region-specific relative uncertainties for physically relevant tallies. **Acceptance:** reproducible uncertainty diagnostics, statistically stable interpretation and approved stopping.
 - [ ] **TRAN-04 [P0] — Energy/reaction/neutron economy closure.** Audit absorption/capture/fission/scattering, leakage, emitted neutrons and fission source weights with explicitly chosen estimator definition. **Acceptance:** closed neutron population/economy within measurement/statistical uncertainty and physically consistent filter scopes.
 - [ ] **TRAN-05 [P0] — Nuclear data and physics score checks.** Exercise actual thermal scattering, photon transport, heating/KERMA score coverage, reaction types and phase/energy domains; no silent missed nuclide. **Acceptance:** data-quality audit and tally score correctness at the specific statepoint.
@@ -572,7 +585,7 @@ Append a dated record to this document or a linked work log after each implement
 | Code integration | PR URL, base/head branch, merge/review and relevant GitHub Actions conclusion |
 | Updated TODO | Exact completed/pending task checkboxes and new dependencies |
 
-### Last documented iteration: Stage 20
+### Last documented iteration: Stage 21 (2026-10-25)
 
 - **Implementation:** molecular H₂ NASA-7 variable enthalpy, full fuel/conjugate thermal solve, opt-in connection to spatial temperature-dependent neutron and delayed-family feedback.
 - **Evidence:** synthetic numerical suites at commit 3d9f4f29612a756571b655bec9051ea368ccc150; dedicated run 40107100124 passed 56/56; Stage 19 compatibility workflow run 40107100232 passed.
@@ -580,6 +593,14 @@ Append a dated record to this document or a linked work log after each implement
 - **Integration:** PR #132 OPEN; stacked on #131 etc.; not main. No claim of physically validated NERVA core.
 
 ---
+
+
+### Follow-up physical evidence audit (2026-10-25)
+
+- **Real OpenMC execution identified and independently inspected:** four seed-specific HDF5 binaries in GitHub Actions artifact 12492499186, run 39933618638, original SHA `cf05ab907bee76b198d3dc4736a84c6d560f3a8c2d753b78b5605c4826e53274`.
+- **Real physics blocked:** source stationarity not established, `k_eff≈0.011698` far subcritical, hot nuclear-data coverage false, local neutron `heating-local=0`, prescribed power normalization unjustified and historical fidelity unvalidated.
+- **Stage 21 code:** `real_transport_evidence_gate.py`, its real-artifact numerical tests, and CI download of original binary evidence. This is **T-level executed cold surrogate evidence** only, not P/H-level nuclear/thermal qualification.
+- **Immediate action:** EVIDENCE-02 before 2026-11-13, followed by EVIDENCE-03/04/05 and real-history source checks; Stage 6–20 stack remains unmerged.
 
 ## 14. Most important next action
 
