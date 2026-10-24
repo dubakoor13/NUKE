@@ -1,0 +1,86 @@
+name: NERVA genuinely executed OpenMC four-seed evidence audit
+
+on:
+  pull_request:
+    paths:
+      - "ntr/nerva/audit_real_core_bundle.py"
+      - "ntr/nerva/validate_real_core_bundle.py"
+      - "NERVA_CORE_PHYSICS_MASTER_TODO.md"
+      - ".github/workflows/nerva-real-artifact-integrity.yml"
+  push:
+    paths:
+      - "ntr/nerva/audit_real_core_bundle.py"
+      - "ntr/nerva/validate_real_core_bundle.py"
+      - "NERVA_CORE_PHYSICS_MASTER_TODO.md"
+      - ".github/workflows/nerva-real-artifact-integrity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify-real-openmc-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout current reactor physics and evidence auditor
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install only real HDF5/array reader dependencies
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install numerical HDF5 readers
+        run: python -m pip install 'numpy>=1.26' 'h5py>=3.10'
+
+      # Genuine recorded neutron transport from a SUCCESSFUL OpenMC C++
+      # workflow, not a synthetic fixture. Artifact EXPIRES 2026-11-13.
+      # On expiration use newly executed real HDF5, not a fake substitute.
+      - name: Download genuine saved neutron-transport statepoints and audits
+        uses: actions/download-artifact@v4
+        with:
+          name: nerva-real-openmc-four-seed-core-evidence
+          repository: dubakoor13/NUKE
+          run-id: 39933618638
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/nerva-real-executed
+
+      - name: Package extracted real artifact without editing statepoint bytes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os, zipfile
+          root=Path(os.environ["RUNNER_TEMP"])/"nerva-real-executed"
+          target=Path(os.environ["RUNNER_TEMP"])/"nerva-real-archived.zip"
+          sources=sorted(p for p in root.rglob("*") if p.is_file())
+          if len(sources)<80 or not any(p.name=="real_core_transport_summary.json" for p in sources):
+              raise RuntimeError("retained genuinely executed OpenMC artifact unavailable")
+          with zipfile.ZipFile(target,"w",compression=zipfile.ZIP_DEFLATED) as z:
+              for p in sources: z.write(p,p.relative_to(root).as_posix())
+          print("Repacked",len(sources),"unmodified genuinely executed files")
+          PY
+
+      - name: Independently inspect REAL OpenMC HDF5 and nuclear/thermal readiness
+        env:
+          NUKE_REAL_CORE_ARTIFACT_ZIP: ${{ runner.temp }}/nerva-real-archived.zip
+        run: python -m ntr.nerva.validate_real_core_bundle
+
+      - name: Export machine-readable genuine evidence and unqualified-physics flags
+        run: |
+          python -m ntr.nerva.audit_real_core_bundle \
+            --artifact "$RUNNER_TEMP/nerva-real-archived.zip" \
+            --workflow-run-id 39933618638 \
+            --output "$RUNNER_TEMP/nerva-real-evidence-audit.json"
+
+      - name: Retain the lightweight physical evidence summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerva-executed-cold-core-audit-summary
+          path: ${{ runner.temp }}/nerva-real-evidence-audit.json
+          if-no-files-found: error
+          retention-days: 14
