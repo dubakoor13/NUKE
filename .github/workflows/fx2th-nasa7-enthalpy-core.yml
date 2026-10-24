@@ -5,11 +5,17 @@ on:
     paths:
       - 'ntr/nerva/fx2th_enthalpy_conjugate_core.py'
       - 'ntr/nerva/validate_fx2th_enthalpy_conjugate_core.py'
+      - 'ntr/nerva/fx2th_enthalpy_rz_feedback.py'
+      - 'ntr/nerva/validate_fx2th_enthalpy_rz_feedback.py'
+      - 'ntr/nerva/fx2th_resolved_rz_feedback.py'
       - '.github/workflows/fx2th-nasa7-enthalpy-core.yml'
   pull_request:
     paths:
       - 'ntr/nerva/fx2th_enthalpy_conjugate_core.py'
       - 'ntr/nerva/validate_fx2th_enthalpy_conjugate_core.py'
+      - 'ntr/nerva/fx2th_enthalpy_rz_feedback.py'
+      - 'ntr/nerva/validate_fx2th_enthalpy_rz_feedback.py'
+      - 'ntr/nerva/fx2th_resolved_rz_feedback.py'
       - '.github/workflows/fx2th-nasa7-enthalpy-core.yml'
 
 permissions:
@@ -32,3 +38,7 @@ jobs:
         run: python -m ntr.nerva.validate_fx2th_conjugate_fuel_transport
       - name: Stage 20 nonlinear NASA7 hydrogen enthalpy and conjugate fuel energy
         run: python -m ntr.nerva.validate_fx2th_enthalpy_conjugate_core
+      - name: Previous Stage 19 spatial neutron feedback regression
+        run: python -m ntr.nerva.validate_fx2th_resolved_rz_feedback
+      - name: Stage 20 NASA7 enthalpy-coupled spatial neutron and precursor feedback
+        run: python -m ntr.nerva.validate_fx2th_enthalpy_rz_feedback
