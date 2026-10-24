@@ -73,7 +73,7 @@ Each iteration solves:
 3. Complete **new** resolved fuel conduction / axial H2 advection BE from the SAME old thermal state.
 4. Relaxation in fuel-ring and gas temperatures; convergence requires all resolved temperature components agree, not only the fuel volume average.
 
-If temperature iterates leave the supplied tabulation domain, depositions are invalid, or iterations fail, the entire physical step is rejected; it does not silently clip or substitute synthetic material data. This method is a conservative **Picard** temporal interface, not an automatically stable monolithic nonlinear resolved-core method.
+If **ANY individual fuel ring** (including a ring obscured by a temperature average) leaves the supplied nuclear-tabulation domain, depositions are invalid, or iterations fail, the entire physical step is rejected; it does not silently clip or substitute synthetic material data. A fuel-volume average within the table range is not sufficient evidence of coverage for all constituent rings. This method is a conservative **Picard** temporal interface, not an automatically stable monolithic nonlinear resolved-core method.
 
 ## Independent numerical regressions
 
