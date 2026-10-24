@@ -1,64 +1,72 @@
-name: NERVA core bundle safe inventory
+name: NERVA bundle isolated core subset audit
 on:
   push:
-    paths:
-      - '.github/workflows/nerva-bundle-inspect.yml'
+    paths: ['.github/workflows/nerva-bundle-inspect.yml']
   pull_request:
-    paths:
-      - '.github/workflows/nerva-bundle-inspect.yml'
+    paths: ['.github/workflows/nerva-bundle-inspect.yml']
+permissions: {}
 jobs:
-  archive-inventory:
+  isolated-numerics:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Compare bundle hashes with main and preview physics audit (no execution)
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install numerical dependencies
+        run: python -m pip install 'numpy>=1.26' 'scipy>=1.11'
+      - name: Safely stage and verify independently selected bundle physics
         shell: python
         run: |
+          import sys, os, tempfile, subprocess, zipfile, json, pathlib, stat
           from pathlib import Path
-          from zipfile import ZipFile
-          import hashlib, json, collections
-          print('BUNDLE_COMPARE_START')
-          root=Path('.').resolve()
-          with ZipFile('NERVA-CORE-BUNDLE.zip') as z:
-              bad=z.testzip()
-              print('zip_crc_first_error:',bad)
-              files=[x for x in z.infolist() if not x.is_dir()]
-              names=[x.filename for x in files]
-              print('duplicate_names:',len(names)-len(set(names)))
-              print('unsafe_paths:',[n for n in names if n.startswith('/') or '..' in Path(n).parts][:20])
-              rootdir='NERVA-CORE-BUNDLE/ntrv2/nerva/'
-              present=[];new=[];changed=[]
-              for f in files:
-                  if not f.filename.startswith(rootdir):continue
-                  localpath=Path('ntr/nerva')/f.filename[len(rootdir):]
-                  if not localpath.exists():
-                      new.append(str(localpath))
-                  elif not localpath.is_file():
-                      changed.append((str(localpath),'target-not-file'))
-                  else:
-                      sig=hashlib.sha256(z.read(f)).digest()
-                      target=hashlib.file_digest(open(localpath,'rb'),'sha256').digest()
-                      if sig==target:present.append(str(localpath))
-                      else:changed.append((str(localpath),'content-differs'))
-              print('source_exact_match:',len(present),'missing_from_main:',len(new),'content_differs:',len(changed))
-              print('new_paths:',json.dumps(new[:130]))
-              print('different_paths:',json.dumps(changed[:130]))
-              for member in [
-                'NERVA-CORE-BUNDLE/manifest_new_files.json',
-                'NERVA-CORE-BUNDLE/RUNBOOK.md',
-                'NERVA-CORE-BUNDLE/audit/NERVA_OFFLINE_AUDIT.md',
-                'NERVA-CORE-BUNDLE/requirements.txt',
-                'NERVA-CORE-BUNDLE/ntrv2/nerva/diffusion_2d.py',
-                'NERVA-CORE-BUNDLE/ntrv2/nerva/transport_backend.py',
-                'NERVA-CORE-BUNDLE/ntrv2/nerva/acceptance_gates.py'
-              ]:
-                  print('### MEMBER:',member)
-                  try:
-                      raw=z.read(member)
-                      limit=9500 if member.endswith(('.md','.json')) else 3000
-                      print(raw[:limit].decode('utf-8',errors='replace'))
-                  except KeyError:
-                      print('MISSING')
-                  print('### END_MEMBER')
-          print('BUNDLE_COMPARE_END')
+          archive=Path('NERVA-CORE-BUNDLE.zip')
+          prefix='NERVA-CORE-BUNDLE/ntrv2/nerva/'
+          selections=[
+            'diffusion.py',
+            'diffusion_2d.py',
+            'validate_diffusion.py',
+            'validate_diffusion_2d.py'
+          ]
+          with zipfile.ZipFile(archive) as z:
+              if z.testzip() is not None:
+                  raise SystemExit('Invalid ZIP CRC')
+              with tempfile.TemporaryDirectory(prefix='nerva_bundle_') as tmp:
+                  root=Path(tmp)
+                  dest=root/'ntr'/'nerva'
+                  dest.mkdir(parents=True)
+                  (root/'ntr'/'__init__.py').write_text('')
+                  allfiles=[
+                    i for i in z.infolist()
+                    if i.filename.startswith(prefix) and not i.is_dir()
+                  ]
+                  for i in allfiles:
+                      relative=i.filename[len(prefix):]
+                      pure=pathlib.PurePosixPath(relative)
+                      if not relative or pure.is_absolute() or '..' in pure.parts or (i.external_attr>>16)&stat.S_IFMT(stat.S_IFLNK):
+                          raise SystemExit('Unsafe ZIP entry '+relative)
+                      # Only .py, .md and .json for read-only staged local test
+                      if pure.suffix.lower() not in ('.py','.json','.md'):
+                          continue
+                      target=dest.joinpath(*pure.parts)
+                      target.parent.mkdir(parents=True,exist_ok=True)
+                      target.write_bytes(z.read(i))
+                  # Execute only allowlisted synthetic validators; no bundle scripts.
+                  for name in ('validate_diffusion','validate_diffusion_2d'):
+                      command=[sys.executable,'-m','ntr.nerva.'+name]
+                      env=os.environ.copy()
+                      env['PYTHONPATH']=str(root)
+                      env['PYTHONDONTWRITEBYTECODE']='1'
+                      p=subprocess.run(command,cwd=str(root),env=env,stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT,text=True,timeout=90)
+                      print('SELECTED_TEST',name,'exit_code',p.returncode)
+                      print(p.stdout[-6500:])
+                      if p.returncode:
+                          raise SystemExit('Selected diffusion validation failed: '+name)
+                  for name in selections:
+                      data=z.read(prefix+name).decode('utf-8')
+                      print('BUNDLE_SELECTED_SOURCE_JSON:'+json.dumps({'path':name,'source':data},ensure_ascii=True))
+          print('ISOLATED_NUMERICS_SUCCESS')
