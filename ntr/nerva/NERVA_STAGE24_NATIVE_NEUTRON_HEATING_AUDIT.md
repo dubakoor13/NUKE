@@ -89,3 +89,7 @@ NUKE_REAL_CORE_EVIDENCE_PATH=/path/to/actual_original_or_repacked_archive.zip \
 5. **Independent historical NERVA measurements** for the same selected as-built or design reference and held-out comparisons. A cold far-subcritical surrogate is not a historical critical reactor measurement.
 
 **Status remains numerical/evidence verification on the cold original OpenMC model; physical hot NERVA nuclear performance remains unqualified.**
+
+## Verified Stage 24 numerical evidence
+
+The dedicated [GitHub Actions run 40137191622](https://github.com/dubakoor13/NUKE/actions/runs/40137191622) completed **SUCCESS: 8/8 tests passed, zero skips**. The real HDF5 source-code audit itself also completed successfully after downloading the exact original 2026-10-23 workflow artifact by original run+artifact identity. It independently observed native mesh `heating` mean **826702.3658780213 eV/source** and native mesh `kappa-fission` mean **901844.2214940485 eV/source**, with `heating-local` exactly ZERO in each original scoring partition. Neither positive score can be treated as qualified local neutron+photon energy deposition or NERVA thermal W. Original measured tracklength absorption **0.03991528763875892**, analog absorption **0.039666666666666656**, native neutron vacuum leakage **1.0238555555555557** per starting neutron. The test suite included both modified native statepoint rejection and forged heating-qualification rejection. The broader NERVA model-check workflow is separate and is not represented as passed here.
