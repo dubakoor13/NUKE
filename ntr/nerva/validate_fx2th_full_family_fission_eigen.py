@@ -193,8 +193,9 @@ class FullFamilyEigenTests(unittest.TestCase):
         g,d=unequal_births()
         reference=solve_family_eigen(d)
         critical=replace(d,nu_sigma_f_inv_m=d.nu_sigma_f_inv_m/reference.keff)
+        gcrit=replace(g,nu_fission_inv_m=g.nu_fission_inv_m/reference.keff)
         with self.assertRaisesRegex(ValueError,"distinct family birth spectra"):
-            rz_critical_family_reference(g,critical)
+            rz_critical_family_reference(gcrit,critical)
         self.assertIsNotNone(verify_stationary_family_eigen(critical).initial)
 
     def test_noncritical_mode_not_claimed_stationary(self):
