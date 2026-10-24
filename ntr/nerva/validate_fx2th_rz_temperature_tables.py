@@ -346,5 +346,25 @@ class TemperatureTableTests(unittest.TestCase):
         self.assertEqual(len(result.material.decay_constants_s_inv),2)
 
 
+    def test_identical_manifest_but_changed_coefficients_change_material_identity(self):
+        # This is a numerical state ID, not external certification of the
+        # nuclear manifest contents.
+        base=self.tables
+        original=sample_rz_temperature_tables(base,self.temperatures)
+        xs=np.asarray(base.absorption_inv_m).copy()
+        xs[0,0,0,0]*=1.015
+        altered=replace(base,absorption_inv_m=xs)
+        changed=sample_rz_temperature_tables(altered,self.temperatures)
+        self.assertEqual(original.nuclear_manifest_sha256,
+                         changed.nuclear_manifest_sha256)
+        self.assertNotEqual(original.material.source_id,changed.material.source_id)
+        self.assertNotEqual(original.material.integrated_loss.toarray()[0,0],
+                            changed.material.integrated_loss.toarray()[0,0])
+
+    def test_repeated_material_sampling_is_fingerprint_deterministic(self):
+        a=sample_rz_temperature_tables(self.tables,self.temperatures)
+        b=sample_rz_temperature_tables(self.tables,self.temperatures.copy())
+        self.assertEqual(a.material.source_id,b.material.source_id)
+
 if __name__=="__main__":
     unittest.main(verbosity=2)
