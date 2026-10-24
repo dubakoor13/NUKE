@@ -262,7 +262,7 @@ def rz_critical_family_reference(grid:RZGrid,data,*,tolerance:float=1e-8):
     nr,nz,ng=m.shape
     if data.cells!=nr*nz or data.groups!=ng:
         raise ValueError("spatial kinetics mesh/groups differ from r-z")
-    if (m.loss-data.integrated_loss).nnz>0 or
+    if ((m.loss-data.integrated_loss).nnz>0 or
         not np.array_equal(data.volumes_m3,m.cell_volumes_m3.flatten()) or
         not np.array_equal(data.nu_sigma_f_inv_m,
                            grid.nu_fission_inv_m.reshape(data.cells,ng))):
