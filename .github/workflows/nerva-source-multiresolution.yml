@@ -1,0 +1,63 @@
+name: NERVA real HDF5 multiresolution fission-source audit
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_source_multiresolution.py'
+      - 'ntr/nerva/validate_real_source_multiresolution.py'
+      - '.github/workflows/nerva-source-multiresolution.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_source_multiresolution.py'
+      - 'ntr/nerva/validate_real_source_multiresolution.py'
+      - '.github/workflows/nerva-source-multiresolution.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  native-hdf5-source-resolution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native HDF5 data/numerics dependencies
+        run: python -m pip install 'numpy>=1.26' 'h5py>=3.10'
+      - name: Download exact original real OpenMC transport artifact by run and name
+        uses: actions/download-artifact@v4
+        with:
+          repository: dubakoor13/NUKE
+          run-id: 39933618638
+          name: nerva-real-openmc-four-seed-core-evidence
+          github-token: ${{ github.token }}
+          path: build/actual_openmc
+      - name: Require all native source evidence; never synthesize input
+        run: |
+          test -f build/actual_openmc/real_core_transport_summary.json
+          for seed in 13007 23011 33013 43019; do
+            for batch in 040 060 080 100 120; do
+              test -s "build/actual_openmc/seed_$seed/statepoint.$batch.h5"
+            done
+          done
+      - name: Stage23 independently recompute multi-grid source statistics
+        run: |
+          python -m ntr.nerva.real_source_multiresolution build/actual_openmc \
+            --output build/source_multires_evidence.json
+      - name: Stage23 real native HDF5 and probability-contraction regressions
+        env:
+          NUKE_REAL_CORE_EVIDENCE_PATH: build/actual_openmc
+        run: python -m ntr.nerva.validate_real_source_multiresolution
+      - name: Publish derived observation report, never pretend synthetic data are transport
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-real-source-multiresolution-observations
+          path: build/source_multires_evidence.json
+          if-no-files-found: warn

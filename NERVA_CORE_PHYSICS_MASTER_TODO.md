@@ -1,6 +1,6 @@
 # NUKE / NERVA — MASTER CORE PHYSICS, NUMERICS, EVIDENCE AND VALIDATION TODO
 
-**As-of:** 2026-10-25 (Stage 22 source checkpoint audit)  
+**As-of:** 2026-10-25 (Stage 23 multiresolution real-source audit)  
 **Repository:** https://github.com/dubakoor13/NUKE  
 **Working snapshot:** feature/nerva-real-transport-evidence-gates-stage21-20261025 (Stage 21, stacked on PR #132)  
 **Relationship to main:** IMPORTANT — much of the Stage 6–20 FX2-TH chain is in OPEN, STACKED PULL REQUESTS, NOT MERGED INTO main.  
@@ -199,6 +199,26 @@ The Stage 21 genuine archive contains **20 native OpenMC HDF5 source snapshots**
 - [ ] **EVIDENCE-09 [P0]** Preserve original archived 20-checkpoint binary evidence plus nuclear material manifests beyond **2026-11-13** expiration. Stage 22's small derived audit JSON alone is not sufficient archival evidence.
 
 These tasks sharpen TRAN-02 and EVIDENCE-02/03; **they do not qualify cold surrogate criticality or physical hot NERVA heating**.
+
+### 3.3C Stage 23 — REAL HDF5 source resolution sensitivity (2026-10-25)
+
+**Source integrity and provenance:** same 20 originally executed OpenMC HDF5 checkpoint files as Stage 22, authenticated through Stage 21/22; 4 independent seeds, native source_bank particles and original physical scoring envelope, no invented transport result. [Stage 23 audit](ntr/nerva/NERVA_STAGE23_REAL_SOURCE_MULTISCALE_AUDIT.md) documents actual source TV and spatial information loss from exact probability-grid coarsening.
+
+| Number of 3-D bins per axis | Original real-source mean between-seed TV at last batch |
+|---|---:|
+| 2 | ~0.36378 |
+| 4 | ~0.68572 |
+| 8 | ~0.93194 |
+| 16 | ~0.98822 |
+
+The HDF5 observations demonstrate severe mesh-resolution sensitivity; a fine histogram is nearly empty because each recorded source bank has 3000 records but only 58–96 **distinct positions**. The 4³ value agrees with Stage 22, and physical 8-bin r-/z-projections give mean last-batch between-seed TV of ~0.27306 radial and ~0.30967 axial. Neither value is a stationary-source test or independent-genealogy uncertainty estimate; native source cloning, cold subcriticality and the absence of usable hot nuclear heating remain **BLOCKED**.
+
+- [x] **EVIDENCE-10 [P1]** Compute actual native multiresolution 2³/4³/8³/16³ spatial-source metrics with exact probability summation, nonincrease of TV and Jensen–Shannon under coarsening and archival 4³ correspondence.
+- [x] **EVIDENCE-11 [P1]** Verify radial/axial real-source projection TV on the original physical scoring envelope, clearly distinguishing angular integration from physical axisymmetry validation.
+- [ ] **EVIDENCE-12 [P0]** Obtain actual source-stationary transport (not a postprocessed rebin), then establish independent seed and source-family/genealogy confidence before trusting k or power-shape uncertainty.
+- [ ] **EVIDENCE-13 [P0]** Long-term archive exact native HDF5 checkpoints and evaluated nuclear-data manifests; the original Actions artifact expires 2026-11-13.
+
+No additional code for real hot transport or heating is added by this observation stage. It refines the **source-quality diagnosis**, not the physical fidelity of NERVA geometry or fuel/coolant material data.
 
 ### 3.4 Immediate merge/integration TODO
 
@@ -621,6 +641,12 @@ Append a dated record to this document or a linked work log after each implement
 - [NERVA_STAGE22_REAL_SOURCE_DRIFT_AUDIT.md](ntr/nerva/NERVA_STAGE22_REAL_SOURCE_DRIFT_AUDIT.md): read-only actual OpenMC spatial fission-source checkpoint verification with four independent seeds and five native statepoint checkpoints each.
 - Independently reproduced every saved exact-position count, weighted source concentration, spatial histogram entropy/centroid and between-seed/within-seed TV and validated native k/entropy history prefixes.
 - Source convergence still NOT demonstrated; zero qualified local heating, real hot nuclear data, historical core fidelity and artifact preservation remain blockers. No reactor design parameters modified.
+
+### Latest iteration: Stage 23 real-source grid sensitivity (2026-10-25)
+
+- [NERVA_STAGE23_REAL_SOURCE_MULTISCALE_AUDIT.md](ntr/nerva/NERVA_STAGE23_REAL_SOURCE_MULTISCALE_AUDIT.md) describes Stage 23 native HDF5 cross-seed TV and JS across 2³/4³/8³/16³ and radial/axial projections; no new reactor-model parameter was tuned.
+- Mean real between-seed batch-120 TV ranges from ~0.364 at 2³ to ~0.988 at 16³; about 98% of fine 16³ spatial source cells are empty. Such fine-grid source TV must not be presented as a calibrated source-convergence probability.
+- **Outstanding P0:** independently qualified source stationarity and genealogies; archive preservation before November 13; actual evaluated hot nuclear data, local neutron/photon heating, and NASA hold-out benchmarks.
 
 ## 14. Most important next action
 
