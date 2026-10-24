@@ -35,12 +35,13 @@ from .fx2th_conjugate_fuel_transport import (
     ConjugateCoreDeposition, ConjugateCoreStep,
     advance_conjugate_core, effective_solid_temperature_for_xs,
 )
+from .fx2th_enthalpy_conjugate_core import EnthalpyCoreStep
 
 
 @dataclass(frozen=True)
 class ResolvedFeedbackStep:
     neutron: SpatialFamilyStep
-    thermal: ConjugateCoreStep
+    thermal: ConjugateCoreStep | EnthalpyCoreStep
     iterations: int
     maximum_temperature_residual_k: float
     material_source_id: str
@@ -61,10 +62,17 @@ def advance_resolved_rz_feedback(
     temperature_tolerance_k: float=1e-8,
     relaxation: float=.75,
     max_iterations: int=100,
+    thermal_stepper:Callable[
+        [ConjugateCoreGeometry,ConjugateCoreState,ConjugateCoreDeposition,float],
+        ConjugateCoreStep | EnthalpyCoreStep
+    ] | None=None,
 ) -> ResolvedFeedbackStep:
     """Simultaneously converge one physical step, never cascade trial states."""
     if not callable(heating_from_neutrons):
         raise TypeError("explicit partitioned nuclear heating callback required")
+    if thermal_stepper is not None and not callable(thermal_stepper):
+        raise TypeError("thermal_stepper must be callable")
+    run_thermal=advance_conjugate_core if thermal_stepper is None else thermal_stepper
     if (not math.isfinite(dt_s) or dt_s<=0 or
         not math.isfinite(temperature_tolerance_k) or
         not 0<temperature_tolerance_k<=1 or
@@ -114,7 +122,7 @@ def advance_resolved_rz_feedback(
         deposition=heating_from_neutrons(neutron.state,data)
         if not isinstance(deposition,ConjugateCoreDeposition):
             raise TypeError("nuclear callback must return ConjugateCoreDeposition")
-        thermal=advance_conjugate_core(geometry,old_thermal,deposition,dt_s)
+        thermal=run_thermal(geometry,old_thermal,deposition,dt_s)
         check_fuel_coverage(thermal.state)
         diff=max(
             float(np.max(np.abs(thermal.state.fuel_temperature_k-
