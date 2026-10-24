@@ -1,0 +1,32 @@
+name: NERVA delayed fission-importance algebra
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/delayed_importance_operator.py'
+      - 'ntr/nerva/validate_delayed_importance_operator.py'
+      - '.github/workflows/nerva-delayed-importance.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/delayed_importance_operator.py'
+      - 'ntr/nerva/validate_delayed_importance_operator.py'
+      - '.github/workflows/nerva-delayed-importance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  numerical-operator-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install NumPy
+        run: python -m pip install 'numpy>=1.26'
+      - name: Verify adjoint-weighted prompt and delayed operators
+        run: python -m ntr.nerva.validate_delayed_importance_operator
