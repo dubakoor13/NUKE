@@ -1,0 +1,146 @@
+name: NERVA core finite-volume physics numerical checks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ntr/nerva/core_conjugate_fv.py'
+      - 'ntr/nerva/core_hex_lateral_fv.py'
+      - 'ntr/nerva/core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/core_hex_conforming_mesh.py'
+      - 'ntr/nerva/core_hex_conforming_fem.py'
+      - 'ntr/nerva/core_hex_exterior_surface.py'
+      - 'ntr/nerva/core_hex_interelement_mortar.py'
+      - 'ntr/nerva/core_hex_two_element_fem.py'
+      - 'ntr/nerva/run_core_hex_two_element_fem.py'
+      - 'ntr/nerva/validate_core_hex_interelement_mortar.py'
+      - 'ntr/nerva/validate_core_hex_two_element_fem.py'
+      - 'ntr/nerva/validate_core_hex_exterior_surface.py'
+      - 'ntr/nerva/core_solid_material_tables.py'
+      - 'ntr/nerva/core_hex_conforming_hydraulics.py'
+      - 'ntr/nerva/validate_core_solid_material_tables.py'
+      - 'ntr/nerva/validate_core_hex_conforming_hydraulics.py'
+      - 'ntr/nerva/run_core_hex_conforming_fem.py'
+      - 'ntr/nerva/validate_core_hex_conforming_fem.py'
+      - 'ntr/nerva/run_core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/core_hex_radial_lateral_balance.py'
+      - 'ntr/nerva/validate_core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/core_hex_lateral_balance.py'
+      - 'ntr/nerva/run_core_hex_lateral_fv.py'
+      - 'ntr/nerva/validate_core_hex_lateral_fv.py'
+      - 'ntr/nerva/core_conjugate_fv_diagnostics.py'
+      - 'ntr/nerva/validate_core_conjugate_fv.py'
+      - 'ntr/nerva/run_core_conjugate_fv.py'
+      - '.github/workflows/nerva-core-fv-physics.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'ntr/nerva/core_conjugate_fv.py'
+      - 'ntr/nerva/core_hex_lateral_fv.py'
+      - 'ntr/nerva/core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/core_hex_conforming_mesh.py'
+      - 'ntr/nerva/core_hex_conforming_fem.py'
+      - 'ntr/nerva/core_hex_exterior_surface.py'
+      - 'ntr/nerva/core_hex_interelement_mortar.py'
+      - 'ntr/nerva/core_hex_two_element_fem.py'
+      - 'ntr/nerva/run_core_hex_two_element_fem.py'
+      - 'ntr/nerva/validate_core_hex_interelement_mortar.py'
+      - 'ntr/nerva/validate_core_hex_two_element_fem.py'
+      - 'ntr/nerva/validate_core_hex_exterior_surface.py'
+      - 'ntr/nerva/core_solid_material_tables.py'
+      - 'ntr/nerva/core_hex_conforming_hydraulics.py'
+      - 'ntr/nerva/validate_core_solid_material_tables.py'
+      - 'ntr/nerva/validate_core_hex_conforming_hydraulics.py'
+      - 'ntr/nerva/run_core_hex_conforming_fem.py'
+      - 'ntr/nerva/validate_core_hex_conforming_fem.py'
+      - 'ntr/nerva/run_core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/core_hex_radial_lateral_balance.py'
+      - 'ntr/nerva/validate_core_hex_radial_lateral_fv.py'
+      - 'ntr/nerva/core_hex_lateral_balance.py'
+      - 'ntr/nerva/run_core_hex_lateral_fv.py'
+      - 'ntr/nerva/validate_core_hex_lateral_fv.py'
+      - 'ntr/nerva/core_conjugate_fv_diagnostics.py'
+      - 'ntr/nerva/validate_core_conjugate_fv.py'
+      - 'ntr/nerva/run_core_conjugate_fv.py'
+      - '.github/workflows/nerva-core-fv-physics.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  core-fv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install finite-volume runtime dependencies
+        run: python -m pip install "numpy>=1.26" "scipy>=1.12"
+      - name: Check analytical radial benchmark, first law, transient and interface resistance
+        run: python -m ntr.nerva.validate_core_conjugate_fv
+      - name: Check lateral 19-channel Voronoi core conduction physics
+        run: python -m ntr.nerva.validate_core_hex_lateral_fv
+      - name: Validate unified radial-axial-lateral 19-channel thermal FV
+        run: python -m ntr.nerva.validate_core_hex_radial_lateral_fv
+      - name: Integrate actual NUKE reconstruction array shapes with 19-channel CLI
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from pathlib import Path
+          Path('build').mkdir(exist_ok=True)
+          np.savez_compressed(
+              'build/core_lateral_synthetic_input.npz',
+              channel_wall_axial_power_w=np.full((1,19,4), 2.0),
+              channel_direct_h2_axial_power_w=np.full((1,19,4), 0.05),
+              branch_mass_flow_kg_s=np.full((1,19),0.003),
+              z_edges_m=np.linspace(0,0.4,5))
+          PY
+          python -m ntr.nerva.run_core_hex_lateral_fv             build/core_lateral_synthetic_input.npz             --inlet-temperature-k 500             --initial-temperature-k 500             --film-w-m2-k 5500             --hydrogen-density-kg-m3 3             --gas-enthalpy-model constant             --fuel-density-kg-m3 1850             --fuel-cp-j-kg-k 1200             --fuel-conductivity-w-m-k 24             --coating-density-kg-m3 6400             --coating-cp-j-kg-k 650             --coating-conductivity-w-m-k 18             --dt-s 0.1 --steps 2             --output build/ci_core_lateral
+          test -s build/ci_core_lateral/core_lateral_19_channel_fields.npz
+          python - <<'PY'
+          import json
+          report=json.load(open('build/ci_core_lateral/core_lateral_19_channel_report.json'))
+          assert report['lateral_face_count']==42
+          assert len(report['results'])==1
+          assert len(report['results'][0]['steps'])==2
+          assert all(s['independent_max_scaled_cell_residual']<1e-6
+                     for s in report['results'][0]['steps'])
+          PY
+      - name: Integrate NUKE source arrays with unified radial/lateral core solver
+        run: |
+          python -m ntr.nerva.run_core_hex_radial_lateral_fv build/core_lateral_synthetic_input.npz --inlet-temperature-k 500 --initial-temperature-k 500 --hydrogen-density-kg-m3 3 --film-w-m2-k 5500 --hydrogen-model constant --fuel-density-kg-m3 1850 --fuel-cp-j-kg-k 1200 --fuel-conductivity-w-m-k 24 --coating-density-kg-m3 6400 --coating-cp-j-kg-k 650 --coating-conductivity-w-m-k 18 --coating-radial-cells 2 --fuel-radial-cells 5 --dt-s 0.1 --steps 2 --output build/ci_core_unified
+          test -s build/ci_core_unified/unified_radial_lateral_core_fields.npz
+          python - <<'PY'
+          import json
+          import numpy as np
+          from pathlib import Path
+          root=Path("build/ci_core_unified")
+          report=json.loads((root/"unified_radial_lateral_core_report.json").read_text())
+          assert len(report["results"])==1
+          assert len(report["results"][0]["steps"])==2
+          assert all(s["independent_cell_scaled_residual"]<1e-6 for s in report["results"][0]["steps"])
+          with np.load(root/"unified_radial_lateral_core_fields.npz") as data:
+              assert data["solid_temperature_k"].shape==(1,4,19,7)
+              assert data["hydrogen_temperature_k"].shape==(1,4,19)
+              assert np.isfinite(data["solid_temperature_k"]).all()
+          PY
+      - name: Check conforming fuel/coating prism thermal FEM smoke
+        run: python -m ntr.nerva.validate_core_hex_conforming_fem
+      - name: Check tabulated 3D solid thermo integrals
+        run: python -m ntr.nerva.validate_core_solid_material_tables
+      - name: Check 3D fuel FEM and H2 quasi-steady compressible momentum coupling
+        run: python -m ntr.nerva.validate_core_hex_conforming_hydraulics
+      - name: Check external hex contact and greybody boundary thermal numerics
+        run: python -m ntr.nerva.validate_core_hex_exterior_surface
+      - name: Check nonmatching two-fuel-element conservative mortar
+        run: python -m ntr.nerva.validate_core_hex_interelement_mortar
+      - name: Check monolithic two-element 3D fuel-H2 thermal physics
+        run: python -m ntr.nerva.validate_core_hex_two_element_fem
+      - name: Check executable interfaces
+        run: |
+          python -m ntr.nerva.run_core_conjugate_fv --help
+          python -m ntr.nerva.run_core_hex_lateral_fv --help
+          python -m ntr.nerva.run_core_hex_radial_lateral_fv --help
+          python -m ntr.nerva.run_core_hex_conforming_fem --help
+          python -m ntr.nerva.run_core_hex_two_element_fem --help

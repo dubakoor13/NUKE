@@ -1,0 +1,85 @@
+name: NERVA conforming fuel-element geometry smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ntr/nerva/core_hex_conforming_mesh.py'
+      - 'ntr/nerva/core_hex_conforming_fem.py'
+      - 'ntr/nerva/run_core_hex_conforming_fem.py'
+      - '.github/workflows/nerva-core-conforming-mesh.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  conforming-geometry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install optional Gmsh mesh engine and numerical dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libglu1-mesa
+          python -m pip install "numpy>=1.26" "scipy>=1.12" "gmsh>=4.12,<5"
+      - name: Generate actual conforming 19-channel cross-sectional mesh
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.core_hex_conforming_mesh import make_nerva_hex_triangle_section
+          from ntr.nerva.run_core_hex_conforming_fem import (
+              channel_power_to_fuel_triangles,save_section)
+          mesh=make_nerva_hex_triangle_section(
+              fuel_mesh_size_m=8e-4,coating_mesh_size_m=7e-5)
+          mesh.validate()
+          assert len(np.unique(mesh.wall_channel))==19
+          assert np.any(mesh.material==0) and np.any(mesh.material==1)
+          power=np.full((1,19),1.)
+          mapped,sector=channel_power_to_fuel_triangles(mesh,power)
+          assert abs(float(mapped.sum())-19.)<1e-10
+          assert np.all(mapped[:,mesh.material==1]==0)
+          save_section("build/nerva_conforming_mesh.npz",mesh)
+          print("Gmsh NERVA coated bores:",len(np.unique(mesh.wall_channel)))
+          print("Gmsh fuel/coating triangles:",len(mesh.triangles))
+          print("Gmsh mesh nodes:",len(mesh.xy_m))
+          print("Projected watts:",mapped.sum())
+          PY
+      - name: Execute one real-geometry extruded conjugate thermal step
+        timeout-minutes: 12
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from pathlib import Path
+          Path("build").mkdir(exist_ok=True)
+          np.savez_compressed(
+              "build/meshed_fuel_reconstructed.npz",
+              channel_wall_axial_power_w=np.full((1,19,1), 12.0),
+              channel_direct_h2_axial_power_w=np.full((1,19,1), 0.1),
+              branch_mass_flow_kg_s=np.full((1,19),0.003),
+              z_edges_m=np.array([0.,0.12]))
+          PY
+          python -m ntr.nerva.run_core_hex_conforming_fem build/meshed_fuel_reconstructed.npz --mesh-cache build/nerva_conforming_mesh.npz --element-index 0 --inlet-temperature-k 500 --initial-temperature-k 500 --film-w-m2-k 1800 --hydrogen-density-kg-m3 3 --hydrogen-model constant --fuel-density-kg-m3 1850 --fuel-cp-j-kg-k 1200 --fuel-conductivity-w-m-k 25 --coating-density-kg-m3 6400 --coating-cp-j-kg-k 650 --coating-conductivity-w-m-k 19 --dt-s 0.1 --steps 1 --output build/ci_conforming_3d
+          python - <<'PY'
+          import json
+          import numpy as np
+          from pathlib import Path
+          root=Path("build/ci_conforming_3d")
+          report=json.loads((root/"conforming_core_3d_report.json").read_text())
+          step=report["results"][0]["steps"][0]
+          assert step["iterations"]>=2
+          assert np.isfinite(step["first_law_residual"])
+          with np.load(root/"conforming_core_3d_fields.npz") as data:
+              assert data["solid_temperature_k"].shape[0:2]==(1,2)
+              assert data["hydrogen_temperature_k"].shape==(1,1,19)
+          print("Conforming 19-bore 3D thermal one-step executable PASS")
+          print("Global energy residual J:",step["first_law_residual"])
+          PY
+      - name: Upload conforming mesh for developer inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerva-conforming-triangle-mesh
+          path: build/nerva_conforming_mesh.npz

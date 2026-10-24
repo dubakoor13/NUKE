@@ -1035,3 +1035,146 @@ plots. Matplotlib is loaded only when plots are actually requested.
 12. Add local fuel-element/tie-tube power peaking.
 13. Add 2-D/3-D fuel conduction and temperature/density feedback iteration.
 14. Calibrate only against published Rover/NERVA benchmark information.
+
+## Implicit radial–axial fuel/ZrC + hydrogen conjugate core solver
+
+An **opt-in** sparse finite-volume model, `core_conjugate_fv.py`,
+now solves coupled radial/axial fuel and ZrC conduction with implicit
+1-D axial hydrogen enthalpy conservation. It supports transient heat storage,
+variable-property solid laws, fuel/coating contact resistance, and separate
+solid-versus-direct-coolant heating. The independent
+`core_conjugate_fv_diagnostics.py` reconstructs face fluxes and per-cell
+first-law residuals without reusing the solver matrix.
+
+Use `python -m ntr.nerva.run_core_conjugate_fv --help` to run one or all
+channels from `element_channel_power_reconstruction.npz`. See
+[CORE_FV_PHYSICS.md](CORE_FV_PHYSICS.md) for physical equations, analytical
+mesh-refinement checks, numerical evidence, prescribed material-property
+inputs and validity limits. The equal-area annuli approximate Voronoi
+sectors: there is **no** true lateral 3-D hex solid conduction yet. The
+existing NNDC cold transport data do **not** supply qualified hot-core
+local nuclear deposition for this solver.
+
+## Laterally coupled 19-channel fuel thermal physics
+
+The new `core_hex_lateral_fv.py` solves fuel, ZrC coating and H2 temperatures
+for all 19 coolant-channel-associated Voronoi fuel sectors **together**.
+Shared interior Voronoi faces conduct heat laterally; each sector also conducts
+axially and transfers heat through its coating into its own H2 channel.
+
+Unlike the independent equivalent-annulus solver above, lateral conduction
+between the 19 channels is nonzero. The model remains a *reduced-order
+19-sector finite-volume energy network*, **not** a fully resolved 2D/3D fuel
+mesh. The two solvers are opt-in alternatives and have not yet been
+combined into a genuinely radial-resolved 3D cross-channel model.
+
+See [CORE_HEX_LATERAL_PHYSICS.md](CORE_HEX_LATERAL_PHYSICS.md) for equations,
+fidelity limits, CLI example, and synthetic tests. Execute with
+`python -m ntr.nerva.run_core_hex_lateral_fv --help`. It reads the existing
+`element_channel_power_reconstruction.npz` layout and outputs
+`core_lateral_19_channel_fields.npz` plus a JSON heat-budget report.
+It rejects independently audited local/global energy-conservation failures.
+
+## Unified radial–axial–lateral 19-channel solver
+
+`core_hex_radial_lateral_fv.py` now combines **radial coating/fuel finite
+volumes, axial conduction and the 42 shared Voronoi lateral heat-transfer
+interfaces** in a single implicit sparse thermal/hydrogen solve. It is
+a reduced-order annulus/Voronoi hybrid, **not** a true 3-D conforming
+hexagonal fuel mesh.
+
+Run with `python -m ntr.nerva.run_core_hex_radial_lateral_fv --help`;
+read [CORE_UNIFIED_RADIAL_LATERAL_PHYSICS.md](CORE_UNIFIED_RADIAL_LATERAL_PHYSICS.md)
+for exact thermal equations, conservative interfaces and current physics
+limitations. `core_hex_radial_lateral_balance.py` independently audits
+each radial/axial/lateral solid control volume and each hydrogen bin.
+
+The dedicated core FV CI verifies consistency with the previous isolated
+radial solver, transverse heat flux, temperature-dependent solid
+conductivity/heat storage, nonlinear frozen NASA-7 H2 enthalpy, first-law
+conservation, and NUKE reconstruction file integration. Qualified
+high-temperature OpenMC local energy deposition and historical NERVA
+validation remain outstanding.
+
+## Conforming 19-bore hex fuel/coating thermal mesh (Python)
+
+The opt-in `core_hex_conforming_mesh.py` generator builds a conforming
+triangle cross section of the existing 19-coolant-bore hexagonal fuel-element
+demonstrator, with **actual circular coolant voids and separate meshed ZrC
+coating annuli**. The solver in `core_hex_conforming_fem.py` extrudes
+those triangles axially as six-node prism finite elements, solving
+three-dimensional solid heat conduction with a simultaneous 19-channel
+implicit hydrogen enthalpy model. This is a new fidelity tier beyond the
+earlier equivalent-annulus/Voronoi thermal closures.
+
+Use `python -m ntr.nerva.run_core_hex_conforming_fem --help` for its
+NUKE reconstruction adapter. It accepts source power projected from
+channel-heating arrays or an externally supplied explicit
+`[element,axial,triangle]` energy-deposition array. The two source
+origins are kept distinct in the JSON provenance.
+
+Read [CORE_CONFORMING_3D_THERMAL.md](CORE_CONFORMING_3D_THERMAL.md) for
+equations, interface heat fluxes, mesh assumptions, inputs and limits.
+Gmsh is optional for building meshes; cached NPZ triangles work
+without Gmsh. The real 19-bore mesher was smoke-tested and generated
+65,796 triangles / 34,024 nodes at one example mesh resolution.
+
+Important: the original inner-fuel-hex envelope overlaps six coolant
+coating rings; the mesher uses the configured **full outer element hex**
+and does not yet model the external perimeter coating. It is not a
+historically certified NERVA fuel-element mesh. Hot OpenMC nuclear
+deposition, thermophysical calibration, coolant pressure/momentum and
+full physical qualification remain separate work.
+
+## Temperature-tabulated fuel/ZrC and coupled compressible H2 (Python)
+
+The conforming 3-D core fuel-element solver now accepts optional
+`--fuel-material-npz` and `--coating-material-npz` tables containing
+temperature [K], conductivity [W/(m K)] and heat capacity [J/(kg K)].
+The source code uses exact piecewise-linear cp(T) energy integrals and
+fails closed on out-of-range material temperatures; no historical NERVA
+tables are bundled or assumed.
+
+A separate optional `--couple-hydraulics` mode joins the conforming
+3-D fuel/coating FEM to NUKE's existing quasi-steady subsonic H2
+momentum/stagnation-enthalpy solver and iterates film coefficients,
+pressure/Mach fields and kinetic-energy corrections to steady consistency.
+The runner requires `--hydrogen-model nasa7-h2` and
+`--inlet-pressure-pa`. Transient fluid momentum and reacting or
+real-fluid hydrogen are not supported in this option.
+
+See [CORE_TABULATED_THERMAL_HYDRAULICS.md](CORE_TABULATED_THERMAL_HYDRAULICS.md)
+for equations, source semantics, CLI flags and physics/coding limitations.
+The code does **not** claim historical reactor-core qualification,
+physically evaluated hot nuclear energy deposition, or a validated
+nuclear/thermal fixed point.
+
+## Fuel-element perimeter physics and conservative inter-element conduction
+
+The conforming 3D fuel/ZrC/H2 solver supports optional heat exchange at
+the *actual exposed hex perimeter*: a prescribed external thermal
+contact conductance, reservoir temperature, greybody emissivity and
+radiative environment temperature. The boundary flux is integrated
+with a consistent FE surface matrix and is included in the first-law
+heat-loss ledger. Use `--outer-contact-w-m2-k`,
+`--outer-contact-temperature-k`, `--outer-emissivity` and
+`--outer-radiation-temperature-k` with
+`run_core_hex_conforming_fem.py`. No unreported boundary-temperature
+defaults are used for active heat transfer.
+
+For physical exchange **between two modeled fuel elements** rather
+than a prescribed heat bath, the new
+`core_hex_interelement_mortar.py` builds a symmetric conservative
+contact matrix across physically aligned element sides, even if their
+P1 mesh edge divisions are different. The
+`core_hex_two_element_fem.py` solver combines that contact with two
+independent conforming fuel/ZrC volumetric conduction systems and all
+38 H2 axial energy streams in one monolithic nonlinear sparse system.
+Equal-and-opposite interface heat appears in the two separate
+first-law ledgers and cancels in the combined energy balance.
+
+See [CORE_INTERELEMENT_THERMAL_PHYSICS.md](CORE_INTERELEMENT_THERMAL_PHYSICS.md)
+for the contact/radiation weak forms, exact numerical interface
+quadrature, input domains and remaining limitations. **This is a
+two-element thermal solver**, not a complete multi-element nuclear
+reactor array, and it has not been historically validated.
