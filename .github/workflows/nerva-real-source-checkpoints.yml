@@ -51,9 +51,13 @@ jobs:
           python -m ntr.nerva.real_source_checkpoint_drift \
             build/real_source_checkpoints/native \
             --output build/real_source_checkpoints/native_source_audit.json
+      - name: Repackage verified downloaded HDF5 files for destructive tamper tests
+        run: |
+          (cd build/real_source_checkpoints/native && zip -qr ../repacked-source.zip .)
+          test -s build/real_source_checkpoints/repacked-source.zip
       - name: Real-source HDF5 and tampering regression tests
         env:
-          NUKE_REAL_CORE_EVIDENCE_PATH: build/real_source_checkpoints/native
+          NUKE_REAL_CORE_EVIDENCE_PATH: build/real_source_checkpoints/repacked-source.zip
         run: python -m ntr.nerva.validate_real_source_checkpoint_drift
       - name: Upload compact native source observation report only
         if: always()
