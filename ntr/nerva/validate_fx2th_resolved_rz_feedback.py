@@ -178,5 +178,18 @@ class ResolvedFeedbackTests(unittest.TestCase):
         np.testing.assert_array_equal(thermal.fuel_temperature_k,solid)
 
 
+    def test_one_hot_ring_beyond_nuclear_table_is_not_hidden_by_average(self):
+        table,g,neutrons,thermal=setup()
+        hottest=np.asarray(thermal.fuel_temperature_k).copy()
+        hottest[0,0,0]=1200.
+        altered=replace(thermal,fuel_temperature_k=hottest)
+        # The volume-weighted macro-cell mean is still within the
+        # tabulated 300..1150 K domain; the actual constituent isn't.
+        averaged=effective_solid_temperature_for_xs(g,altered)
+        self.assertLess(averaged[0,0],table.temperature_knots_k[-1])
+        with self.assertRaisesRegex(ValueError,"individual fuel ring"):
+            advance_resolved_rz_feedback(
+                table,g,neutrons,altered,.01,deposition(g))
+
 if __name__=="__main__":
     unittest.main(verbosity=2)
