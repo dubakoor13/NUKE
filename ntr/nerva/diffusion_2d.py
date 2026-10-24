@@ -131,19 +131,25 @@ def solve_cylinder_eigenvalue(
                 # no flux so the symmetry condition needs no ghost node.
                 if i > 0:
                     a_matrix[row, index(group, i - 1, j)] -= radial_scale * inner_radius
-                # Outer radial coupling. On the last cell the outer face is the
-                # zero-flux boundary, so the leakage appears in the DIAGONAL and
-                # there is no neighbour. Dropping this term while keeping
-                # diag = 2D/dr^2 made the outer boundary reflective, and the
-                # solve then converged to a different PDE - k drifted from 1.094
-                # to 1.079 as the mesh was refined instead of towards 1.094.
+                # Last cell: outer face Dirichlet contributes the
+                # half-cell face conductance below, not a ghost neighbour.
                 if i + 1 < nr:
                     a_matrix[row, index(group, i + 1, j)] -= radial_scale * outer_radius_face
+                else:
+                    # Dirichlet at the outer face, at dr/2 from cell centre:
+                    # face conductance is twice the interior-centre value.
+                    a_matrix[row, row] += radial_scale * outer_radius_face
                 # Axial coupling.
                 if j + 1 < nz:
                     a_matrix[row, index(group, i, j + 1)] -= diffusion / dz ** 2
                 if j > 0:
                     a_matrix[row, index(group, i, j - 1)] -= diffusion / dz ** 2
+                if j == 0:
+                    a_matrix[row, row] += diffusion / dz ** 2
+                if j == nz - 1:
+                    a_matrix[row, row] += diffusion / dz ** 2
+                # A zero-flux Dirichlet boundary lies dz/2 from the
+                # first or last cell centre, not a full cell width.
                 # Inscatter and fission source.
                 for other in range(groups):
                     if other != group:
@@ -179,8 +185,8 @@ def solve_cylinder_eigenvalue(
             converged = True
             break
 
-    # Collapse to a single group shape for reporting: sum over groups weighted
-    # by fission production, which is what a power shape means.
+    # Collapse to fission density for reporting, then integrate using
+    # cylindrical annular volume factors for physical power shares.
     shape = np.zeros(nodes)
     for group in range(groups):
         weight = cross_sections.nu_sigma_fission_cm[group]
@@ -189,10 +195,18 @@ def solve_cylinder_eigenvalue(
         raise Diffusion2DError("no fission-producing group has a positive flux")
     shape = shape.reshape(nr, nz)
 
-    radial = shape.sum(axis=1)
-    axial = shape.sum(axis=0)
+    # Annular volume is proportional to r*dr*dz. Without this
+    # factor the radial power bands are NOT integrated powers.
+    r_weight = (np.arange(nr, dtype=float) + 0.5)
+    power_by_cell = shape * r_weight[:, None]
+    radial = power_by_cell.sum(axis=1)
+    axial = power_by_cell.sum(axis=0)
     radial_fractions = _band_fractions(radial, radial_bands, "radial")
     axial_fractions = _band_fractions(axial, axial_bands, "axial")
+    # Radial peaking is volumetric power-density peak / volume-mean.
+    radial_density = shape.mean(axis=1)
+    radial_peak = float(radial_density.max() /
+                        np.average(radial_density, weights=r_weight))
 
     def peaking(values: np.ndarray) -> float:
         average = float(values.mean())
@@ -209,7 +223,7 @@ def solve_cylinder_eigenvalue(
         extrapolation_cm=extrapolation_cm,
         radial_power_fractions=radial_fractions,
         axial_power_fractions=axial_fractions,
-        radial_peaking=peaking(radial),
+        radial_peaking=radial_peak,
         axial_peaking=peaking(axial),
         converged=converged,
         iterations=iteration,
