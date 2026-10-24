@@ -1,0 +1,42 @@
+name: NERVA bundle axisymmetric diffusion independent verification
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/diffusion.py'
+      - 'ntr/nerva/diffusion_2d.py'
+      - 'ntr/nerva/validate_diffusion.py'
+      - 'ntr/nerva/validate_diffusion_2d.py'
+      - 'ntr/nerva/validate_bundle_rz_geometry_independent.py'
+      - '.github/workflows/nerva-bundle-diffusion.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/diffusion.py'
+      - 'ntr/nerva/diffusion_2d.py'
+      - 'ntr/nerva/validate_diffusion.py'
+      - 'ntr/nerva/validate_diffusion_2d.py'
+      - 'ntr/nerva/validate_bundle_rz_geometry_independent.py'
+      - '.github/workflows/nerva-bundle-diffusion.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  numerical-diffusion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install numerical prerequisites
+        run: python -m pip install 'numpy>=1.26' 'scipy>=1.11'
+      - name: Baseline one-dimensional diffusion verification
+        run: python -m ntr.nerva.validate_diffusion
+      - name: Axisymmetric multigroup source verification
+        run: python -m ntr.nerva.validate_diffusion_2d
+      - name: Independent cylindrical volume and boundary convergence checks
+        run: python -m ntr.nerva.validate_bundle_rz_geometry_independent
