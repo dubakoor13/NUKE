@@ -67,3 +67,19 @@ To reproduce manually, download the original real transport artifact before expi
 Use an archive with the original relative member paths, not a Python-generated mock. The original binary ZIP digest applies to the original ZIP bytes; a repacked ZIP naturally has a different outer SHA, even if its internal statepoint bytes and saved summary SHA remain identical.
 
 **P0 acceptance is NOT met by this archive alone:** genuinely executed cold transport is established; actual source stationarity, qualified hot materials, local nuclear deposition and historical NERVA fidelity remain missing. No reactor parameters were changed in this audit.
+
+
+## 6. Stage 21 independent genuine HDF5 audit — verified CI
+
+On Stage 21 source commit b1299171d4a170137384deef426758d17aba3906, the separate actual-evidence workflow
+https://github.com/dubakoor13/NUKE/actions/runs/40129283923 **COMPLETED SUCCESS**.
+
+- It downloaded the actual run 39933618638 through the GitHub Actions artifact API, not a mock OpenMC library.
+- 8/8 real-artifact integrity and falsification tests passed in 2.836 s. Baseline test inspects all four final native statepoint HDF5 files and their exact SHA and k values.
+- Deliberate changes to HDF5 source bytes, duplicate seed metadata, synthetic relabeling, wrong criticality/XS manifest and false hot-data qualification were rejected as expected.
+- It independently recomputed the weighted cold k as 0.01169802857789661.
+- Source stationarity=False; hot evaluated data qualification=False; physically usable local heating=False; historical NERVA validation=False.
+- Uploaded generated lightweight audit JSON artifact under name nerva-executed-cold-core-audit-summary (artifact ID 12574985915, expires 2026-11-07) for reproducibility. The ORIGINAL larger four-seed HDF5 ZIP (artifact 12492499186) expires 2026-11-13.
+- This is **physical source evidence verification**, NOT a new OpenMC particle transport execution or a completed hot reactor simulation.
+
+Maintain EVID-05 (long-lived preservation of the real archive), EVID-06 (actual source stationarity), EVID-07 (nonzero qualified local neutron/photon heating), EVID-08 (hot evaluated materials) as OPEN.
