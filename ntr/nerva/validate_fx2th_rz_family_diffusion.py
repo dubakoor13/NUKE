@@ -220,7 +220,7 @@ class RZNumerics(unittest.TestCase):
             replace(g,radial_edges_m=np.linspace(.1,1,4))
         with self.assertRaisesRegex(ValueError,"scattering"):
             replace(g,scattering_inv_m=np.ones_like(g.scattering_inv_m))
-        with self.assertRaisesRegex(ValueError,"boundary"):
+        with self.assertRaisesRegex(ValueError,"boundar"):
             replace(g,outer_boundary="vacuum")
         with self.assertRaises(ValueError):
             rz_to_spatial_families(g,source_id="synthetic",group_speeds_m_s=[2.],
