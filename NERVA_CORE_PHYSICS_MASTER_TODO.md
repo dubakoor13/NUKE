@@ -172,7 +172,7 @@ At Stage 20 commit 3d9f4f29612a756571b655bec9051ea368ccc150:
 - Stage 19 compatibility workflow run [40107100232](https://github.com/dubakoor13/NUKE/actions/runs/40107100232): **success**; previous Stage 18 + Stage 19 core/thermal tests.
 - The broader NERVA model-check run was still in progress at the last observed check. **Do not report that as passed** without checking its final run conclusion.
 - These tests use synthetic nuclear coefficient tables, synthetic geometry/material properties and explicitly provided synthetic deposited heating. The tests prove exercised **discrete equations, units/guards and conservation**, not a physical NERVA reactor state or measured core power.
-- The reviewed Stage 20 repository tree contained **no checked-in file matching a NERVA OpenMC statepoint filename** such as statepoint.h5 or statepoint.N.h5. Upstream OpenMC regression HDF5 files under tests/ are not NERVA statepoint evidence. Real transport artifacts might be stored outside GitHub (runner artifacts, local machines, connected stores): inventory them before saying none have ever been run.
+- The reviewed Stage 20 repository tree contained **no checked-in file matching a NERVA OpenMC statepoint filename** such as statepoint.h5 or statepoint.N.h5. HOWEVER, on 2026-10-25 Stage 21 identified, downloaded and directly inspected real archived OpenMC four-seed transport: successful [run 39933618638](https://github.com/dubakoor13/NUKE/actions/runs/39933618638), artifact 12492499186 (expires 2026-11-13), actual 20 HDF5 statepoint checkpoints and four final HDF5 manifests/hashes. **Cold transport execution is established** but source convergence is NOT, hot XS qualification is NOT, and local neutron heat deposition is zero in all seeds. See [REAL_OPENMC_COLD_CORE_EVIDENCE_20261023.md](ntr/nerva/REAL_OPENMC_COLD_CORE_EVIDENCE_20261023.md). Upstream OpenMC regression HDF5 under tests/ is not NERVA statepoint evidence.
 
 ### 3.4 Immediate merge/integration TODO
 
@@ -591,3 +591,37 @@ Append a dated record to this document or a linked work log after each implement
 4. Only then promote Stage 17–20 from *synthetic numerics* toward *quantitatively physical hot-core prediction*, coupling real temperature/density/material and pressure/enthalpy feedback while preserving mass/neutron/energy balances.
 
 **Success means independent physical evidence for a declared NERVA core—not merely more code, more green synthetic tests, or a thrust/Isp number.**
+
+
+---
+
+## 15. Stage 21 (2026-10-25) — REAL OpenMC evidence audit and updated P0 priorities
+
+**Evidence status correction:** the earlier uncertainty about real statepoints is now resolved. A successful genuine [OpenMC four-seed run 39933618638](https://github.com/dubakoor13/NUKE/actions/runs/39933618638), 2026-10-23, has been independently downloaded and inspected from the original retained archive, including **four final HDF5 statepoint bytes**, SHA-256, native k and original nuclear-data/criticality/heating audits. The current working source remains the Stage 21 branch, not main.
+
+**Transport facts found:** cold three-ring NERVA-derived surrogate, 3000 starting neutrons/generation, 120 generations with 30 inactive, four distinct RNG seeds, 20 real saved source bank checkpoints. Observed formal weighted k mean 0.01169802857789661; the existing genuine physical criticality audit says FAR_BELOW_CRITICAL. The original source stationarity audit is NOT established (final cross-seed spatial TV approx 0.686 and strong source cloning). Evaluated neutron data were available for a ~293.606 K cold case, only one of four root-reachable materials explicitly temperatures, hot reactor data NOT qualified. Genuine local nuclear deposition is ZERO in all real seeds (heating-local = 0 eV/source), so the existing original heat audit blocks normalization into physical reactor watts. These results are actual physical evidence about a cold surrogate, but NOT a historical NERVA critical/hot reactor validation.
+
+**Exact source:** ntr/nerva/REAL_OPENMC_COLD_CORE_EVIDENCE_20261023.md. **Original artifact:** 12492499186, https://github.com/dubakoor13/NUKE/actions/runs/39933618638/artifacts/12492499186, expires **2026-11-13**. **Original ZIP SHA-256:** cf05ab907bee76b198d3dc4736a84c6d560f3a8c2d753b78b5605c4826e53274. **Real summary SHA-256:** 830a006751aa3a10bd4b5637a6e0a3a481fba20cc1e26a065791a6a72f6bfa21. No actual nuclear parameters were changed.
+
+### Done in this stage
+
+- [x] **EVID-01** Locate and download a real successful four-seed OpenMC C++ NERVA-derived core run, rather than relying on a generic pass label.
+- [x] **EVID-02** Open native HDF5 statepoints and independently verify per-seed checksum, RNG ID, run mode, version, source bank, active/inactive generations and k values.
+- [x] **EVID-03** Read original executed-material, evaluated temperature, criticality and heating-local qualification audits and separate valid and blocked physics claims.
+- [x] **EVID-04** Implement a reusable fail-closed original-artifact reader plus tests requiring REAL saved OpenMC data; create committed, source-traceable evidence report.
+- [ ] **EVID-05 [P0]** Preserve the original real transport HDF5 archive long-term before its GitHub artifact expires on 2026-11-13. Store content SHA manifest and stable downloadable location, not merely a short-lived Actions link.
+- [ ] **EVID-06 [P0]** Obtain a *source-stationarity-qualified* genuine neutron transport ensemble for a locked physical configuration. This stage does not declare existing cold source banks converged.
+- [ ] **EVID-07 [P0]** Obtain validated nonzero neutron/photon local energy deposition with correct nuclear data; no use of ordinary heating as a silent replacement for zero heating-local.
+- [ ] **EVID-08 [P0]** Obtain independently qualified multi-temperature isotope/material/thermal-scattering data, correct explicit material temperatures and density for actual hot reactor prediction.
+- [ ] **EVID-09 [P0]** Select a NASA historical test article and document its actual as-built composition/geometry, measurement data and validation uncertainty. The observed cold surrogate does not qualify.
+
+### Interpretation of old task IDs after Stage 21
+
+- TRAN-01: **PARTIAL:** real OpenMC neutron transport did execute on the cold surrogate; the selected historical reference core and source-converged physical model requirements are still pending.
+- TRAN-02: **INCOMPLETE:** four RNG seeds alone do not pass the independent source-shape and genealogical stationarity criterion.
+- TRAN-03/04: **PARTIAL:** native k, neutron conservation and real reaction data exist, but formal uncertainty and source-stationarity requirements remain.
+- DATA-01/02: **PARTIAL FOR COLD:** evaluated cold HDF5 inputs and hashes documented; *hot* material coverage and thermal-scattering physics unqualified.
+- HEAT-01/02/03: **BLOCKED BY EXECUTED PHYSICAL DATA:** native heating-local values are exactly zero; source-rate/power normalization of a local heat field is forbidden.
+- REF-01/03: **INCOMPLETE:** the tested demonstrator is not a source-locked XE/NRX historical test article.
+
+This is the primary next work frontier. Do not report the cold demonstrator as a self-sustaining operating core or interpret 56/56 Stage 20 synthetic tests as a hot NERVA validation.
