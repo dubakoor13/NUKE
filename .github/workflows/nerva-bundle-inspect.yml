@@ -46,7 +46,7 @@ jobs:
                   for i in allfiles:
                       relative=i.filename[len(prefix):]
                       pure=pathlib.PurePosixPath(relative)
-                      if not relative or pure.is_absolute() or '..' in pure.parts or (i.external_attr>>16)&stat.S_IFMT(stat.S_IFLNK):
+                      if not relative or pure.is_absolute() or '..' in pure.parts or stat.S_ISLNK(i.external_attr>>16):
                           raise SystemExit('Unsafe ZIP entry '+relative)
                       # Only .py, .md and .json for read-only staged local test
                       if pure.suffix.lower() not in ('.py','.json','.md'):
