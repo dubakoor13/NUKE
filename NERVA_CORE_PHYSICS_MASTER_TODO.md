@@ -1,6 +1,6 @@
 # NUKE / NERVA — MASTER CORE PHYSICS, NUMERICS, EVIDENCE AND VALIDATION TODO
 
-**As-of:** 2026-10-25 (Stage 24 authentic neutron and heating-score audit)  
+**As-of:** 2026-10-25 (Stage 25 native executed material/neutron-data audit)  
 **Repository:** https://github.com/dubakoor13/NUKE  
 **Working snapshot:** feature/nerva-real-transport-evidence-gates-stage21-20261025 (Stage 21, stacked on PR #132)  
 **Relationship to main:** IMPORTANT — much of the Stage 6–20 FX2-TH chain is in OPEN, STACKED PULL REQUESTS, NOT MERGED INTO main.  
@@ -233,6 +233,21 @@ A native read-only HDF5 audit compares the **same cold original four executed Op
 - [ ] **EVIDENCE-17 [P0]** Obtain actual **nonzero physically qualified local neutron/photon heating** from independently stationary, matched hot transport; validate material disjointness, leakage and source-rate/power normalization before coupling Stage 20.
 
 **Neutron-economy accounting pass is not source-stationarity, criticality, hot-material or historical NERVA qualification.** Remaining source-cloning and data/thermal/geometry blockers are unchanged.
+
+### 3.3E Stage 25 — ORIGINAL executed cell-material/nuclide/Xs scope (2026-10-25)
+
+[Stage 25 audit](ntr/nerva/NERVA_STAGE25_NATIVE_MATERIAL_XS_AUDIT.md) independently opens the **original genuine OpenMC `summary.h5` for each of four seeds**, checks native material IDs/names/nuclides/atom-density totals and 60 physically material-filled cells against the actual exported `materials.xml` and archived isotope-data temperature/digest manifest. This is not just another summary JSON flag.
+
+- Physically **executed**: four materials **19 fuel (U,Zr)C-graphite surrogate, 20 H₂ coolant, 21 ZrC coating, 22 Be reflector**; **60 material-filled cells**, **13 reached nuclides**. Original input declared **9** materials and nuclear XS manifest **29** isotope data files, but **five declared materials 23–27 were NOT reached** by this executed geometry. The unplaced graphite-tie, ZrH, Inconel, B4C and Al definitions cannot be counted as experimentally exercised active-core physics.
+- Three of the four actually reached materials (fuel, ZrC coating, Be reflector) have **NO explicitly exported material temperature**; coolant alone explicitly says ~293.605913 K.
+- Evaluated isotope temperature manifest has **ONE ~293.605913 K neutron-data knot**. Bound-solid `S(alpha,beta)` treatment is NOT qualified, and the actual original run used a free-gas surrogate.
+- The ZIP contains SHA/hash **metadata** for 29 isotope HDF5 files, but NOT the actual original isotope binary files. Their physical energy-dependent contents and reported SHA cannot be re-checked independently from the archived ZIP. The exact evaluated data release has NOT been independently verified.
+- [x] **EVIDENCE-18 [P0]** Independently reconcile four authentic `summary.h5` material/isotope/temperature/cell records to original XML and executed physical-material inventory.
+- [x] **EVIDENCE-19 [P0]** Establish actually reached vs only declared material/isotope inventories and real single-temperature bounds with explicit unresolved nuclear-data SHA/source evidence.
+- [ ] **EVIDENCE-20 [P0]** Preserve and independently verify actual indexed isotope HDF5 binary bytes, `cross_sections.xml`, release identity and evaluated temperature/thermal-scattering coverage from a real qualified data source—not just the SHA claim in the original runner's JSON.
+- [ ] **EVIDENCE-21 [P0]** Qualify **actual** correctly placed NERVA graphite/ZrH/absorber/tie/reflection geometry, material temperature and bound scattering/phase models for the chosen historical test article. XML declaration alone is not executed transport.
+
+This is improved provenance and a concrete diagnosis of the source material-physics gap; original source nonstationarity, absent neutron/photon local heating, and lack of NASA historical validation are STILL blocking.
 
 ### 3.4 Immediate merge/integration TODO
 
@@ -667,6 +682,13 @@ Append a dated record to this document or a linked work log after each implement
 - [NERVA_STAGE24_NATIVE_NEUTRON_HEATING_AUDIT.md](ntr/nerva/NERVA_STAGE24_NATIVE_NEUTRON_HEATING_AUDIT.md) documents actual analog absorption/leakage/scattering and independent global/partitioned tracklength scores from the original four OpenMC HDF5 files, with machine-verifiable first and second moments.
 - The original cold transport neutron population identity closes in each seed, but `heating-local` remains exactly ZERO, while `heating` and `kappa-fission` are nonzero. The latter are **not** accepted as a substitute for physical neutron+photon material-specific thermal power.
 - The key physics blockers remain: independent source stationarity, real evaluated hot XS, real deposited heat/projection/power source and NASA historical measurements.
+
+### Latest iteration: Stage 25 genuine OpenMC material and isotope temperature domain (2026-10-25)
+
+- Read actual four original `summary.h5` binaries, material cells and isotopic atom-density records. Verified four physically used materials, 60 cells per run and 13 actually reached isotopes; an additional five declared material models were not exercised in original transport.
+- Verified only a single ~293.6 K evaluated isotope temperature and only one explicitly temperature-tagged physically reached material. Solid bound-scattering physics remains free-gas surrogate.
+- Confirmed actual evaluated isotope neutron HDF5 *binary files themselves* were not archived; only SHA strings and file sizes. DATA-10/EVIDENCE-20 therefore remain **unverified binary provenance and hot nuclear-data coverage**; cannot be repaired by copying a checksum.
+- No reactor geometry, neutron model, control absorbers, cross section values or claimed operating conditions changed.
 
 ## 14. Most important next action
 
