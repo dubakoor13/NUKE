@@ -66,3 +66,7 @@ The execution was a cold strongly subcritical/source-cloned **NERVA-derived surr
 - **COUPLE-01/03:** only connect truly mapped geometry/material/temperature/data states to the Stage 17–20 multigroup and thermal coupling. Existing synthetic coefficient tables remain legitimate numerical benchmarks, not measured reactor hot-data inputs.
 
 **Stage 25 outcome: verified *what material and isotope inventory was actually transported*, and why its nuclear-data coverage is insufficient. NOT physically qualified hot NERVA core or new nuclear transport simulation.**
+
+## Verified Stage 25 CI (2026-10-25)
+
+The dedicated original-data [GitHub Actions run 40167366262](https://github.com/dubakoor13/NUKE/actions/runs/40167366262) **completed SUCCESS, 10/10 tests passed, no skips** on the original four-seed 2026-10-23 OpenMC binary source archive. CI independently reopened genuine per-seed `summary.h5` and `materials.xml` and verified 4 physically occupied materials, 60 material-filled cells per seed, 13 actual material isotopes and exactly one evaluated neutron temperature ~293.605913 K. The tests included deliberately inconsistent source XML, native HDF5 material name, forged report temperature, forged evaluated isotope temperature grid, missing-original-archive and physical nonqualification assertions. This passes identity/cross-representation verification **only**; it does not qualify actual evaluated isotope HDF5 bytes, hot reactor materials, full thermal scattering, independent source convergence, local nuclear power, or historical NERVA criticality.
