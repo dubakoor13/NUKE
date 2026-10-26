@@ -1,0 +1,80 @@
+name: NUKE Stage31 four real independently seeded coupled OpenMC heating covariances
+
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_coupled_photon_heating_audit.py'
+      - 'ntr/nerva/real_coupled_photon_heating_ensemble.py'
+      - 'ntr/nerva/validate_stage31_coupled_heating_ensemble.py'
+      - '.github/workflows/nerva-stage31-coupled-four-seed.yml'
+  push:
+    paths:
+      - 'ntr/nerva/real_coupled_photon_heating_audit.py'
+      - 'ntr/nerva/real_coupled_photon_heating_ensemble.py'
+      - 'ntr/nerva/validate_stage31_coupled_heating_ensemble.py'
+      - '.github/workflows/nerva-stage31-coupled-four-seed.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  original-four-independent-openmc-coupled-heating-sources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pin actual original OpenMC C++ neutron/photon executable and evaluated data
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage31
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' > build/stage31/openmc_image_repo_digest.json
+      - name: Execute four independent original coupled neutron/photon OpenMC C++ simulations
+        run: |
+          docker run --rm --cpus=2 --memory=6g -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              test -f "$OPENMC_CROSS_SECTIONS"
+              openmc --version
+              python -m unittest ntr.nerva.validate_stage31_coupled_heating_ensemble.PairedSeedStatisticsMathTests -v
+              for seed in 13007 23011 33013 43019; do
+                echo "=== ACTUAL OpenMC neutron/photon/electron/positron seed $seed ==="
+                python -m ntr.nerva.run_openmc_transport \
+                  --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                  --assembly core --rings 3 \
+                  --particles 3000 --batches 65 --inactive 20 --seed "$seed" \
+                  --hydrogen-temperature-k 293.6059129982851 \
+                  --photon-transport \
+                  --heating-mesh-dimensions 12 12 10 \
+                  --diagnostic-energy-groups 24 --axial-mesh-bins 24 \
+                  --output "/repo/build/stage31/seed_$seed"
+                test -s "/repo/build/stage31/seed_$seed/statepoint.65.h5"
+              done
+              python -m ntr.nerva.real_coupled_photon_heating_ensemble \
+                --root /repo/build/stage31 \
+                --output /repo/build/stage31/actual_four_seed_coupled_heating_covariance.json
+              NUKE_STAGE31_REAL_COUPLED_SOURCE_ROOT=/repo/build/stage31 \
+                python -m unittest ntr.nerva.validate_stage31_coupled_heating_ensemble.ActualOriginalCoupledOpenMCFourSeedTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage31/actual_four_seed_coupled_heating_covariance.json\")); assert r[\"real_native_coupled_hdf5_count\"]==4; assert r[\"all_electron_positron_neutron_photon_energy_deposition_partitions_conserved\"]; assert not r[\"statistically_calibrated_fission_source_convergence\"]; assert not r[\"real_neutron_photon_heating_hot_NERVA_physically_qualified\"]; print(\"ORIGINAL four-seed real coupled heating and paired covariance accepted; source/hot physics NOT QUALIFIED\")"
+            '
+      - name: Retain exact new real executed neutron/photon HDF5, transport inputs, covariance and source hashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage31-original-four-seed-coupled-heating-hdf5
+          path: |
+            build/stage31/*.json
+            build/stage31/seed_*/*.json
+            build/stage31/seed_*/*.xml
+            build/stage31/seed_*/statepoint.65.h5
+            build/stage31/seed_*/summary.h5
+          retention-days: 21
+          if-no-files-found: warn
