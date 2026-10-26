@@ -38,3 +38,16 @@ Relevant primary sources:
 **Even a green Stage 29 CI result cannot certify a hot NERVA reactor:** original four-seed 2026-10-23 core transport was cold, neutron-only, highly subcritical, with unqualified fission-source stationarity, zero usable `heating-local`, and missing isotope HDF5 bytes from the *saved archival artifact*. To proceed with physical neutron+photon power, independently qualify appropriate hot evaluated neutron/photon data, bound scattering and actual source model; perform genuine coupled transport, validate deposited heating material partitions and source-rate normalization, and compare with a consistent NASA reference configuration.
 
 **Status:** implementation complete; CI must be verified before marking numerical acceptance.
+
+
+## Verified actual-data CI (2026-10-26)
+
+**[Dedicated Stage 29 workflow 40312173863](https://github.com/dubakoor13/NUKE/actions/runs/40312173863) COMPLETED SUCCESS**, both jobs:
+
+- `photon-index-numerics`: **11/11 adversarial parser tests PASSED**; previous `validate_nuclear_data` also PASSED.
+- `actual-evaluated-photon-binaries`: on the real `openmc/openmc:v0.15.3` image and the actual evaluated NNDC HDF5 index, the high-level Python parser opened and verified elemental photon nuclear interaction files for **10/10 required declared-model elements: Al, B, Be, C, Cr, Fe, H, Ni, U, Zr**.
+- The evaluated-data report recorded `missing_photon_elements=[]`, `photon_binary_audit_errors=[]`, `photon_transport_requested=true` and **`ready=true` for this model's current *cold data inventory preflight***.
+- The separate verifier `verify_stage29_photon_run` confirmed report arithmetic and retained `photon_evaluated_release_verified=false`, `hot_NERVA_neutron_photon_heating_physically_qualified=false`. The latter flag must remain false: **no real coupled neutron/photon OpenMC simulation was executed in Stage 29**.
+- The physical model remains a conceptual cold surrogate with unqualified historical configuration, temperature-dependent hot neutron scattering, source stationarity and neutron/photon deposited-power observables. **Photon elemental HDF5 file availability is now established in the official image, and does not close those gaps.**
+
+This progress is a concrete evaluated-library prerequisite for the subsequent genuine coupled transport run, not an assertion of useful thermal energy deposition.
