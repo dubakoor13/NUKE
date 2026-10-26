@@ -15,7 +15,7 @@ class PairedCoupledEnergyScoreTests(unittest.TestCase):
                                       all_scores_share_estimator=True)
         self.assertTrue(r["same_domain_partition_means_close"])
         self.assertTrue(r["photon_energy_deposition_observed"])
-        self.assertAlmostEqual(r["photon_fraction_of_recorded_heating"],8./14.)
+        self.assertAlmostEqual(r["direct_photon_event_fraction_of_recorded_heating"],8./14.)
 
     def test_charged_secondaries_complete_physical_heating_balance(self):
         r=reconcile_energy_partitions(
