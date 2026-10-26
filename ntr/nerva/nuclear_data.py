@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import xml.etree.ElementTree as ET
 
 from .config import NervaConfig
@@ -36,6 +37,12 @@ class NuclearDataReport:
     entries: tuple[LibraryEntry, ...]
     photon_transport_requested: bool
     photon_library_present: bool
+    required_photon_elements: tuple[str, ...]
+    missing_photon_elements: tuple[str, ...]
+    verified_photon_elements: tuple[str, ...]
+    photon_binary_audit_errors: tuple[str, ...]
+    photon_binary_sha256: tuple[tuple[str, str], ...]
+    photon_evaluated_release_verified: bool
     referenced_files_missing: tuple[str, ...]
     ready: bool
 
@@ -140,16 +147,91 @@ def required_neutron_nuclides(
     return tuple(sorted(nuclides))
 
 
+
+def required_photon_elements(config: NervaConfig | None = None) -> tuple[str, ...]:
+    """Photon HDF5 is indexed by ELEMENT, not by neutron isotope.
+
+    Conservative requested-material inventory, just as the existing neutron
+    preflight uses every declared material. This is not proof of root placement.
+    """
+    elements = set()
+    for isotope in required_neutron_nuclides(config):
+        match = re.fullmatch(r"([A-Z][a-z]?)[0-9]+(?:_m[0-9]+)?", isotope)
+        if match is None:
+            raise ValueError("unrecognized neutron isotope for photon mapping: " + isotope)
+        elements.add(match.group(1))
+    return tuple(sorted(elements))
+
+
+def _verified_photon_binaries(
+    entries: tuple[LibraryEntry, ...], required: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, str], ...]]:
+    """Read actual photon HDF5 through OpenMC. XML presence is insufficient.
+
+    This validates basic data identity and required photo-atomic reactions,
+    NOT the evaluated data source/release or consistency with hot neutronics.
+    """
+    by_symbol: dict[str, list[LibraryEntry]] = {}
+    for entry in entries:
+        if entry.data_type != "photon":
+            continue
+        for name in entry.materials:
+            by_symbol.setdefault(name, []).append(entry)
+    checked: list[str] = []
+    problems: list[str] = []
+    hashes: list[tuple[str, str]] = []
+    try:
+        from openmc.data import IncidentPhoton, ATOMIC_NUMBER
+    except (ImportError, AttributeError) as exc:
+        return (), ("OpenMC photon HDF5 reader unavailable: "+str(exc),), ()
+    for symbol in required:
+        rows = by_symbol.get(symbol, [])
+        if not rows:
+            continue  # missing indexed element is separately reported.
+        if len(rows) != 1:
+            problems.append(symbol + ": ambiguous duplicate photon index")
+            continue
+        record = rows[0]
+        if len(record.materials) != 1:
+            problems.append(symbol + ": multi-element photon HDF5 entry cannot be uniquely verified")
+            continue
+        if not record.file_exists:
+            problems.append(symbol + ": referenced evaluated photon HDF5 missing")
+            continue
+        try:
+            path = Path(record.resolved_path)
+            photon = IncidentPhoton.from_hdf5(str(path))
+            if getattr(photon, "name", None) != symbol:
+                raise ValueError("photon HDF5 element identity mismatch")
+            if getattr(photon, "atomic_number", None) != ATOMIC_NUMBER[symbol]:
+                raise ValueError("photon HDF5 atomic number mismatch")
+            reactions = photon.reactions
+            if not all(mt in reactions for mt in (502, 504, 522)):
+                raise ValueError("required coherent, incoherent or photoelectric photon reactions absent")
+            if getattr(photon, "atomic_relaxation", None) is None:
+                raise ValueError("photon atomic relaxation information absent")
+            digest = _sha256(path)
+        except (OSError, ValueError, KeyError, TypeError, AssertionError, IndexError, RuntimeError) as exc:
+            problems.append(symbol + ": rejected actual photon HDF5: " + str(exc))
+            continue
+        checked.append(symbol)
+        hashes.append((symbol, digest))
+    return tuple(sorted(checked)), tuple(sorted(problems)), tuple(sorted(hashes))
+
+
 def inspect_nuclear_data(
     cross_sections: str | Path | None = None,
     config: NervaConfig | None = None,
     photon_transport: bool = False,
     require_referenced_files: bool = True,
 ) -> NuclearDataReport:
-    """Inspect the OpenMC library against the current NERVA materials.
+    """Inspect the OpenMC library against the declared NERVA materials.
 
-    This is a compatibility/provenance check only. It does not alter model
-    composition or search for a critical configuration.
+    Coupled transport requires every required photoatomic ELEMENT in the
+    index and genuinely readable HDF5 content with matching identity and
+    essential interactions, not just one arbitrary 'photon' entry. This
+    compatibility check is NOT hot-core data-release qualification, reactor
+    design, or criticality tuning.
     """
     path = resolve_cross_sections(cross_sections)
     entries = _library_entries(path)
@@ -176,11 +258,22 @@ def inspect_nuclear_data(
     )
 
     photon_present = bool(photon_materials)
+    needed_photons = required_photon_elements(config) if photon_transport else ()
+    missing_photons = tuple(sorted(set(needed_photons) - photon_materials))
+    # Even when a caller requests an XML-only dry run, that is insufficient
+    # for authorizing a coupled transport. Require real photon HDF5 bytes.
+    if photon_transport:
+        checked_photons, photon_errors, photon_hashes = _verified_photon_binaries(
+            entries, needed_photons)
+    else:
+        checked_photons, photon_errors, photon_hashes = (), (), ()
     ready = (
         not missing
         and not missing_thermal
         and (not require_referenced_files or not missing_files)
-        and (not photon_transport or photon_present)
+        and (not photon_transport or (
+            photon_present and not missing_photons and not photon_errors
+            and tuple(sorted(checked_photons)) == needed_photons))
     )
 
     return NuclearDataReport(
@@ -196,6 +289,12 @@ def inspect_nuclear_data(
         entries=entries,
         photon_transport_requested=bool(photon_transport),
         photon_library_present=photon_present,
+        required_photon_elements=needed_photons,
+        missing_photon_elements=missing_photons,
+        verified_photon_elements=checked_photons,
+        photon_binary_audit_errors=photon_errors,
+        photon_binary_sha256=photon_hashes,
+        photon_evaluated_release_verified=False,
         referenced_files_missing=missing_files,
         ready=ready,
     )
