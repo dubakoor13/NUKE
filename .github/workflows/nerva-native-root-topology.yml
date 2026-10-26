@@ -1,0 +1,65 @@
+name: NUKE native OpenMC root topology and executed material graph audit
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_native_root_topology.py'
+      - 'ntr/nerva/validate_real_native_root_topology.py'
+      - '.github/workflows/nerva-native-root-topology.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_native_root_topology.py'
+      - 'ntr/nerva/validate_real_native_root_topology.py'
+      - '.github/workflows/nerva-native-root-topology.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  native-original-hdf5-root-connectivity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native HDF5 dependencies
+        run: python -m pip install 'numpy>=1.26' 'h5py>=3.10'
+      - name: Verify seven independent parser and broken-topology cases
+        run: python -m unittest ntr.nerva.validate_real_native_root_topology.NativeRootGraphParserTests -v
+      - name: Retrieve ORIGINAL four-seed OpenMC 0.15.3 HDF5 evidence
+        uses: actions/download-artifact@v4
+        with:
+          repository: dubakoor13/NUKE
+          run-id: 39933618638
+          name: nerva-real-openmc-four-seed-core-evidence
+          github-token: ${{ github.token }}
+          path: build/original
+      - name: Require original native geometry and executed material evidence
+        run: |
+          for seed in 13007 23011 33013 43019; do
+            test -s "build/original/seed_$seed/summary.h5"
+            test -s "build/original/seed_$seed/statepoint.120.h5"
+            test -s "build/original/seed_$seed/materials.xml"
+          done
+          test -s build/original/real_core_transport_summary.json
+      - name: Audit genuine root geometry and prohibit unsupported physical claims
+        run: |
+          python -m ntr.nerva.real_native_root_topology build/original \
+            --output build/native_root_geometry_audit.json
+      - name: Verify two real-source HDF5 regression tests, no synthetic substitute
+        env:
+          NUKE_REAL_CORE_EVIDENCE_PATH: build/original
+        run: python -m unittest ntr.nerva.validate_real_native_root_topology.OriginalOpenMCNativeGeometryTests -v
+      - name: Retain bounded topology QA report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage26-original-native-root-topology-report
+          path: build/native_root_geometry_audit.json
+          if-no-files-found: warn
