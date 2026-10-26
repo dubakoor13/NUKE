@@ -62,3 +62,20 @@ Regardless of this check, the executed physical state is a neutron-only, cold, f
 5. Independent NASA comparison for one declared historical reactor configuration.
 
 Source-preservation dependency: the original evidence artifact has a reported expiry **2026-11-13**. Its actual original bytes, not just SHA strings, must be preserved along with usable neutron/photon isotope libraries; this code does not perform archival.
+
+
+## Executed original-data results (2026-10-26)
+
+**Dedicated GitHub Actions [run 40301688412](https://github.com/dubakoor13/NUKE/actions/runs/40301688412) completed SUCCESS.** It verified the official original 2026-10-23 four-seed ZIP download digest `cf05ab907bee76b198d3dc4736a84c6d560f3a8c2d753b78b5605c4826e53274`, ran **8/8 mathematical parser tests** and **2/2 real native HDF5 regression tests**, and uploaded derived JSON artifact ID **12639799832** (`nuke-stage27-original-four-seed-raw-global-moments`). No source simulation was invented.
+
+Real original data, **per transported starting neutron**, with sample SD **across the four seeds** (NOT a physically calibrated 95% interval):
+
+| Global native score | Unweighted four-seed mean | Observed between-seed sample SD |
+|---|---:|---:|
+| Analog absorption | 0.039666666666666656 | 0.0004243287283280404 |
+| Tracklength absorption | 0.03991528763875892 | 0.00010656584857075645 |
+| Vacuum neutron leakage | 1.0238555555555557 | 0.000743187317651375 |
+
+Native score conditional SEMs are retained individually in the JSON artifact; because the original cold fission-source stationarity remains unsupported, **no valid hot-core confidence interval or neutron/photon power distribution** follows from the numerical success. The broad `NERVA model check` is an independent workflow and is not counted as successful here unless its own job completes.
+
+**Acceptance:** Stage 27 raw global SUM/SUM_SQ arithmetic and real evidence extraction VERIFIED; source-stationary neutron transport and hot nuclear-thermal physics still BLOCKED.
