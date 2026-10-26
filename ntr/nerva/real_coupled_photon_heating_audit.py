@@ -160,8 +160,28 @@ def inspect_actual_coupled_heating(
             raise ValueError("too few physical active OpenMC tally realizations")
         if any(t.num_realizations!=n for t in (mat,particle)):
             raise ValueError("incompatible active-batch samples across energy tallies")
-        mesh_bins=core.filters[0].num_bins
+        mesh_filter=core.filters[0]
+        mesh_geometry=mesh_filter.mesh
+        mesh_dims=tuple(int(v) for v in mesh_geometry.dimension)
+        mesh_lo=np.asarray(mesh_geometry.lower_left,dtype=float)
+        mesh_hi=np.asarray(mesh_geometry.upper_right,dtype=float)
+        if (len(mesh_dims)!=3 or min(mesh_dims)<1
+                or mesh_lo.shape!=(3,) or mesh_hi.shape!=(3,)
+                or not np.isfinite(mesh_lo).all() or not np.isfinite(mesh_hi).all()
+                or np.any(mesh_hi<=mesh_lo)):
+            raise ValueError("actual energy mesh has invalid physical bounds")
+        mesh_bins=mesh_filter.num_bins
+        if mesh_bins != math.prod(mesh_dims):
+            raise ValueError("actual mesh bin inventory disagrees with dimensions")
         mesh, mesh_sem=_read_score(core,"heating",n,mesh_bins)
+        expanded=np.asarray(core.get_reshaped_data(value="mean",expand_dims=True),
+                            dtype=float)
+        if expanded.shape!=mesh_dims+(1,1):
+            raise ValueError("native XYZ heating grid and OpenMC tally shape disagree")
+        axial=expanded.reshape(mesh_dims).sum(axis=(0,1))
+        if not math.isclose(float(np.sum(axial)),float(math.fsum(mesh)),
+                            rel_tol=1e-12,abs_tol=1e-8):
+            raise ValueError("native axial energy heating did not conserve XYZ tally")
         mats, mats_sem=_read_score(mat,"heating",n,nm)
         species, species_sem=_read_score(particle,"heating",n,4)
         estimator_names={str(t.estimator) for t in (core,mat,particle)}
@@ -187,6 +207,10 @@ def inspect_actual_coupled_heating(
             "actual_active_tally_realizations":n,
             "photon_transport_enabled_in_native_HDF5":bool(sp.photon_transport),
             "mesh_bin_count":int(mesh_bins),
+            "mesh_dimensions_xyz":list(mesh_dims),
+            "mesh_lower_left_cm":mesh_lo.tolist(),
+            "mesh_upper_right_cm":mesh_hi.tolist(),
+            "axial_heating_ev_per_source":axial.tolist(),
             "material_filter_bin_count":int(nm),
             "material_filter_bin_ids":[str(getattr(v,"id",v)) for v in material_bins],
             "native_heating_estimators":{
