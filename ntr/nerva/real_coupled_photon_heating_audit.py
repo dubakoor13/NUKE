@@ -1,7 +1,7 @@
 """Actual coupled neutron+photon OpenMC HDF5 energy-deposition ledger.
 
 Read *executed* OpenMC StatePoint score arrays. Enforce photon_transport
-and identical native HDF5/score identities; separate neutron/photon heating
+and identical native HDF5/score identities; separate neutron/photon/electron/positron heating
 and material/mesh partitions. The four prior Stage21-29 cold neutron-only
 runs are not substitutes for this executed coupled transport.
 
@@ -25,7 +25,8 @@ EV_TO_J = 1.602176634e-19
 def reconcile_energy_partitions(
     mesh_integral: float, material_heating: list[float],
     neutron_heating: float, photon_heating: float,
-    *, all_scores_share_estimator: bool,
+    *, electron_heating: float = 0., positron_heating: float = 0.,
+    all_scores_share_estimator: bool,
     relative_tolerance: float = 1.e-8,
 ) -> dict:
     """Cross-check mean scores; material/particle bins are CORRELATED.
@@ -36,7 +37,8 @@ def reconcile_energy_partitions(
     independent-bin SE quadrature, as covariance is not available.
     """
     vals=np.asarray([mesh_integral, *material_heating,
-                     neutron_heating, photon_heating],dtype=float)
+                     neutron_heating, photon_heating,
+                     electron_heating, positron_heating],dtype=float)
     if (not np.isfinite(vals).all() or np.any(vals<0)
             or len(material_heating)==0 or
             not isinstance(all_scores_share_estimator,bool)
@@ -45,7 +47,8 @@ def reconcile_energy_partitions(
         raise ValueError("invalid/negative complete energy-deposition score partition")
     mesh=float(mesh_integral)
     mat=float(math.fsum(material_heating))
-    particle=float(neutron_heating+photon_heating)
+    particle=float(math.fsum((neutron_heating, photon_heating,
+                             electron_heating, positron_heating)))
     if mesh<=0 or mat<=0 or particle<=0:
         raise ValueError("zero/negative spatial deposited heating in executed transport")
     mat_res=mat-mesh
@@ -61,8 +64,16 @@ def reconcile_energy_partitions(
         "mesh_vs_particle_relative_residual":part_res/mesh,
         "neutron_heating_ev_per_source":float(neutron_heating),
         "photon_heating_ev_per_source":float(photon_heating),
-        "photon_fraction_of_recorded_heating":float(photon_heating/particle),
-        "photon_energy_deposition_observed":bool(photon_heating>0),
+        "electron_heating_ev_per_source":float(electron_heating),
+        "positron_heating_ev_per_source":float(positron_heating),
+        "photon_and_secondary_charged_heating_ev_per_source":
+            float(math.fsum((photon_heating,electron_heating,positron_heating))),
+        "direct_photon_event_fraction_of_recorded_heating":
+            float(photon_heating/particle),
+        "photon_plus_charged_fraction_of_recorded_heating":
+            float(math.fsum((photon_heating,electron_heating,positron_heating))/particle),
+        "photon_energy_deposition_observed":
+            bool(photon_heating>0 or electron_heating>0 or positron_heating>0),
         "material_particle_mesh_estimator_consistent":all_scores_share_estimator,
         "same_domain_partition_means_close":bool(matched),
         "energy_source_normalization_is_ev_per_MC_start":True,
@@ -138,8 +149,10 @@ def inspect_actual_coupled_heating(
                 or len(mat.filters)!=1 or not isinstance(mat.filters[0],openmc.MaterialFilter)
                 or len(particle.filters)!=1 or not isinstance(particle.filters[0],openmc.ParticleFilter)):
             raise ValueError("incompatible native photon/mesh/material scoring filters")
-        if list(str(k) for k in particle.filters[0].bins)!=["neutron","photon"]:
-            raise ValueError("particle heating does not distinguish neutron and photon")
+        if list(str(k) for k in particle.filters[0].bins)!=[
+                "neutron","photon","electron","positron"]:
+            raise ValueError(
+                "particle heating must distinguish n, gamma, electron, positron")
         material_bins=mat.filters[0].bins
         nm=len(material_bins)
         n=int(core.num_realizations)
@@ -150,11 +163,13 @@ def inspect_actual_coupled_heating(
         mesh_bins=core.filters[0].num_bins
         mesh, mesh_sem=_read_score(core,"heating",n,mesh_bins)
         mats, mats_sem=_read_score(mat,"heating",n,nm)
-        species, species_sem=_read_score(particle,"heating",n,2)
+        species, species_sem=_read_score(particle,"heating",n,4)
         estimator_names={str(t.estimator) for t in (core,mat,particle)}
         partition=reconcile_energy_partitions(
             float(math.fsum(mesh)),[float(x) for x in mats],
             float(species[0]),float(species[1]),
+            electron_heating=float(species[2]),
+            positron_heating=float(species[3]),
             all_scores_share_estimator=len(estimator_names)==1
         )
         # A positive photon deposition score is a data OBSERVATION, not
@@ -180,6 +195,8 @@ def inspect_actual_coupled_heating(
             "mesh_bin_conditional_SEMs_not_aggregable_without_covariance":mesh_sem.tolist(),
             "material_bin_conditional_SEMs_not_aggregable_without_covariance":mats_sem.tolist(),
             "particle_global_conditional_SEMs":species_sem.tolist(),
+            "particle_filter_order":["neutron","photon","electron","positron"],
+            "all_particle_heating_types_scored":True,
             "material_heating_ev_per_source":mats.tolist(),
             "per_source_partition":partition,
             "fission_source_stationarity_qualified":False,
