@@ -176,9 +176,11 @@ def inspect_actual_coupled_heating(
         mesh, mesh_sem=_read_score(core,"heating",n,mesh_bins)
         expanded=np.asarray(core.get_reshaped_data(value="mean",expand_dims=True),
                             dtype=float)
-        if expanded.shape!=mesh_dims+(1,1):
+        if (len(core.nuclides)!=1 or str(core.nuclides[0])!="total"
+                or expanded.shape!=mesh_dims+(1,len(core.scores))):
             raise ValueError("native XYZ heating grid and OpenMC tally shape disagree")
-        axial=expanded.reshape(mesh_dims).sum(axis=(0,1))
+        heating_score_index=tuple(core.scores).index("heating")
+        axial=expanded[...,0,heating_score_index].sum(axis=(0,1))
         if not math.isclose(float(np.sum(axial)),float(math.fsum(mesh)),
                             rel_tol=1e-12,abs_tol=1e-8):
             raise ValueError("native axial energy heating did not conserve XYZ tally")
