@@ -17,6 +17,21 @@ class PairedCoupledEnergyScoreTests(unittest.TestCase):
         self.assertTrue(r["photon_energy_deposition_observed"])
         self.assertAlmostEqual(r["photon_fraction_of_recorded_heating"],8./14.)
 
+    def test_charged_secondaries_complete_physical_heating_balance(self):
+        r=reconcile_energy_partitions(
+            14.,[2.,4.,8.],10.,1.,electron_heating=2.5,
+            positron_heating=.5,all_scores_share_estimator=True)
+        self.assertTrue(r["same_domain_partition_means_close"])
+        self.assertAlmostEqual(
+            r["photon_and_secondary_charged_heating_ev_per_source"],4.)
+        self.assertAlmostEqual(r["photon_plus_charged_fraction_of_recorded_heating"],4/14)
+
+    def test_neutron_photon_only_misses_charged_energy_by_design(self):
+        r=reconcile_energy_partitions(
+            14.,[2.,4.,8.],10.,1.,all_scores_share_estimator=True)
+        self.assertFalse(r["same_domain_partition_means_close"])
+        self.assertAlmostEqual(r["mesh_vs_particle_relative_residual"],-3/14)
+
     def test_zero_photon_score_does_not_claim_observed_gamma_heating(self):
         r=reconcile_energy_partitions(14.,[7.,7.],14.,0.,
                                       all_scores_share_estimator=True)
