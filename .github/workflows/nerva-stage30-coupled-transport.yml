@@ -1,0 +1,73 @@
+name: NUKE Stage30 executed coupled neutron-photon OpenMC heating (cold surrogate)
+
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_coupled_photon_heating_audit.py'
+      - 'ntr/nerva/validate_stage30_coupled_heating_arithmetic.py'
+      - '.github/workflows/nerva-stage30-coupled-transport.yml'
+  push:
+    paths:
+      - 'ntr/nerva/real_coupled_photon_heating_audit.py'
+      - 'ntr/nerva/validate_stage30_coupled_heating_arithmetic.py'
+      - '.github/workflows/nerva-stage30-coupled-transport.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  real-openmc-coupled-neutron-photon-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pin genuine OpenMC neutron/photon executable + evaluated data
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage30
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' > build/stage30/openmc_image_repo_digest.json
+      - name: Run mathematical partition rejection tests; execute actual coupled OpenMC transport
+        run: |
+          docker run --rm --cpus=2 --memory=6g -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              test -f "$OPENMC_CROSS_SECTIONS"
+              openmc --version
+              python -m unittest ntr.nerva.validate_stage30_coupled_heating_arithmetic -v
+              python -m ntr.nerva.run_openmc_transport \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --assembly core --rings 3 \
+                --particles 3000 --batches 65 --inactive 20 --seed 13007 \
+                --hydrogen-temperature-k 293.6059129982851 \
+                --photon-transport \
+                --heating-mesh-dimensions 12 12 10 \
+                --diagnostic-energy-groups 24 --axial-mesh-bins 24 \
+                --output /repo/build/stage30
+              test -s /repo/build/stage30/statepoint.65.h5
+              python -m ntr.nerva.real_coupled_photon_heating_audit \
+                --statepoint /repo/build/stage30/statepoint.65.h5 \
+                --nuclear-data /repo/build/stage30/nuclear_data_report.json \
+                --provenance /repo/build/stage30/transport_provenance.json \
+                --output /repo/build/stage30/actual_coupled_heating_partition.json
+              python -c "import json; p=json.load(open(\"/repo/build/stage30/actual_coupled_heating_partition.json\")); q=p[\"per_source_partition\"]; assert p[\"photon_transport_enabled_in_native_HDF5\"]; assert q[\"mesh_integrated_heating_ev_per_source\"]>0; assert q[\"particle_integrated_heating_ev_per_source\"]>0; assert q[\"same_domain_partition_means_close\"]; assert q[\"material_particle_mesh_estimator_consistent\"]; assert q[\"photon_and_secondary_charged_heating_ev_per_source\"]>0; assert not p[\"historical_hot_NERVA_model_validated\"]; assert not p[\"absolute_reactor_watts_qualified\"]; print(\"REAL coupled NERVA-derived cold core particle heating ev/source:\",q); print(\"Source stationarity and NASA hot-core fidelity remain BLOCKED\")"
+            '
+      - name: Retain original coupled neutron/photon HDF5 and physics audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage30-actual-cold-coupled-photon-transport
+          path: |
+            build/stage30/*.json
+            build/stage30/*.h5
+            build/stage30/*.xml
+          retention-days: 21
+          if-no-files-found: warn

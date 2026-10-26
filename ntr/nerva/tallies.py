@@ -583,8 +583,15 @@ def build_tallies(
             particle_heating = openmc.Tally(
                 name="nerva_particle_heating"
             )
+            # IMPORTANT: OpenMC HEATING scores electron/positron
+            # local energy deposition even though these secondaries are not
+            # transported spatially. Two-bin n/gamma partitions omit charged
+            # energy and were observed to undercount by ~3.46% (Stage30).
+            # All four source particle types must partition the same full
+            # native heating domain, including charged secondaries.
             particle_heating.filters = [
-                openmc.ParticleFilter(["neutron", "photon"])
+                openmc.ParticleFilter(
+                    ["neutron", "photon", "electron", "positron"])
             ]
             particle_heating.scores = ["heating"]
             tallies.append(particle_heating)
