@@ -44,3 +44,16 @@ Even after a pass, the following remain **unqualified**: independent geometry vo
 **P0 reminder:** Original actions artifact is described as expiring **2026-11-13**. Preserve the actual original bytes/checksums and the true evaluated neutron isotope HDF5 binaries. A geometry graph audit cannot substitute for missing nuclear data.
 
 This stage addresses an evidence *interpretation* error; it is not a reactor performance upgrade and does not justify decrementing the broader 60–70% subjective historical-fidelity gap by itself.
+
+
+## Executed CI evidence — 2026-10-26
+
+**Original-data run [40300596727](https://github.com/dubakoor13/NUKE/actions/runs/40300596727): SUCCESS.** Original archived ZIP artifact 12492499186 was downloaded and its artifact digest was reported as `cf05ab907bee76b198d3dc4736a84c6d560f3a8c2d753b78b5605c4826e53274`.
+
+- **7/7 synthetic native-graph parser tests passed**, including malformed/ambiguous references, unassigned cell and cycle.
+- **2/2 genuine original OpenMC HDF5 tests passed** on native summaries for seeds 13007, 23011, 33013, 43019.
+- All four native HDF5 root graphs report material IDs **19–22**, **60 distinct root-connected material cell definitions per seed**, and no material-filled cell definition outside root connectivity.
+- The four source graphs' canonical connectivity fingerprints agree. The JSON record is retained in the Actions run as `nuke-stage26-original-native-root-topology-report`.
+- This **upgrades Stage 25's HDF5 material inventory statement to verified native root connectivity**, not to experimentally occupied volume or neutron visitation. Real hot-core transport, evaluated nuclear data, source stationarity, local deposited heating and historical fidelity remain **BLOCKED**.
+
+This scientific audit's pass should not be counted as a hot reactor physics validation or proof of criticality.
