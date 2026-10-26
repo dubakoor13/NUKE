@@ -27,3 +27,20 @@ Matching an original HDF5 digest does **not** validate that the dataset is a cer
 The original archive still lacks the original isotope binaries even after this stage. CI keeps a bounded JSON evidence report and a Docker image identity manifest rather than redistributing third-party nuclear HDF5 files. Archive preservation and data-release licensing remain separate tasks.
 
 **Status at creation:** original-data CI not yet executed. Report the check PASS only after new [workflow](../../.github/workflows/nerva-original-xs-binary.yml) completes against genuine archive and image.
+
+
+## Verified actual OpenMC isotope-binary execution — 2026-10-26
+
+**[GitHub Actions run 40303149266](https://github.com/dubakoor13/NUKE/actions/runs/40303149266) completed SUCCESS**, exact source-archive artifact digest `cf05ab907bee76b198d3dc4736a84c6d560f3a8c2d753b78b5605c4826e53274`. The publicly retrievable OpenMC `v0.15.3` Docker image download reported manifest digest `sha256:dd73b9c7a0e1a1c956a05706ec813e43549f9bd6fc4cc32d4fbf94c676a60978` (Docker-manifest digest, distinct from raw HDF5 SHA).
+
+- **7/7** deliberately altered-byte/missing-file/wrong-index local tests passed.
+- **29/29 actual native isotope HDF5 files** independently SHA256-and-byte-size matched the original executed-run `verified_xs_files.json` records; the original evaluated `cross_sections.xml` binary SHA was also matched.
+- All **29 original isotope HDF5** identities and temperature knots were reopened through the installed Docker OpenMC `IncidentNeutron.from_hdf5` API.
+- The archived original geometry's **13 physically root-connected isotopes** were identified and checked.
+- **Complete native MT901 local KERMA numerical coverage for the 13 root-used isotopes: FALSE**, reconfirming a material power-deposition precondition is not satisfied. There was NO artificial MT901, `heating-local`, neutron/photon energy or reactor-watt source substitution.
+- Original evaluated release *edition* and license provenance remain uncertified; root-used data are cold only (~293.605913 K), no independently stationary fission source, no suitable hot NERVA data or measured historical core comparison.
+- Compact observed evidence was uploaded as artifact `nuke-stage28-original-neutron-data-binary-reverification` (ID **12641970366**, reported expiry **2027-01-24**). This holds digests/results, **not** the third-party neutron HDF5 bytes. The original OpenMC statepoint artifact's separate reported expiry remains **2026-11-13**.
+
+**What this changes:** the Stage 25 gap "isotope file SHA strings not independently checked against original bytes" is now experimentally resolved **for the present downloaded `v0.15.3` Docker image**. Long-term actual binary preservation, evaluated release certification and hot material physics are NOT resolved.
+
+**New critical next step:** acquire independently licensed/identified evaluated neutron+photon data appropriate to the specified operating state, verify material-specific temperatures and MT901/photon energy accounting, and only then rerun real OpenMC transport. An unqualified neutron-only cold statepoint cannot be turned into locally deposited watts by statistical postprocessing.
