@@ -6,6 +6,7 @@ on:
       - 'ntr/nerva/nuclear_data.py'
       - 'ntr/nerva/check_nuclear_data.py'
       - 'ntr/nerva/validate_stage29_photon_data_preflight.py'
+      - 'ntr/nerva/verify_stage29_photon_run.py'
       - '.github/workflows/nerva-stage29-photon-data.yml'
   push:
     paths:
@@ -53,8 +54,8 @@ jobs:
             openmc/openmc:v0.15.3 \
             bash -lc '
               set -euo pipefail
-              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()["purelib"])"):/repo"
-              python -c "import openmc; assert not openmc.__file__.startswith("/repo/")"
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
               test -f "$OPENMC_CROSS_SECTIONS"
               openmc --version
               set +e
@@ -67,7 +68,7 @@ jobs:
               if [ "$outcome" -ne 0 ] && [ "$outcome" -ne 2 ]; then
                 exit "$outcome"
               fi
-              python -c "import json; r=json.load(open("/repo/build/nerva_stage29/actual_nndc_photon_coverage.json")); assert r["photon_transport_requested"]; assert r["required_photon_elements"]; assert not r["photon_evaluated_release_verified"]; assert r["ready"] == (not r["missing_photon_elements"] and not r["photon_binary_audit_errors"] and set(r["verified_photon_elements"]) == set(r["required_photon_elements"]) and not r["missing_neutron_nuclides"] and not r["missing_thermal_scattering_tables"] and not r["referenced_files_missing"]); print("ACTUAL photon HDF5 element coverage:",r["verified_photon_elements"]); print("Release/hot-NERVA qualification: NOT ESTABLISHED")"
+              python -m ntr.nerva.verify_stage29_photon_run --report /repo/build/nerva_stage29/actual_nndc_photon_coverage.json
             '
       - name: Upload real inspected photon data manifest, no substitute HDF5
         if: always()
