@@ -44,3 +44,16 @@ This change prevents a **false heating promotion**; it cannot create correct hot
 - Independent NASA historical measurement comparisons; numerical pass alone cannot justify 100% physics completion.
 
 **No core geometry, uranium loading, control drums, criticality targeting or nuclear reaction coefficients were modified.**
+
+
+## Executed original-data CI result (2026-10-26)
+
+**[Dedicated GitHub Actions run 40304333577](https://github.com/dubakoor13/NUKE/actions/runs/40304333577): SUCCESS.** The workflow downloaded the original four-seed OpenMC 0.15.3 HDF5 archive and verified the GitHub artifact's SHA-256 `cf05ab907bee76b198d3dc4736a84c6d560f3a8c2d753b78b5605c4826e53274`.
+
+- **27/27 Stage 10 OpenMC heating-adapter tests passed**, including the five new mode/provenance misuse regressions.
+- **2/2 original OpenMC HDF5 tests passed**, demonstrating that all four saved neutron-only positive ordinary heating tallies are rejected before complete spatial thermal-power projection.
+- Original HDF5 evidence audit printed: `Genuine original neutron-only OpenMC HDF5 seeds: 4` and `Promote partial neutron 'heating' to full thermal power: REJECTED`.
+- Small derived evidence JSON stored as Actions artifact `nuke-stage28-original-neutron-only-heating-gate`, ID **12641413685**.
+- The independent physics/numerics workflow [40304333553](https://github.com/dubakoor13/NUKE/actions/runs/40304333553) also completed successfully for this PR revision; the separate broad `NERVA model check` is not included in this conclusion until independently complete.
+
+**Acceptance:** a physically incompatible real neutron-only `heating` score can no longer be promoted to complete heat by the Stage 10 loader/thermal projection route. **Not achieved:** physically qualified NERVA high-temperature evaluated nuclear data, coupled neutron-photon transport, independent stationary source, deposited-power reconstruction, or NASA historical reactor validation.
