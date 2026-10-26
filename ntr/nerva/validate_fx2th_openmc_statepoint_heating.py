@@ -163,6 +163,23 @@ class StatepointReaderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'actual StatePoint loader'):
             evidence(source_kind='synthetic',actual_statepoint_reader=True)
 
+    def test_neutron_only_heating_cannot_be_projected_as_total_heat(self):
+        sp=FakeStatePoint()
+        sp.photon_transport=False
+        with self.assertRaisesRegex(ValueError,'neutron-only'):
+            evidence(sp)
+
+    def test_neutron_only_cannot_bypass_by_modified_dataclass(self):
+        e=evidence()
+        e=replace(e,photon_transport=False)
+        with self.assertRaisesRegex(ValueError,'neutron-only'):
+            e.project(HeatingNormalization('externally-prescribed-power',200.),
+                      [0.,4.])
+
+    def test_extracted_openmc_label_cannot_be_applied_to_fake_reader(self):
+        with self.assertRaisesRegex(ValueError,'actual StatePoint loader'):
+            evidence(source_kind='extracted-openmc-arrays')
+
     def test_negative_heating_rejected_not_clipped(self):
         sp=FakeStatePoint()
         sp.tallies[103].data[0,0,0]=-1.
@@ -232,6 +249,22 @@ class IndependentSeedTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'insufficient'):
             compare_independent_statepoints(ev,
                 HeatingNormalization('externally-prescribed-power',200.),[0.,4.])
+
+    def test_mixed_reader_provenance_rejected_before_ensemble_projection(self):
+        ev=[evidence(FakeStatePoint(seed=970+i)) for i in range(4)]
+        ev[3]=replace(ev[3],is_actual_statepoint_reader=True)
+        with self.assertRaisesRegex(ValueError,'share mesh'):
+            compare_independent_statepoints(tuple(ev),
+                HeatingNormalization('externally-prescribed-power',200.),
+                [0.,4.])
+
+    def test_mixed_photon_transport_provenance_rejected(self):
+        ev=[evidence(FakeStatePoint(seed=980+i)) for i in range(4)]
+        ev[3]=replace(ev[3],photon_transport=False)
+        with self.assertRaisesRegex(ValueError,'share mesh'):
+            compare_independent_statepoints(tuple(ev),
+                HeatingNormalization('externally-prescribed-power',200.),
+                [0.,4.])
 
     def test_matched_seeds_same_scores_yield_zero_between_seed_sem(self):
         ev=tuple(evidence(FakeStatePoint(seed=800+i)) for i in range(4))
