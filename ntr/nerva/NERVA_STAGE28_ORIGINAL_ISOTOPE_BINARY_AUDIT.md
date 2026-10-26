@@ -44,3 +44,17 @@ The original archive still lacks the original isotope binaries even after this s
 **What this changes:** the Stage 25 gap "isotope file SHA strings not independently checked against original bytes" is now experimentally resolved **for the present downloaded `v0.15.3` Docker image**. Long-term actual binary preservation, evaluated release certification and hot material physics are NOT resolved.
 
 **New critical next step:** acquire independently licensed/identified evaluated neutron+photon data appropriate to the specified operating state, verify material-specific temperatures and MT901/photon energy accounting, and only then rerun real OpenMC transport. An unqualified neutron-only cold statepoint cannot be turned into locally deposited watts by statistical postprocessing.
+
+
+### Exact original material-reachable isotope MT901 observation (actual HDF5)
+
+After Stage 28 succeeded, the saved [actual JSON artifact 12641970366](https://github.com/dubakoor13/NUKE/actions/runs/40303149266/artifacts/12641970366) was downloaded and inspected independently. Each of the **13** root-reachable real evaluated neutron HDF5 isotope records had exactly **one** cold temperature knot and reported **`native_MT901_present: false`** (therefore `native_MT901_numerically_usable: false`):
+
+```text
+Be9, C0, H1, H2, U234, U235, U236, U238,
+Zr90, Zr91, Zr92, Zr94, Zr96
+```
+
+Thus the original cold test library's local KERMA missing coverage is **13/13 actual root-used neutron isotopes**, not merely an incomplete row or uncertainty from absent file bytes. This is now a direct observation from re-opened real isotope binaries (cross-index and SHA verified), **not a fabricated reactor heating substitute**.
+
+The justified engineering conclusion is **no neutron-only MT901-dependent local heat normalization from this dataset**. The original `heating` and `kappa-fission` signals are not automatically a material-disjoint neutron+photon deposited energy map. An independently qualified data library with correct reaction/temperature/phase/photon coverage is a mandatory upstream prerequisite for the next hot-core physics step.
