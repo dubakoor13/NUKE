@@ -1,0 +1,79 @@
+name: NUKE Stage29 photon evaluated-data identity and coverage gate
+
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/nuclear_data.py'
+      - 'ntr/nerva/check_nuclear_data.py'
+      - 'ntr/nerva/validate_stage29_photon_data_preflight.py'
+      - '.github/workflows/nerva-stage29-photon-data.yml'
+  push:
+    paths:
+      - 'ntr/nerva/nuclear_data.py'
+      - 'ntr/nerva/check_nuclear_data.py'
+      - 'ntr/nerva/validate_stage29_photon_data_preflight.py'
+      - '.github/workflows/nerva-stage29-photon-data.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  photon-index-numerics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install local OpenMC Python package and scientific dependencies
+        run: python -m pip install .
+      - name: Run 11 adversarial elemental photoatomic coverage/identity tests
+        run: |
+          python -m unittest ntr.nerva.validate_stage29_photon_data_preflight -v
+          python -m ntr.nerva.validate_nuclear_data
+
+  actual-evaluated-photon-binaries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use actual OpenMC 0.15.3 and NNDC HDF5 library
+        run: |
+          set -euo pipefail
+          mkdir -p build/nerva_stage29
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' > build/nerva_stage29/docker_image_digest.json
+      - name: Inspect genuine photon HDF5 content, identity and coverage
+        run: |
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()["purelib"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith("/repo/")"
+              test -f "$OPENMC_CROSS_SECTIONS"
+              openmc --version
+              set +e
+              python -m ntr.nerva.check_nuclear_data \
+                --photon-transport \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --output /repo/build/nerva_stage29/actual_nndc_photon_coverage.json
+              outcome=$?
+              set -e
+              if [ "$outcome" -ne 0 ] && [ "$outcome" -ne 2 ]; then
+                exit "$outcome"
+              fi
+              python -c "import json; r=json.load(open("/repo/build/nerva_stage29/actual_nndc_photon_coverage.json")); assert r["photon_transport_requested"]; assert r["required_photon_elements"]; assert not r["photon_evaluated_release_verified"]; assert r["ready"] == (not r["missing_photon_elements"] and not r["photon_binary_audit_errors"] and set(r["verified_photon_elements"]) == set(r["required_photon_elements"]) and not r["missing_neutron_nuclides"] and not r["missing_thermal_scattering_tables"] and not r["referenced_files_missing"]); print("ACTUAL photon HDF5 element coverage:",r["verified_photon_elements"]); print("Release/hot-NERVA qualification: NOT ESTABLISHED")"
+            '
+      - name: Upload real inspected photon data manifest, no substitute HDF5
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage29-real-evaluated-photon-library-audit
+          path: build/nerva_stage29/
+          retention-days: 21
+          if-no-files-found: warn
