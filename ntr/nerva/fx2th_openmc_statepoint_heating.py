@@ -14,6 +14,12 @@ IMPORTANT:
 - Exact source rate or prescribed power remains independently required.
 - A SHA of a statepoint and a separate data manifest verifies file identity,
   not that the materials match an independently computed diffusion matrix.
+- 'heating' is accepted for COMPLETE core thermal deposition only with
+  coupled neutron-photon transport; neutron-only 'heating' excludes spatial
+  photon deposition. The neutron-only 'heating-local' MT=901 alternative is
+  not implemented in this reader and requires independent nuclear-data QA.
+- Even a coupled photon statepoint does NOT itself establish source
+  stationarity, valid hot cross sections or physical power normalization.
 """
 from __future__ import annotations
 
@@ -29,6 +35,27 @@ from .fx2th_transport_heat_projection import (
     material_fingerprint, project_mesh_heating,
 )
 from .fx2th_family_spacetime import SpatialFamilyData
+
+
+def require_total_heating_transport_mode(*, photon_transport: bool,
+                                         score: str = "heating") -> None:
+    """Fail closed before treating OpenMC eV/source as *complete* heat.
+
+    For a coupled neutron-photon calculation OpenMC's 'heating' accounts
+    for spatial neutron and photon deposition. A neutron-only 'heating'
+    tally omits transported photon energy and is not a full deposited-power
+    map. Neutron-only 'heating-local' needs separate evaluated MT=901
+    nuclear KERMA qualification; this bridge does not support it.
+    """
+    if score != "heating":
+        raise ValueError("this thermal reader requires the OpenMC heating score")
+    if not isinstance(photon_transport, (bool, np.bool_)):
+        raise ValueError("OpenMC photon transport mode must be an explicit boolean")
+    if not photon_transport:
+        raise ValueError(
+            "neutron-only OpenMC 'heating' is not complete neutron+photon "
+            "deposited power; coupled neutron-photon transport is required"
+        )
 
 
 def file_sha256(path: str | Path) -> str:
@@ -58,6 +85,11 @@ class StatepointHeatingEvidence:
 
     def project(self, normalization: HeatingNormalization,
                 thermal_z_edges_cm: np.ndarray) -> ProjectionResult:
+        require_total_heating_transport_mode(
+            photon_transport=self.photon_transport, score=self.score.tally_score)
+        if (self.score.source_kind == "extracted-openmc-arrays"
+                and not self.is_actual_statepoint_reader):
+            raise ValueError("extracted OpenMC arrays need the actual StatePoint loader")
         if (self.run_mode == "eigenvalue"
                 and normalization.mode != "externally-prescribed-power"):
             raise ValueError("eigenvalue statepoint requires independently prescribed power")
@@ -165,8 +197,13 @@ def extract_statepoint_objects(
         raise ValueError("invalid OpenMC random seed")
     if source_kind not in ("synthetic","extracted-openmc-arrays"):
         raise ValueError("unsupported provenance category")
-    if actual_statepoint_reader and source_kind!="extracted-openmc-arrays":
-        raise ValueError("actual StatePoint loader needs extracted-openmc-arrays")
+    if bool(actual_statepoint_reader) != (source_kind == "extracted-openmc-arrays"):
+        raise ValueError(
+            "only the actual StatePoint loader may label extracted-openmc-arrays; "
+            "synthetic and real provenance must not be mixed"
+        )
+    require_total_heating_transport_mode(
+        photon_transport=statepoint.photon_transport, score="heating")
     arrays=[]
     meta=[]
     for tally_id in tally_ids:
@@ -288,6 +325,8 @@ def compare_independent_statepoints(
         raise ValueError("independent OpenMC runs require distinct seeds and statepoint hashes")
     first=evidence[0]
     if any((v.run_mode!=first.run_mode or v.score.source_kind!=first.score.source_kind
+            or v.photon_transport!=first.photon_transport
+            or v.is_actual_statepoint_reader!=first.is_actual_statepoint_reader
             or v.score.material_fingerprint_sha256!=first.score.material_fingerprint_sha256
             or v.score.nuclear_data_sha256!=first.score.nuclear_data_sha256
             or v.score.total_ev_per_history_bin.shape!=first.score.total_ev_per_history_bin.shape
