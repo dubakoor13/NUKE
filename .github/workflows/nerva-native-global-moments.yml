@@ -1,0 +1,65 @@
+name: NUKE genuine OpenMC global SUM/SUMSQ uncertainty audit
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_native_global_moment_uncertainty.py'
+      - 'ntr/nerva/validate_real_native_global_moment_uncertainty.py'
+      - '.github/workflows/nerva-native-global-moments.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_native_global_moment_uncertainty.py'
+      - 'ntr/nerva/validate_real_native_global_moment_uncertainty.py'
+      - '.github/workflows/nerva-native-global-moments.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  original-four-seed-global-moments:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native OpenMC HDF5 numerical dependencies
+        run: python -m pip install 'numpy>=1.26' 'h5py>=3.10'
+      - name: Eight raw-moment parser/covariance correctness tests
+        run: python -m unittest ntr.nerva.validate_real_native_global_moment_uncertainty.MomentMathematicsTests -v
+      - name: Download unchanged original 2026-10-23 four-seed OpenMC artifact
+        uses: actions/download-artifact@v4
+        with:
+          repository: dubakoor13/NUKE
+          run-id: 39933618638
+          name: nerva-real-openmc-four-seed-core-evidence
+          github-token: ${{ github.token }}
+          path: build/original
+      - name: Explicitly require original binary statepoints and accompanying reports
+        run: |
+          for seed in 13007 23011 33013 43019; do
+            test -s "build/original/seed_$seed/statepoint.120.h5"
+            test -s "build/original/seed_$seed/summary.h5"
+          done
+          test -s build/original/real_core_transport_summary.json
+      - name: Independently read original native SUM and SUM_SQ for global tallies
+        run: |
+          python -m ntr.nerva.real_native_global_moment_uncertainty build/original \
+            --output build/native_global_uncertainty_audit.json
+      - name: Two genuine original-HDF5 regression checks, no mock fallback
+        env:
+          NUKE_REAL_CORE_EVIDENCE_PATH: build/original
+        run: |
+          python -m unittest ntr.nerva.validate_real_native_global_moment_uncertainty.GenuineOriginalOpenMCGlobalMomentTests -v
+      - name: Retain observed native global uncertainty and provenance JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage27-original-four-seed-raw-global-moments
+          path: build/native_global_uncertainty_audit.json
+          if-no-files-found: warn
