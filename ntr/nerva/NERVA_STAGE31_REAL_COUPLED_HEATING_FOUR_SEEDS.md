@@ -45,3 +45,31 @@ This iteration does NOT claim:
 5. Qualified full-core thermal fuel/gas mapping, coupled hydrogen enthalpy/pressure feedback, converged spatial mesh uncertainty, or NASA historical reactor benchmarks.
 
 **At code authoring:** real Stage31 HDF5 results must be separately confirmed by the new Actions run; this document does not predeclare the data as passed. This is an actual core transport/numerics continuation, not CI-only dashboard work.
+
+
+## Executed genuine four-seed HDF5 verification result (2026-10-26)
+
+**[Dedicated original OpenMC coupled HDF5 workflow 40325725662](https://github.com/dubakoor13/NUKE/actions/runs/40325725662) COMPLETED SUCCESS**, at checked head `e2b8ee953d822adca529ae9bf3bcd10027cf2a91`.
+
+This is actual OpenMC 0.15.3 C++ executable neutron+photon transport, **not synthetic reactor output**. The official source image and evaluated NNDC neutron/photon cross sections were used. Each original HDF5 statepoint and its actual exported model XML were retained, and all four statepoints were independently checked for identical nuclear-data index, photon isotope HDF5 hashes, geometry/material/tally XML hashes, mesh dimensions/material bin order and distinct source RNG seeds.
+
+**Actual execution acceptance:** 8/8 adversarial paired-covariance numerical tests and 2/2 tests reopening and physically checking the four *new actual coupled HDF5* passed. All four `heating` material / XYZ mesh / neutron+photon+electron+positron energy integrals conserved to the configured native tolerance. Native axially expanded mesh heating and true paired between-seed cross-bin sample covariance also reconciled to directly observed per-seed totals.
+
+| Independent OpenMC seed | Combined k-effective (nominal per-run SEM) |
+|---|---|
+| 13007 | 0.01208 ± 0.00021 |
+| 23011 | 0.01173 ± 0.00019 |
+| 33013 | 0.01201 ± 0.00020 |
+| 43019 | 0.01192 ± 0.00026 |
+
+- **Native mean total coupled neutron/photon heating across four actual seeds:** **879437.4771363477 eV per starting Monte Carlo neutron**.
+- **Observed between-seed sample SD of total deposited heating:** **10230.500892604987 eV per starting Monte Carlo neutron**.
+- **Corresponding sample mean SEM under a hypothetical stationary independent source assumption:** **5115.2504463024935 eV/source**; this is **NOT** a scientifically calibrated confidence limit because the far-subcritical, highly cloned fission source has not passed stationarity/independence tests.
+- The generated JSON stores all four individual original statepoint SHA256 hashes, raw particle-wise heating, spatial material partition statistics, axial-bin means and their **paired** covariance matrices; **do not** replace these with quadrature-summed per-bin standard errors.
+- Archived original generated HDF5 evidence: GitHub Actions artifact **12651167528**, `nuke-stage31-original-four-seed-coupled-heating-hdf5`, **3,649,821 bytes** with reported expiration **2026-11-16**. Saved archive ZIP SHA256 `a6aab0dd3fd9abd092b5aa7d3d29ff587b560f0440a54f04e9fee03d505f9b14`.
+
+**Outcome:** a new genuine four-seed **coupled neutron + photon + locally deposited charged-secondary Monte Carlo** dataset exists and its source-normalized material/axial/particle energy bookkeeping and paired seed covariance are verified.
+
+**Major physical blockers remain:** this cold conceptual reactor still has nominal k-effective ~0.012 rather than a qualified operational critical configuration; fission-source bank stationarity is not demonstrated; evaluated hot fuel / hydrogen / reflector interactions and thermal-scattering coverage, real material-resolved hot watts, fuel-channel coupling, mesh sensitivity, independent historical benchmarks and true operating source normalization remain unresolved. This validation must NOT be described as historical NERVA performance.
+
+**Broader CI caveat:** the dedicated original four-seed workflow is independently SUCCESS; other repository checks or artifact-update triggered runs are not assumed passed unless individually verified.
