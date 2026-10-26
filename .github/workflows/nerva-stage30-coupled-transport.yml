@@ -58,7 +58,7 @@ jobs:
                 --nuclear-data /repo/build/stage30/nuclear_data_report.json \
                 --provenance /repo/build/stage30/transport_provenance.json \
                 --output /repo/build/stage30/actual_coupled_heating_partition.json
-              python -c "import json; p=json.load(open(\"/repo/build/stage30/actual_coupled_heating_partition.json\")); q=p[\"per_source_partition\"]; assert p[\"photon_transport_enabled_in_native_HDF5\"]; assert q[\"mesh_integrated_heating_ev_per_source\"]>0; assert q[\"particle_integrated_heating_ev_per_source\"]>0; assert not p[\"historical_hot_NERVA_model_validated\"]; assert not p[\"absolute_reactor_watts_qualified\"]; print(\"REAL coupled NERVA-derived cold core particle heating ev/source:\",q); print(\"Source stationarity and NASA hot-core fidelity remain BLOCKED\")"
+              python -c "import json; p=json.load(open(\"/repo/build/stage30/actual_coupled_heating_partition.json\")); q=p[\"per_source_partition\"]; assert p[\"photon_transport_enabled_in_native_HDF5\"]; assert q[\"mesh_integrated_heating_ev_per_source\"]>0; assert q[\"particle_integrated_heating_ev_per_source\"]>0; assert q[\"same_domain_partition_means_close\"]; assert q[\"material_particle_mesh_estimator_consistent\"]; assert q[\"photon_and_secondary_charged_heating_ev_per_source\"]>0; assert not p[\"historical_hot_NERVA_model_validated\"]; assert not p[\"absolute_reactor_watts_qualified\"]; print(\"REAL coupled NERVA-derived cold core particle heating ev/source:\",q); print(\"Source stationarity and NASA hot-core fidelity remain BLOCKED\")"
             '
       - name: Retain original coupled neutron/photon HDF5 and physics audit
         if: always()
