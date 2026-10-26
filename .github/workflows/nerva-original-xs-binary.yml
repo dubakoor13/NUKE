@@ -1,0 +1,77 @@
+name: NUKE original evaluated isotope binary and physics-data identity
+
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/verify_original_xs_binary.py'
+      - 'ntr/nerva/validate_verify_original_xs_binary.py'
+      - '.github/workflows/nerva-original-xs-binary.yml'
+  push:
+    paths:
+      - 'ntr/nerva/verify_original_xs_binary.py'
+      - 'ntr/nerva/validate_verify_original_xs_binary.py'
+      - '.github/workflows/nerva-original-xs-binary.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  real-original-isotope-hdf5:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download unmodified ORIGINAL four-seed cold OpenMC HDF5 source archive
+        uses: actions/download-artifact@v4
+        with:
+          repository: dubakoor13/NUKE
+          run-id: 39933618638
+          name: nerva-real-openmc-four-seed-core-evidence
+          github-token: ${{ github.token }}
+          path: build/original
+      - name: Check original executed source and nuclear-file hash declarations
+        run: |
+          set -euo pipefail
+          test -s build/original/verified_xs_files.json
+          test -s build/original/real_core_transport_summary.json
+          for seed in 13007 23011 33013 43019; do
+            test -s "build/original/seed_$seed/summary.h5"
+            test -s "build/original/seed_$seed/statepoint.120.h5"
+          done
+      - name: Pull same official OpenMC 0.15.3 binary/data environment as original
+        run: |
+          set -euo pipefail
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 --format '{{json .RepoDigests}}' \
+            | tee build/nerva_stage28_candidate_image_digests.json
+          docker image inspect openmc/openmc:v0.15.3 --format '{{.Id}}' \
+            | tee build/nerva_stage28_candidate_image_id.txt
+      - name: Independently hash and deserialize actual evaluated isotope binary files
+        run: |
+          set -euo pipefail
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; print(openmc.__version__, openmc.__file__); assert not openmc.__file__.startswith(\"/repo/\")"
+              test -s "$OPENMC_CROSS_SECTIONS"
+              python -m unittest ntr.nerva.validate_verify_original_xs_binary -v
+              python -m ntr.nerva.verify_original_xs_binary /repo/build/original \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --output /repo/build/nerva_stage28_original_isotope_binary_verification.json
+            '
+      - name: Retain only hash evidence, not third-party nuclear data binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage28-original-neutron-data-binary-reverification
+          path: |
+            build/nerva_stage28_candidate_image_digests.json
+            build/nerva_stage28_candidate_image_id.txt
+            build/nerva_stage28_original_isotope_binary_verification.json
+          if-no-files-found: warn
