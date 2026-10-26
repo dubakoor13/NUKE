@@ -70,6 +70,13 @@ def main() -> int:
         f"  photon library present: "
         f"{report.photon_library_present}"
     )
+    if args.photon_transport:
+        print(f"  required photon elements: {', '.join(report.required_photon_elements)}")
+        print(f"  missing photon elements: {', '.join(report.missing_photon_elements)}")
+        print(f"  actual photon HDF5 verified: {', '.join(report.verified_photon_elements)}")
+        for error in report.photon_binary_audit_errors:
+            print("  rejected photon HDF5: " + error)
+        print("  evaluated photon release independent qualification: NO")
     print(
         f"  referenced files missing: "
         f"{len(report.referenced_files_missing)}"
