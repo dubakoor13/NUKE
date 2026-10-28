@@ -1,0 +1,80 @@
+name: NUKE Stage45 original evaluated neutron temperature transport physics
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/config.py'
+      - 'ntr/nerva/model.py'
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/audit_nuclear_data_temperatures.py'
+      - 'ntr/nerva/real_evaluated_neutron_temperature_selector.py'
+      - 'ntr/nerva/validate_stage45_evaluated_temperature_selector.py'
+      - '.github/workflows/nerva-stage45-real-neutron-temperature-physics.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/config.py'
+      - 'ntr/nerva/model.py'
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/audit_nuclear_data_temperatures.py'
+      - 'ntr/nerva/real_evaluated_neutron_temperature_selector.py'
+      - 'ntr/nerva/validate_stage45_evaluated_temperature_selector.py'
+      - '.github/workflows/nerva-stage45-real-neutron-temperature-physics.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  real-original-evaluated-neutron-temperature-physics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Recover two ORIGINAL genuine OpenMC C++ temperature-selection runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage45_cold build/stage45_results
+          # Both physical neutron eigenvalue executions and original C++
+          # HDF5 were completed successfully in 40761641564. Its C++
+          # warning explicitly says single-kT C0 falls back to nearest.
+          # Reaudit genuine binaries, do not rerun or fabricate transport.
+          gh run download 40761641564 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage45-two-original-openmc-neutron-temperature-hdf5 \
+            -D build/stage45_cold
+          for method in nearest interpolation; do
+            test -s "build/stage45_cold/$method/statepoint.24.h5"
+            test -s "build/stage45_cold/$method/transport_provenance.json"
+            test -s "build/stage45_cold/$method/settings.xml"
+          done
+      - name: Verify native XS temperature selection and cold-only interpolation fallback
+        run: |
+          docker pull openmc/openmc:v0.15.3
+          docker run --rm --cpus=2 --memory=6g -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              test -s "$OPENMC_CROSS_SECTIONS"
+              python -m unittest ntr.nerva.validate_stage45_evaluated_temperature_selector.EvaluatedTemperatureSelectionMathTests -v
+              NUKE_STAGE45_REAL_EVALUATED_XS="$OPENMC_CROSS_SECTIONS" \
+                python -m unittest ntr.nerva.validate_stage45_evaluated_temperature_selector.ActualEvaluatedNeutronTemperatureTests -v
+              python -m ntr.nerva.validate_nuclear_data
+              python -m ntr.nerva.real_evaluated_neutron_temperature_selector \
+                --root /repo/build/stage45_cold \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --output /repo/build/stage45_results/actual_evaluated_neutron_selector.json
+              python -c "import json; r=json.load(open(\"/repo/build/stage45_results/actual_evaluated_neutron_selector.json\")); assert r[\"original_openmc_CPP_neutron_transport_runs\"]==2 and r[\"geometry_and_material_xml_identical\"] and not r[\"genuine_between_two_evaluated_temperature_tables_exercised\"] and not r[\"hot_temperature_scattering_interpolation_verified\"]; print(\"Original neutron XS operator verified, cold-only OpenMC fallback HONESTLY recorded\")"
+            '
+      - name: Preserve real original C++ neutron interpolation/fallback physics audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage45-real-evaluated-temperature-no-fake-hot-interpolation
+          path: build/stage45_results/*.json
+          retention-days: 21
+          if-no-files-found: warn
