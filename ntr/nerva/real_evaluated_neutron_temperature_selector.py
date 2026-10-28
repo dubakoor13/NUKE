@@ -114,7 +114,8 @@ def audit_actual_selector_runs(root:Path|str, *, cross_sections:Path|str) -> dic
             any(x[6] for x in checks)),
         "OpenMC_interpolation_request_had_only_one_cold_table_and_can_fallback":bool(
             not b[6]),
-        "actual_physical_temperature_table_interpolation_verified":False,
+        "actual_physical_temperature_table_interpolation_verified":bool(
+            any(x[6] for x in checks)),
         "per_selector":[{
             "temperature_method_requested_in_settings_XML":method,
             "two_distinct_evaluated_neutron_kT_tables_used":bool(brackets),
