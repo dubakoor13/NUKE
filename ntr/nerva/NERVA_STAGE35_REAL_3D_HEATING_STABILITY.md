@@ -33,3 +33,21 @@ The underlying cold ~0.012-k-effective surrogate remains **far subcritical**. Fo
 ## Next physics gates
 
 Use larger independent neutron-source populations and multiple initial source-shape choices on the same fixed historical reference before any confidence claims; investigate neutron population clustering and inactive-batch sensitivity; independently establish reactor-state nuclear-data/geometry traceability before coupling power density to fuel and H₂ thermal limits.
+
+
+## Executed original 3D OpenMC evidence — 2026-10-28
+
+**Dedicated genuine HDF5 [workflow 40743595418](https://github.com/dubakoor13/NUKE/actions/runs/40743595418) COMPLETED SUCCESS** on tested SHA `1134560f27cdabe367d526ef3753ceab625a447a`. The workflow fetched **12 original C++ OpenMC v0.15.3 coupled neutron/photon statepoints** and the independent successful Stage34 original heat-window report, then verified all native 3D active-window mesh integrals and the unchanged original axial heat. **11/11 adversarial numerical tests and 2/2 mandatory real-native-HDF5 tests passed**.
+
+**Actual observed mean across four independent seeds of early[21–30] vs late[46–65] deposited-heating *spatial fraction* total variation:**
+
+| Conservatively integrated heating grid (x×y×z) | Observed mean TV |
+| --- | ---: |
+| 12×12×10 (finest recorded grid) | 0.2248836445788241 |
+| 6×6×10 | 0.19200733166251294 |
+| 3×3×10 | 0.17573591410546055 |
+| 1×1×10 (axial) | 0.16460848172497022 |
+
+All numbers are original OpenMC simulated heat-distribution-shape differences **not** temperature, reactivity, power-density in watts, or a source-convergence p-value. The coarsening monotonicity and independent archival Stage34 0.16460848172497028 axial-TV check passed. The 3D array of eV/source/voxel, eV/source/cm³ and normalized fractions from all 12 disjoint seed/win combinations is archived as **NPZ** alongside descriptive JSON in workflow artifact **12840232993**, `nuke-stage35-original-openmc-3d-spatial-heating-stability` (reported expiration 2026-11-18). Retain/checksum the full original Stage33 12-HDF5 archive separately for long-term reproducibility.
+
+**Physical interpretation:** noticeable spatial deposited-heat shape variation remains even after integrating x/y into an axial profile, and variation increases when genuinely resolved x/y features are retained. This does not distinguish fission-source temporal drift, neutron/photon tally noise, spatial estimator variance and other numerical effects. The cold far-subcritical configuration with limited 45 active generations **cannot yet supply qualified 3D hot-NERVA fuel temperature/heat-loading inputs**.
