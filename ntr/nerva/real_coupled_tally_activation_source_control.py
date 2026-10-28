@@ -83,7 +83,10 @@ def validate_native_tally_control(baseline: Path,
         config.append(cfg)
     if (config[0]!=config[1] or hashes[0]!=hashes[1]):
         raise ValueError("real source-only experiment altered settings, geometry or data")
-    # Histogram must use the SAME physically defined native source-mesh\n    # bounds as prior validated Stage37–41 source convergence tests.\n    original_heating = _native_heating(baseline / 'statepoint.100.h5')\n    actual=[]
+    # Histogram must use the native scored source mesh's physical bounds.
+    # Cross-case source-bank bins must be physically identical.
+    original_heating = _native_heating(baseline / "statepoint.100.h5")
+    actual=[]
     for index,path in enumerate(paths):
         hists=[]
         for batch in BATCHES:
