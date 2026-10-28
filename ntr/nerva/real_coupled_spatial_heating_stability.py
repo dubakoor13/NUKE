@@ -25,7 +25,7 @@ from .real_coupled_disjoint_heating import (
 from .real_coupled_source_temporal import CHECKPOINTS, SEEDS
 
 _FINE = (12, 12, 10)
-_SCALES = ((12, 12, 10), (6, 6, 5), (3, 3, 2), (1, 1, 10))
+_SCALES = ((12, 12, 10), (6, 6, 10), (3, 3, 10), (1, 1, 10))
 _WINDOWS = ((21, 30), (31, 45), (46, 65))
 
 
