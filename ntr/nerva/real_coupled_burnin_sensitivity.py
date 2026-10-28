@@ -46,8 +46,8 @@ def strict_native_identity(path: Path, *, seed: int, inactive: int, batch: int) 
     """
     try:
         with h5py.File(path, "r") as h:
-            if (bytes(h.attrs["filetype"]).rstrip(b"\\0") != b"statepoint"
-                    or bytes(h["run_mode"][()]).rstrip(b"\\0") != b"eigenvalue"
+            if (bytes(h.attrs["filetype"]).rstrip(b"\0") != b"statepoint"
+                    or bytes(h["run_mode"][()]).rstrip(b"\0") != b"eigenvalue"
                     or int(h.attrs["photon_transport"]) != 1
                     or int(h.attrs["source_present"]) != 1):
                 raise ValueError("genuine coupled OpenMC eigenvalue source statepoint required")
@@ -329,7 +329,7 @@ def main() -> int:
     args=p.parse_args()
     result=audit_real_inactive_threshold(args.original_stage37_root,args.new_40_inactive_root)
     args.output.parent.mkdir(parents=True,exist_ok=True)
-    args.output.write_text(json.dumps(result,indent=2,allow_nan=False)+"\\n",encoding="utf-8")
+    args.output.write_text(json.dumps(result,indent=2,allow_nan=False)+"\n",encoding="utf-8")
     print("Native original neutron+photon statepoints audited:",result["original_native_hdf5_count"])
     print("Bit-identical native transport source histories despite burn-in change: YES")
     print("Mean fine-3D heating shape TV, inactive20 vs inactive40:",result[
