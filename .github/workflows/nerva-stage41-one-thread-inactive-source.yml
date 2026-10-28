@@ -1,4 +1,4 @@
-name: NUKE Stage41 1-OpenMP-thread genuine OpenMC source genealogy and burn-in
+name: NUKE Stage41 genuine original one-thread OpenMC source genealogy audit
 
 on:
   push:
@@ -15,84 +15,68 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  original-openmc-one-thread-controlled-neutron-genealogy:
+  genuine-single-thread-source-bank-and-coupled-heat:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Pin actual evaluated-data OpenMC C++ v0.15.3 neutron photon transport
+      - name: Retrieve all six ORIGINAL previously executed one-thread OpenMC source histories
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p build/stage41_one_thread build/stage41_results
-          docker pull openmc/openmc:v0.15.3
-          docker image inspect openmc/openmc:v0.15.3 \
-            --format '{{json .RepoDigests}}' > build/stage41_one_thread/openmc_image_repo_digest.json
-      - name: Execute SIX genuine one-thread OpenMC C++ neutron photon histories
+          # Six real C++ OpenMC 0.15.3 100-batch histories executed in
+          # 40753528970, originally 1 CPU/OMP_NUM_THREADS=1.
+          # Initial audit ran and wrote physical JSON, but one integration
+          # test had a JSON field-name typo. Reuse EXACT original binaries:
+          # no surrogate statepoints, no second transport execution.
+          gh run download 40753528970 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage41-six-original-1-thread-openmc-coupled-HDF5 \
+            -D build/stage41_one_thread
+          for arm in original20 repeat20 changed40; do
+            for mode in legacy-broad central-compact; do
+              folder="build/stage41_one_thread/$arm/$mode/seed_13007"
+              test -s "$folder/transport_provenance.json"
+              test -s "$folder/nuclear_data_report.json"
+              test -s "$folder/settings.xml"
+              test -s "$folder/geometry.xml"
+              test -s "$folder/materials.xml"
+              test -s "$folder/tallies.xml"
+              for batch in 060 100; do
+                test -s "$folder/statepoint.$batch.h5"
+              done
+            done
+          done
+      - name: Verify 12 actual original native StatePoints using official pinned OpenMC
         run: |
           set -euo pipefail
-          docker run --rm --cpus=1 --memory=6g -e OMP_NUM_THREADS=1 \
-            -e OPENBLAS_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
+          docker pull openmc/openmc:v0.15.3
+          docker run --rm --cpus=2 --memory=6g \
             -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
             openmc/openmc:v0.15.3 \
             bash -lc '
               set -euo pipefail
               export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
               python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
-              test -s "$OPENMC_CROSS_SECTIONS"
-              test "$OMP_NUM_THREADS" = "1"
-              openmc --version
               python -m unittest ntr.nerva.validate_stage41_single_thread_source.SingleThreadControlMathTests -v
-              for arm in original20 repeat20 changed40; do
-                inactive=20
-                if [ "$arm" = changed40 ]; then inactive=40; fi
-                for mode in legacy-broad central-compact; do
-                  echo "GENUINE OpenMC one-thread physics arm=$arm mode=$mode seed=13007 inactive=$inactive"
-                  python -m ntr.nerva.run_openmc_transport \
-                    --cross-sections "$OPENMC_CROSS_SECTIONS" \
-                    --assembly core --rings 3 \
-                    --particles 3000 --batches 100 --inactive "$inactive" \
-                    --statepoint-batches 60 100 --seed 13007 \
-                    --initial-fission-source "$mode" \
-                    --hydrogen-temperature-k 293.6059129982851 \
-                    --photon-transport \
-                    --heating-mesh-dimensions 12 12 10 \
-                    --diagnostic-energy-groups 24 --axial-mesh-bins 24 \
-                    --output "/repo/build/stage41_one_thread/$arm/$mode/seed_13007"
-                  for checkpoint in 060 100; do
-                    test -s "/repo/build/stage41_one_thread/$arm/$mode/seed_13007/statepoint.$checkpoint.h5"
-                  done
-                done
-              done
               python -m ntr.nerva.real_coupled_single_thread_source_control \
                 --root /repo/build/stage41_one_thread \
                 --output /repo/build/stage41_results/actual_single_thread_burnin_source.json
               NUKE_STAGE41_REAL_SINGLE_THREAD_HDF5_ROOT=/repo/build/stage41_one_thread \
                 python -m unittest ntr.nerva.validate_stage41_single_thread_source.GenuineSingleThreadOpenMCPhysicsTests -v
-              python -c "import json; r=json.load(open(\"/repo/build/stage41_results/actual_single_thread_burnin_source.json\")); assert r[\"native_OpenMC_neutron_photon_histories_executed\"]==6 and r[\"genuine_original_hdf5_checkpoints_60_100\"]==12 and not r[\"real_hot_nasa_nerva_core_or_watts_qualified\"]; print(\"REAL one-thread OpenMC source genealogy verified; hot reactor NOT qualified\")"
+              python -c "import json; r=json.load(open(\"/repo/build/stage41_results/actual_single_thread_burnin_source.json\")); assert r[\"native_OpenMC_neutron_photon_histories_executed\"]==6 and r[\"genuine_original_hdf5_checkpoints_60_100\"]==12 and not r[\"real_hot_nasa_nerva_core_or_watts_qualified\"]; print(\"Stage41 true native 1-OpenMP-thread neutron/photon source physics verified; no hot reactor\")"
             '
-      - name: Preserve ALL original single-thread C++ HDF5 and physical data provenance
+      - name: Preserve actual full original single-thread source bank and heating QA JSON
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: nuke-stage41-six-original-1-thread-openmc-coupled-HDF5
-          path: |
-            build/stage41_one_thread/openmc_image_repo_digest.json
-            build/stage41_one_thread/*/*/seed_*/*.xml
-            build/stage41_one_thread/*/*/seed_*/*.json
-            build/stage41_one_thread/*/*/seed_*/statepoint.060.h5
-            build/stage41_one_thread/*/*/seed_*/statepoint.100.h5
-            build/stage41_one_thread/*/*/seed_*/summary.h5
-          if-no-files-found: warn
-          retention-days: 21
-      - name: Preserve original one-thread observed source-trajectory and heating physics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nuke-stage41-single-thread-source-genealogy-and-heating-results
+          name: nuke-stage41-verified-single-thread-native-source-and-heating-physics
           path: build/stage41_results/*.json
           if-no-files-found: warn
           retention-days: 21
