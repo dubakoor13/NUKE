@@ -27,3 +27,10 @@ NUKE_STAGE32_ORIGINAL_FOUR_SEED_ROOT=build/stage31 \
 ## Next experimental gap
 
 Execute **early and late native fission bank checkpoints within each seed**, with *photon transport and identical evaluated data*, to quantify temporal source drift and fission genealogical cloning. Repeat with at least one independent source initialization and source-population/inactive-batch sensitivity. Only after those studies should stationary-source claims be considered. Historical hot-core material and experiment validation remain separate.
+
+
+## Executed real-HDF5 acceptance — October 28, 2026
+
+GitHub Actions [run 40740267218](https://github.com/dubakoor13/NUKE/actions/runs/40740267218) **COMPLETED SUCCESS** on audit-code commit `ad2654337f17d68e1a473bdfa85554cc0810a4cf` using the **original four real Stage31 native coupled-transport statepoints** from run `40326333031`. The workflow downloaded and SHA-checked the archived HDF5 binaries; 7/7 adversarial/mathematical tests passed, and both mandatory real-HDF5 qualification-guard tests passed. GitHub Actions artifact `12837864365` contains the 4-bank spatial diagnostic JSON.
+
+**Observed mean pairwise final-bank spatial total-variation distance: 0.5860555555555554**, scored over the fixed 4 × 4 × 10 spatial histogram. This is a measured between-seed distributional difference, **not** a hypothesis-test p-value or proof of source convergence. The presence of large spatial variation warrants properly time-resolved bank stationarity/genealogy testing; do not infer calibrated uncertainty or operating-core validity from this number. Original transport was not rerun in Stage32: the Stage31 executed coupled HDF5 was reanalyzed.
