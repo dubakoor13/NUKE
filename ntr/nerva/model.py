@@ -51,13 +51,23 @@ def build_model(
     settings.inactive = config.inactive
     settings.particles = config.particles
     settings.photon_transport = config.photon_transport
-    # Bind audited nearest-library tolerance to the actual transport.
-    # Never rely on the default 10 K tolerance for evaluated bound physics.
-    if (config.thermal_scattering_treatment == "evaluated-bound"
-            or config.bound_nearest_temperature_tolerance_k > 0):
+    # Explicitly bind the same temperature-selection operator that is
+    # evaluated against the actual neutron HDF5 kT tables before transport.
+    # An OpenMC run must never silently use a different default method.
+    # 'nearest' is a discrete evaluated table; 'interpolation' uses two
+    # evaluated tables bracketing T (not out-of-range extrapolation).
+    if config.neutron_temperature_method == "interpolation":
+        settings.temperature = {"method": "interpolation"}
+    else:
+        nearest_tolerance = (
+            max(1.0e-6, config.bound_nearest_temperature_tolerance_k)
+            if (config.thermal_scattering_treatment == "evaluated-bound"
+                or config.bound_nearest_temperature_tolerance_k > 0)
+            else 10.0
+        )
         settings.temperature = {
             "method": "nearest",
-            "tolerance": max(1.0e-6, config.bound_nearest_temperature_tolerance_k),
+            "tolerance": nearest_tolerance,
         }
 
     half_length = 0.5 * config.active_length_cm
