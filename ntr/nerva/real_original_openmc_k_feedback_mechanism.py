@@ -59,7 +59,7 @@ def _cpp_provenance(upstream_dir: Path) -> dict:
             raise FileNotFoundError("pinned official OpenMC C++ v0.15.3 source missing: "+str(path))
         data=path.read_bytes()
         git_blob_sha=hashlib.sha1(
-            ("blob "+str(len(data))+"\\0").encode()+data
+            ("blob "+str(len(data))+"\0").encode()+data
         ).hexdigest()
         if git_blob_sha!=UPSTREAM_GIT_BLOB_SHA[name]:
             raise ValueError("official OpenMC C++ version/source Git blob SHA mismatch: "+name)
