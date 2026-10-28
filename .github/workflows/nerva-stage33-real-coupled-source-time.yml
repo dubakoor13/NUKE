@@ -1,0 +1,86 @@
+name: NUKE Stage33 real coupled OpenMC temporal fission-source checkpoints
+
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_coupled_source_temporal.py'
+      - 'ntr/nerva/validate_stage33_coupled_source_temporal.py'
+      - '.github/workflows/nerva-stage33-real-coupled-source-time.yml'
+  push:
+    paths:
+      - 'ntr/nerva/real_coupled_source_temporal.py'
+      - 'ntr/nerva/validate_stage33_coupled_source_temporal.py'
+      - '.github/workflows/nerva-stage33-real-coupled-source-time.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  four-new-real-coupled-three-checkpoint-openmc-source-histories:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pin genuine C++ OpenMC neutron and photon executable
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage33
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' > build/stage33/openmc_image_repo_digest.json
+      - name: Execute four actual coupled OpenMC histories and save 12 original temporal checkpoints
+        run: |
+          docker run --rm --cpus=2 --memory=6g -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              test -f "$OPENMC_CROSS_SECTIONS"
+              openmc --version
+              python -m unittest ntr.nerva.validate_stage33_coupled_source_temporal.TemporalSourceMathTests -v
+              for seed in 13007 23011 33013 43019; do
+                echo "=== ORIGINAL OpenMC coupled source history seed $seed: 30 45 65 ==="
+                python -m ntr.nerva.run_openmc_transport \
+                  --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                  --assembly core --rings 3 \
+                  --particles 3000 --batches 65 --inactive 20 \
+                  --statepoint-batches 30 45 65 --seed "$seed" \
+                  --hydrogen-temperature-k 293.6059129982851 \
+                  --photon-transport \
+                  --heating-mesh-dimensions 12 12 10 \
+                  --diagnostic-energy-groups 24 --axial-mesh-bins 24 \
+                  --output "/repo/build/stage33/seed_$seed"
+                for batch in 30 45 65; do
+                  test -s "/repo/build/stage33/seed_$seed/statepoint.$batch.h5"
+                done
+              done
+              python -m ntr.nerva.real_coupled_photon_heating_ensemble \
+                --root /repo/build/stage33 \
+                --output /repo/build/stage33/actual_four_seed_coupled_heating_covariance.json
+              python -m ntr.nerva.real_coupled_source_temporal \
+                --root /repo/build/stage33 \
+                --output /repo/build/stage33/actual_coupled_temporal_fission_source.json
+              NUKE_STAGE33_REAL_COUPLED_ROOT=/repo/build/stage33 \
+                python -m unittest ntr.nerva.validate_stage33_coupled_source_temporal.ActualOpenMCCoupledTemporalSourceTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage33/actual_coupled_temporal_fission_source.json\")); assert r[\"native_original_checkpoint_count\"]==12 and r[\"all_same_seed_native_generation_history_prefixes_exact\"] and not r[\"physically_stationary_source_qualified\"]; print(\"REAL coupled source drift measured, source convergence NOT certified\")"
+            '
+      - name: Preserve 12 actual source statepoints, evaluated inputs and physics diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage33-original-coupled-temporal-fission-source-hdf5
+          path: |
+            build/stage33/*.json
+            build/stage33/seed_*/*.json
+            build/stage33/seed_*/*.xml
+            build/stage33/seed_*/statepoint.30.h5
+            build/stage33/seed_*/statepoint.45.h5
+            build/stage33/seed_*/statepoint.65.h5
+            build/stage33/seed_*/summary.h5
+          retention-days: 21
+          if-no-files-found: warn
