@@ -1,0 +1,105 @@
+name: NUKE Stage43 original OpenMC inactive-transition per-generation source bank
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/real_original_per_generation_fission_bank.py'
+      - 'ntr/nerva/validate_stage43_per_generation_bank.py'
+      - '.github/workflows/nerva-stage43-original-per-generation-bank.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/real_original_per_generation_fission_bank.py'
+      - 'ntr/nerva/validate_stage43_per_generation_bank.py'
+      - '.github/workflows/nerva-stage43-original-per-generation-bank.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  original-openmc-source-bank-first-divergence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Recover original Stage42 no-user-tally neutron photon StatePoints
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage43_original_previous build/stage43_native_early_bank build/stage43_result
+          gh run download 40756403944 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage42-four-original-openmc-source-only-1-thread-hdf5 \
+            -D build/stage43_original_previous
+      - name: Pin evaluated-data OpenMC C++ 0.15.3 and one OpenMP thread
+        run: |
+          set -euo pipefail
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' > build/stage43_native_early_bank/openmc_image_repo_digest.json
+      - name: Execute four REAL original neutron+photon C++ fission-source histories with 19–30 banks
+        run: |
+          docker run --rm --cpus=1 --memory=6g -e OMP_NUM_THREADS=1 \
+            -e OPENBLAS_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              test -s "$OPENMC_CROSS_SECTIONS"
+              python -m unittest ntr.nerva.validate_stage43_per_generation_bank.PerGenerationNativeFissionMathTests -v
+              for inactive in 20 40; do
+                for mode in legacy-broad central-compact; do
+                  echo "ORIGINAL OpenMC complete neutron source bank per generation 19-30: $mode, inactive=$inactive"
+                  python -m ntr.nerva.run_openmc_transport \
+                    --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                    --assembly core --rings 3 \
+                    --particles 3000 --batches 100 --inactive "$inactive" \
+                    --statepoint-batches 19 20 21 22 23 24 25 26 27 28 29 30 60 100 \
+                    --seed 13007 --initial-fission-source "$mode" \
+                    --hydrogen-temperature-k 293.6059129982851 \
+                    --photon-transport --diagnostic-disable-user-tallies \
+                    --diagnostic-allow-inactive-statepoints \
+                    --heating-mesh-dimensions 12 12 10 \
+                    --diagnostic-energy-groups 24 --axial-mesh-bins 24 \
+                    --output "/repo/build/stage43_native_early_bank/inactive$inactive/$mode/seed_13007"
+                  for batch in 019 020 021 022 023 024 025 026 027 028 029 030 060 100; do
+                    test -s "/repo/build/stage43_native_early_bank/inactive$inactive/$mode/seed_13007/statepoint.$batch.h5"
+                  done
+                done
+              done
+              python -m ntr.nerva.real_original_per_generation_fission_bank \
+                --stage42-original-no-tallies /repo/build/stage43_original_previous \
+                --stage43-new-checkpoints /repo/build/stage43_native_early_bank \
+                --output /repo/build/stage43_result/actual_first_fission_bank_divergence.json
+              NUKE_STAGE43_REAL_PREVIOUS_ORIGINAL_HDF5=/repo/build/stage43_original_previous \
+              NUKE_STAGE43_REAL_SAVED_EVERY_GENERATION=/repo/build/stage43_native_early_bank \
+                python -m unittest ntr.nerva.validate_stage43_per_generation_bank.ActualNativeOriginalFissionBankTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage43_result/actual_first_fission_bank_divergence.json\")); assert r[\"original_new_openmc_Cplusplus_HDF5_checkpoints\"]==56 and r[\"all_extra_HDF5_writes_proven_nonintrusive_against_original\"] and not r[\"operating_NASA_NERVA_thermal_power_qualified\"]; print(\"Genuine original OpenMC first fission-bank divergence localized\")"
+            '
+      - name: Preserve all 56 actual original coupled photon/neutron per-generation HDF5
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage43-original-56-openmc-fission-bank-hdf5
+          path: |
+            build/stage43_native_early_bank/openmc_image_repo_digest.json
+            build/stage43_native_early_bank/*/*/seed_*/*.json
+            build/stage43_native_early_bank/*/*/seed_*/*.xml
+            build/stage43_native_early_bank/*/*/seed_*/statepoint.*.h5
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Preserve original early-source genealogy and numerical output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage43-native-first-fission-bank-difference
+          path: build/stage43_result/*.json
+          retention-days: 21
+          if-no-files-found: warn
