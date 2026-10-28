@@ -32,7 +32,7 @@ def _digest(file: Path) -> str:
     return h.hexdigest()
 
 
-def _hdf5_identity(path: Path) -> dict:
+def _hdf5_identity(path: Path, *, expected_particles: int = 3000) -> dict:
     """Raw native OpenMC eigenvalue history, with explicit photon-mode checks."""
     try:
         with h5py.File(path, "r") as h:
@@ -53,7 +53,7 @@ def _hdf5_identity(path: Path) -> dict:
     except (OSError, KeyError, TypeError, AttributeError) as exc:
         raise ValueError("missing native OpenMC coupled fission-source history") from exc
     if (seed not in SEEDS or batch not in CHECKPOINTS or total != 65
-            or inactive != 20 or particles != 3000 or generations != 1
+            or inactive != 20 or particles != expected_particles or generations != 1
             or realizations != batch - inactive or k.shape != (batch,)
             or entropy.shape != (batch,) or not np.isfinite(k).all()
             or not np.isfinite(entropy).all()
