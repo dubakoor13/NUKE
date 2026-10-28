@@ -121,6 +121,15 @@ def parse_args() -> argparse.Namespace:
             "and identical geometry, nuclear data, score, power, and bounds."
         ),
     )
+    parser.add_argument(
+        "--diagnostic-allow-inactive-statepoints",
+        action="store_true",
+        help=(
+            "Source genealogy instrument ONLY. Permit original OpenMC "
+            "StatePoints during inactive generations to localize first "
+            "fission-source divergence. Requires no-user-tally diagnostic."
+        ),
+    )
     parser.add_argument("--diagnostic-energy-groups", type=int, default=80)
     parser.add_argument("--axial-mesh-bins", type=int, default=96)
     parser.add_argument(
@@ -312,14 +321,21 @@ def main() -> int:
             encoding="utf-8",
         )
 
+    if args.diagnostic_allow_inactive_statepoints and not args.diagnostic_disable_user_tallies:
+        raise ValueError(
+            "inactive source checkpoints are permitted only in the "
+            "explicit user-tally-free genealogy diagnostic"
+        )
     if args.statepoint_batches is not None:
         stages = sorted(set(args.statepoint_batches))
         if (len(stages) != len(args.statepoint_batches)
                 or stages[0] <= 0 or stages[-1] != args.batches
-                or any(stage <= args.inactive for stage in stages)):
+                or (not args.diagnostic_allow_inactive_statepoints
+                    and any(stage <= args.inactive for stage in stages))):
             raise ValueError(
-                "statepoint batches must be unique active-batch numbers "
-                "and must include the final requested batch"
+                "statepoint batches must be unique positive numbers, "
+                "include the final batch, and be active unless an explicit "
+                "source-only inactive-checkpoint diagnostic is selected"
             )
     if args.seed is not None and not 1 <= args.seed < 2**63:
         raise ValueError("OpenMC seed must be a positive 63-bit integer")
@@ -398,6 +414,8 @@ def main() -> int:
         "statepoint": None,
     }
 
+    if args.diagnostic_allow_inactive_statepoints:
+        provenance["config"]["diagnostic_allow_inactive_statepoints"] = True
     if args.diagnostic_disable_user_tallies:
         provenance["config"]["diagnostic_no_user_tallies"] = True
         provenance["run_policy"] += (
