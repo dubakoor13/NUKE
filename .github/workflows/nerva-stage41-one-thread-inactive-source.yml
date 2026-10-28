@@ -1,0 +1,82 @@
+name: NUKE Stage41 genuine original one-thread OpenMC source genealogy audit
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_coupled_single_thread_source_control.py'
+      - 'ntr/nerva/validate_stage41_single_thread_source.py'
+      - '.github/workflows/nerva-stage41-one-thread-inactive-source.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_coupled_single_thread_source_control.py'
+      - 'ntr/nerva/validate_stage41_single_thread_source.py'
+      - '.github/workflows/nerva-stage41-one-thread-inactive-source.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  genuine-single-thread-source-bank-and-coupled-heat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Retrieve all six ORIGINAL previously executed one-thread OpenMC source histories
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage41_one_thread build/stage41_results
+          # Six real C++ OpenMC 0.15.3 100-batch histories executed in
+          # 40753528970, originally 1 CPU/OMP_NUM_THREADS=1.
+          # Initial audit ran and wrote physical JSON, but one integration
+          # test had a JSON field-name typo. Reuse EXACT original binaries:
+          # no surrogate statepoints, no second transport execution.
+          gh run download 40753528970 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage41-six-original-1-thread-openmc-coupled-HDF5 \
+            -D build/stage41_one_thread
+          for arm in original20 repeat20 changed40; do
+            for mode in legacy-broad central-compact; do
+              folder="build/stage41_one_thread/$arm/$mode/seed_13007"
+              test -s "$folder/transport_provenance.json"
+              test -s "$folder/nuclear_data_report.json"
+              test -s "$folder/settings.xml"
+              test -s "$folder/geometry.xml"
+              test -s "$folder/materials.xml"
+              test -s "$folder/tallies.xml"
+              for batch in 060 100; do
+                test -s "$folder/statepoint.$batch.h5"
+              done
+            done
+          done
+      - name: Verify 12 actual original native StatePoints using official pinned OpenMC
+        run: |
+          set -euo pipefail
+          docker pull openmc/openmc:v0.15.3
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              python -m unittest ntr.nerva.validate_stage41_single_thread_source.SingleThreadControlMathTests -v
+              python -m ntr.nerva.real_coupled_single_thread_source_control \
+                --root /repo/build/stage41_one_thread \
+                --output /repo/build/stage41_results/actual_single_thread_burnin_source.json
+              NUKE_STAGE41_REAL_SINGLE_THREAD_HDF5_ROOT=/repo/build/stage41_one_thread \
+                python -m unittest ntr.nerva.validate_stage41_single_thread_source.GenuineSingleThreadOpenMCPhysicsTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage41_results/actual_single_thread_burnin_source.json\")); assert r[\"native_OpenMC_neutron_photon_histories_executed\"]==6 and r[\"genuine_original_hdf5_checkpoints_60_100\"]==12 and not r[\"real_hot_nasa_nerva_core_or_watts_qualified\"]; print(\"Stage41 true native 1-OpenMP-thread neutron/photon source physics verified; no hot reactor\")"
+            '
+      - name: Preserve actual full original single-thread source bank and heating QA JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage41-verified-single-thread-native-source-and-heating-physics
+          path: build/stage41_results/*.json
+          if-no-files-found: warn
+          retention-days: 21
