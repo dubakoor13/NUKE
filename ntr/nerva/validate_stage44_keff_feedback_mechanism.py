@@ -68,8 +68,10 @@ class InverseKSourceMechanismMathTests(unittest.TestCase):
 
     def test_tiny_k_roundoff_does_not_qualify_feedback_divergence(self):
         a,b=fixture()
-        a[22]["k"][20]=0.013
-        b[22]["k"][20]=0.013
+        for run in (a,b):
+            for batch in BATCHES:
+                if batch>=21:
+                    run[batch]["k"][20]=0.013
         with self.assertRaisesRegex(ValueError,"did not diverge"):
             physical_source_feedback(a,b)
 
