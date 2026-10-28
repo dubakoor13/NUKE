@@ -1,0 +1,116 @@
+name: NUKE Stage42 original OpenMC source with and without active user tallies
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/real_coupled_tally_activation_source_control.py'
+      - 'ntr/nerva/validate_stage42_tally_activation_source.py'
+      - '.github/workflows/nerva-stage42-user-tally-source-control.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/real_coupled_tally_activation_source_control.py'
+      - 'ntr/nerva/validate_stage42_tally_activation_source.py'
+      - '.github/workflows/nerva-stage42-user-tally-source-control.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  original-coupled-openmc-no-user-tally-source-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Recover genuine Stage41 scored HDF5 one-thread neutron source controls
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage42_baseline_scored build/stage42_source_only build/stage42_results
+          gh run download 40753528970 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage41-six-original-1-thread-openmc-coupled-HDF5 \
+            -D build/stage42_baseline_scored
+          for mode in legacy-broad central-compact; do
+            for arm in original20 changed40; do
+              for batch in 060 100; do
+                test -s "build/stage42_baseline_scored/$arm/$mode/seed_13007/statepoint.$batch.h5"
+              done
+            done
+          done
+      - name: Pin original evaluated-data OpenMC C++ 0.15.3 executable and source data
+        run: |
+          set -euo pipefail
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' > build/stage42_source_only/openmc_image_repo_digest.json
+      - name: Execute FOUR new actual neutron photon source-only C++ histories with zero user tallies
+        run: |
+          docker run --rm --cpus=1 --memory=6g \
+            -e OMP_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
+            -e MKL_NUM_THREADS=1 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              test -s "$OPENMC_CROSS_SECTIONS"
+              openmc --version
+              python -m unittest ntr.nerva.validate_stage42_tally_activation_source.TallyActivationControlMathTests -v
+              for inactive in 20 40; do
+                for mode in legacy-broad central-compact; do
+                  echo "ACTUAL source-only OpenMC eigenvalue: $mode, inactive=$inactive, zero user tallies"
+                  python -m ntr.nerva.run_openmc_transport \
+                    --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                    --assembly core --rings 3 \
+                    --particles 3000 --batches 100 --inactive "$inactive" \
+                    --statepoint-batches 60 100 --seed 13007 \
+                    --initial-fission-source "$mode" \
+                    --hydrogen-temperature-k 293.6059129982851 \
+                    --photon-transport \
+                    --diagnostic-disable-user-tallies \
+                    --heating-mesh-dimensions 12 12 10 \
+                    --diagnostic-energy-groups 24 --axial-mesh-bins 24 \
+                    --output "/repo/build/stage42_source_only/inactive$inactive/$mode/seed_13007"
+                  for batch in 060 100; do
+                    test -s "/repo/build/stage42_source_only/inactive$inactive/$mode/seed_13007/statepoint.$batch.h5"
+                  done
+                done
+              done
+              python -m ntr.nerva.real_coupled_tally_activation_source_control \
+                --stage41-scored-originals /repo/build/stage42_baseline_scored \
+                --new-no-user-tally-runs /repo/build/stage42_source_only \
+                --output /repo/build/stage42_results/actual_neutron_genealogy_scoring_control.json
+              NUKE_STAGE42_REAL_SCORED_STAGE41=/repo/build/stage42_baseline_scored \
+              NUKE_STAGE42_REAL_NO_USER_TALLIES=/repo/build/stage42_source_only \
+                python -m unittest ntr.nerva.validate_stage42_tally_activation_source.GenuineOpenMCTallyFreeControlTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage42_results/actual_neutron_genealogy_scoring_control.json\")); assert r[\"genuine_actual_openmc_hdf5_checkpoint_files_inspected\"]==16 and r[\"all_four_original_source_only_runs_have_no_user_scoring_tallies\"] and not r[\"hot_historical_NERVA_or_physical_watts_qualified\"]; print(\"Real C++ neutron genealogy control passed; no hot core qualification\")"
+            '
+      - name: Preserve all original C++ source-only HDF5, real nuclear-data provenance and XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage42-four-original-openmc-source-only-1-thread-hdf5
+          path: |
+            build/stage42_source_only/openmc_image_repo_digest.json
+            build/stage42_source_only/*/*/seed_*/*.xml
+            build/stage42_source_only/*/*/seed_*/*.json
+            build/stage42_source_only/*/*/seed_*/statepoint.060.h5
+            build/stage42_source_only/*/*/seed_*/statepoint.100.h5
+            build/stage42_source_only/*/*/seed_*/summary.h5
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Preserve original neutron source-bank and k entropy numerical differences
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage42-verified-tally-free-original-neutron-source-physics
+          path: build/stage42_results/*.json
+          retention-days: 21
+          if-no-files-found: warn
