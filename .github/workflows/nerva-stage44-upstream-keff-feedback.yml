@@ -1,0 +1,88 @@
+name: NUKE Stage44 genuine OpenMC v0.15.3 inverse-k fission source feedback
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_original_openmc_k_feedback_mechanism.py'
+      - 'ntr/nerva/validate_stage44_keff_feedback_mechanism.py'
+      - '.github/workflows/nerva-stage44-upstream-keff-feedback.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_original_openmc_k_feedback_mechanism.py'
+      - 'ntr/nerva/validate_stage44_keff_feedback_mechanism.py'
+      - '.github/workflows/nerva-stage44-upstream-keff-feedback.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  actual-openmc-neutron-fission-feedback-mechanism:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Recover 56 actual Stage43 original C++ neutron photon HDF5 source banks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage44_original_real_hdf5 build/stage44_upstream_cpp/src build/stage44_results
+          gh run download 40757722214 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage43-original-56-openmc-fission-bank-hdf5 \
+            -D build/stage44_original_real_hdf5
+          for mode in legacy-broad central-compact; do
+            for inactive in 20 40; do
+              f="build/stage44_original_real_hdf5/inactive$inactive/$mode/seed_13007"
+              test -s "$f/transport_provenance.json"
+              for batch in 019 020 021 022 023 024 060 100; do
+                test -s "$f/statepoint.$batch.h5"
+              done
+            done
+          done
+      - name: Pin exact official OpenMC v0.15.3 upstream C++ Git blobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for source in eigenvalue.cpp physics.cpp; do
+            gh api "repos/openmc-dev/openmc/contents/src/$source?ref=v0.15.3" \
+              --jq '.content' | base64 -d > "build/stage44_upstream_cpp/src/$source"
+            test -s "build/stage44_upstream_cpp/src/$source"
+          done
+          git -C build/stage44_upstream_cpp hash-object src/eigenvalue.cpp | \
+            grep -x a2120a006d5758df3bd831f8b813ad2338e8b9d6
+          git -C build/stage44_upstream_cpp hash-object src/physics.cpp | \
+            grep -x 41509af97be90e8853bd9bb6be0d252312069735
+      - name: Verify actual HDF5 k-feedback values and official neutron production equation
+        run: |
+          set -euo pipefail
+          docker pull openmc/openmc:v0.15.3
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              python -m unittest ntr.nerva.validate_stage44_keff_feedback_mechanism.InverseKSourceMechanismMathTests -v
+              python -m ntr.nerva.real_original_openmc_k_feedback_mechanism \
+                --native-original-early-banks /repo/build/stage44_original_real_hdf5 \
+                --upstream-openmc-v0153-cpp /repo/build/stage44_upstream_cpp \
+                --output /repo/build/stage44_results/actual_openmc_v0153_keff_source_feedback.json
+              NUKE_STAGE44_REAL_STAGE43_OPENMC_ROOT=/repo/build/stage44_original_real_hdf5 \
+              NUKE_STAGE44_OFFICIAL_V0153_CPP_ROOT=/repo/build/stage44_upstream_cpp \
+                python -m unittest ntr.nerva.validate_stage44_keff_feedback_mechanism.ActualOpenMCOriginalKFeedbackTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage44_results/actual_openmc_v0153_keff_source_feedback.json\")); assert r[\"genuine_native_openmc_neutron_photon_hdf5_checked\"]==32 and r[\"mechanism_consistent_with_upstream_inverse_k_fission_source_production\"] and not r[\"hot_nasa_nerva_reactor_geometry_or_thermal_power_qualified\"]; print(\"Accepted original C++ inverse-k source genealogy physics evidence\")"
+            '
+      - name: Preserve verified original HDF5/OpenMC-C++ numerical mechanism results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage44-original-neutron-fission-feedback-and-source-physics
+          path: build/stage44_results/*.json
+          retention-days: 21
+          if-no-files-found: warn
