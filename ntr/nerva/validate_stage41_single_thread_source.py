@@ -138,8 +138,7 @@ class GenuineSingleThreadOpenMCPhysicsTests(unittest.TestCase):
             src=case["native_source_trajectory"]
             self.assertEqual(len(src["per_native_checkpoint"]),2)
             h=case["native_photon_neutron_disjoint_heating"]
-            self.assertEqual(h["per_disjoint_active_window"][0],61)
-            self.assertEqual(h["per_disjoint_active_window"][1],100)
+            self.assertEqual(h["physical_active_window"],[61,100])
             self.assertTrue(np.isfinite(h["source_normalized_total_ev_per_mc_start"]).all())
             self.assertFalse(h["changed_40_inactive_heat_differences_are_causal_PROVEN"])
 
