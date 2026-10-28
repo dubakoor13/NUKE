@@ -52,7 +52,7 @@ def _sha(path:Path)->str:
 def verify_upstream_cpp_temperature_sampling(source:Path)->dict:
     """Pin exact official upstream C++ release blob and sampling equation."""
     raw=source.read_bytes()
-    blob=hashlib.sha1(("blob "+str(len(raw))+"\\0").encode()+raw).hexdigest()
+    blob=hashlib.sha1(("blob "+str(len(raw))+"\0").encode()+raw).hexdigest()
     if blob!=OFFICIAL_CPP_BLOB_SHA:
         raise ValueError("OpenMC v0.15.3 src/nuclide.cpp Git blob SHA mismatch")
     text=raw.decode("utf-8")
@@ -78,6 +78,7 @@ def strict_two_table_coverage(audit:dict, *, expected_K:float)->dict:
             or not audit.get("nuclides")):
         raise ValueError("unqualified evaluated neutron data or wrong selector")
     rows=[]
+    iso_hash_cache={}
     for nuclide in audit["nuclides"]:
         grid=nuclide.get("available_temperatures_K",[])
         if (nuclide.get("load_error") is not None or len(grid)<2):
@@ -98,7 +99,12 @@ def strict_two_table_coverage(audit:dict, *, expected_K:float)->dict:
                     or not math.isclose(weight,(expected_K-lo)/(hi-lo),
                                         rel_tol=1e-12,abs_tol=1e-12)):
                 raise ValueError("no two distinct original evaluated HDF5 kT tables bracketing material")
+            original_isotope_path=Path(nuclide["hdf5_path"])
+            if original_isotope_path not in iso_hash_cache:
+                iso_hash_cache[original_isotope_path]=_sha(original_isotope_path)
             rows.append({"isotope":nuclide["nuclide"],
+                         "evaluated_isotope_HDF5_sha256":
+                             iso_hash_cache[original_isotope_path],
                          "material":request["material_key"],
                          "temperature_K":expected_K,
                          "genuine_lower_table_K":lo,
