@@ -1,0 +1,87 @@
+name: NUKE Stage38 original coupled OpenMC burn-in vs source reproducibility
+
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_coupled_burnin_sensitivity.py'
+      - 'ntr/nerva/validate_stage38_coupled_burnin.py'
+      - '.github/workflows/nerva-stage38-coupled-burnin-sensitivity.yml'
+  push:
+    paths:
+      - 'ntr/nerva/real_coupled_burnin_sensitivity.py'
+      - 'ntr/nerva/validate_stage38_coupled_burnin.py'
+      - '.github/workflows/nerva-stage38-coupled-burnin-sensitivity.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  independent-original-openmc-20-vs-40-inactive-mc-source-history:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Retrieve all original native 20-inactive Stage37 OpenMC statepoints
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage38_reference build/stage38_candidate build/stage38_results
+          gh run download 40747291683 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage37-original-broad-vs-compact-neutron-photon-hdf5 \
+            -D build/stage38_reference
+          test -s build/stage38_reference/legacy-broad/seed_13007/statepoint.100.h5
+      - name: Retrieve four genuinely executed 40-inactive OpenMC histories unchanged
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # These were actually executed by official OpenMC C++ in run 40749064255.
+          # Original verification correctly rejected presumptive RNG pairing;
+          # preserve the completed binary transport data, do NOT simulate again.
+          gh run download 40749064255 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage38-original-40inactive-neutron-photon-hdf5 \
+            -D build/stage38_candidate
+          for mode in legacy-broad central-compact; do
+            for seed in 13007 23011; do
+              for batch in 060 100; do
+                test -s "build/stage38_reference/$mode/seed_$seed/statepoint.$batch.h5"
+                test -s "build/stage38_candidate/$mode/seed_$seed/statepoint.$batch.h5"
+              done
+              test -s "build/stage38_reference/$mode/seed_$seed/transport_provenance.json"
+              test -s "build/stage38_candidate/$mode/seed_$seed/transport_provenance.json"
+            done
+          done
+      - name: Audit actual OpenMC coupled neutron photon genealogy and energy fields
+        run: |
+          set -euo pipefail
+          docker pull openmc/openmc:v0.15.3
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              python -m unittest ntr.nerva.validate_stage38_coupled_burnin.BurninMathTests -v
+              python -m ntr.nerva.real_coupled_burnin_sensitivity \
+                --original-stage37-root /repo/build/stage38_reference \
+                --new-40-inactive-root /repo/build/stage38_candidate \
+                --output /repo/build/stage38_results/actual_burnin_20_vs_40_coupled.json
+              NUKE_STAGE38_ORIGINAL_STAGE37_HDF5_ROOT=/repo/build/stage38_reference \
+                NUKE_STAGE38_REAL_40_INACTIVE_HDF5_ROOT=/repo/build/stage38_candidate \
+                python -m unittest ntr.nerva.validate_stage38_coupled_burnin.ActualOpenMCCoupledBurninTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage38_results/actual_burnin_20_vs_40_coupled.json\")); assert r[\"original_native_hdf5_count\"]==16 and not r[\"cross_run_20_inactive_vs_40_inactive_trajectories_EXACTLY_paired\"] and not r[\"source_bias_due_to_inactive_setting_ISOLATED_from_run_noise\"]; print(\"ACTUAL original OpenMC nonpaired source/heat burn-in diagnostics accepted; real watts NOT qualified\")"
+            '
+      - name: Archive actual 16-statepoint neutron genealogy and physical heating statistics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage38-original-nonpaired-source-burnin-physics
+          path: build/stage38_results/actual_burnin_20_vs_40_coupled.json
+          retention-days: 21
+          if-no-files-found: warn
