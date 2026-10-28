@@ -107,77 +107,104 @@ def recover_disjoint_sums(cumulative: tuple[np.ndarray, np.ndarray],
 
 
 def trajectory_identity(original: list[dict], candidate: list[dict]) -> dict:
-    """Require identical native sampled source trajectories at 60 and 100.
+    """Test reproducibility of REAL native OpenMC generator paths.
 
-    Exact equality must be observed, not inferred from using same seed label.
+    Equal RNG *seed labels* do not prove paired Monte Carlo histories.
+    A failed exact comparison is an important numerical observation, NOT
+    a reason to discard actual Monte Carlo data or invent a burn-in effect.
     """
     if (len(original)!=2 or len(candidate)!=2
             or [a["batch"] for a in original]!=list(CHECKPOINTS)
             or [a["batch"] for a in candidate]!=list(CHECKPOINTS)):
         raise ValueError("requires native source banks at 60 and 100")
+    for records in (original,candidate):
+        if (not np.array_equal(records[0]["k"],records[1]["k"][:60])
+                or not np.array_equal(records[0]["entropy"],records[1]["entropy"][:60])):
+            raise ValueError("native OpenMC same-run exact generation prefix failed")
+    comparisons=[]
     for left,right in zip(original,candidate):
         if (left["seed"] != right["seed"]
                 or left["inactive"] != 20 or right["inactive"] != 40
                 or left["batch"] != right["batch"]
-                or not np.array_equal(left["k"],right["k"])
-                or not np.array_equal(left["entropy"],right["entropy"])
-                or not np.array_equal(left["source_bank"],right["source_bank"])):
-            raise ValueError("same seed does not reproduce exact original transport history")
-    for records in (original,candidate):
-        if (not np.array_equal(records[0]["k"],records[1]["k"][:60])
-                or not np.array_equal(records[0]["entropy"],records[1]["entropy"][:60])):
-            raise ValueError("native OpenMC same-seed prefix history does not reproduce")
+                or left["k"].shape != right["k"].shape
+                or left["entropy"].shape != right["entropy"].shape
+                or left["source_bank"].shape != right["source_bank"].shape):
+            raise ValueError("original coupled OpenMC source experiment identities differ")
+        diff=np.abs(left["k"]-right["k"])
+        ent=np.abs(left["entropy"]-right["entropy"])
+        distinct=np.flatnonzero(diff>0)
+        comparisons.append({
+            "native_batch":left["batch"],
+            "exact_k_generation_same":bool(np.array_equal(left["k"],right["k"])),
+            "exact_source_entropy_same":bool(np.array_equal(left["entropy"],right["entropy"])),
+            "exact_fission_bank_array_same":bool(np.array_equal(
+                left["source_bank"],right["source_bank"])),
+            "first_native_k_generation_divergence_one_based":
+                int(distinct[0]+1) if distinct.size else None,
+            "maximum_absolute_native_generation_k_difference":float(np.max(diff)),
+            "RMS_native_generation_k_difference":float(np.sqrt(np.mean(diff*diff))),
+            "maximum_absolute_source_entropy_nats_difference":float(np.max(ent)),
+        })
+    exactly_same=bool(all(
+        row["exact_k_generation_same"] and row["exact_source_entropy_same"]
+        and row["exact_fission_bank_array_same"] for row in comparisons))
     return {
-        "native_k_generation_bit_identical": True,
-        "native_shannon_entropy_bit_identical": True,
-        "native_3000_fission_source_sites_bit_identical_at_both_checkpoints": True,
-        "identical_transport_realizations_verified_NOT_inferred_from_seed": True,
+        "native_checkpoints":comparisons,
+        "same_seed_and_source_start_not_automatically_a_paired_MC_sample":True,
+        "exact_transport_genealogy_between_different_inactive_settings_OBSERVED":
+            exactly_same,
+        "independent_source_history_prefixes_verified":True,
+        "burnin_heating_bias_identifiable_only_if_trajectories_same":
+            exactly_same,
     }
-
 
 def compare_burnin_heating(
     early20: np.ndarray, early40: np.ndarray,
     late20: np.ndarray, late40: np.ndarray
 ) -> dict:
-    """Measure change in 3D mean by withholding 20 more early batches."""
+    """Compare genuine 3D window shapes without pretending paired trajectories.
+
+    When native source histories differ, late-window heating differences are
+    a mixture of stochastic source variation and tally burn-in; no causal
+    inference or independent Monte Carlo confidence interval is valid.
+    """
     a,b,c,d = [np.asarray(x,dtype=float) for x in (early20,early40,late20,late40)]
     if (any(x.shape!=HEATING_MESH or not np.isfinite(x).all()
             or np.any(x < 0) or x.sum()<=0 for x in (a,b,c,d))):
         raise ValueError("four positive original 3D OpenMC heat windows required")
-    # The 61-100 window contains the same underlying particle histories,
-    # hence every native mesh deposited-energy mean must be bit-reproducible
-    # to within floating point summation order, not just shape-close.
-    if not np.allclose(c,d,rtol=2e-12,atol=1e-7):
-        raise ValueError("identical native 61-100 heating source histories disagree")
     levels=[]
     for shape in SPATIAL_SCALES:
-        p=conservative_block_sum(a,shape)
-        q=conservative_block_sum(b,shape)
-        r=conservative_block_sum(c,shape)
+        p,q,r,t=(conservative_block_sum(x,shape) for x in (a,b,c,d))
         levels.append({
             "mesh_bins_xyz":list(shape),
-            "mean_heating_first_active_window_shape_TV_21_60_vs_41_60":
+            "cross_run_first_window_21_60_vs_41_60_shape_TV":
                 total_variation(p/p.sum(),q/q.sum()),
-            "mean_heating_21_60_vs_late_61_100_shape_TV":
+            "reference_same_run_21_60_vs_61_100_shape_TV":
                 total_variation(p/p.sum(),r/r.sum()),
-            "mean_heating_41_60_vs_late_61_100_shape_TV":
-                total_variation(q/q.sum(),r/r.sum()),
+            "candidate_same_run_41_60_vs_61_100_shape_TV":
+                total_variation(q/q.sum(),t/t.sum()),
+            "cross_run_late_window_61_100_shape_TV":
+                total_variation(r/r.sum(),t/t.sum()),
         })
     for fine,coarse in zip(levels,levels[1:]):
-        for key in ("mean_heating_first_active_window_shape_TV_21_60_vs_41_60",
-                    "mean_heating_21_60_vs_late_61_100_shape_TV",
-                    "mean_heating_41_60_vs_late_61_100_shape_TV"):
+        for key in (
+                "cross_run_first_window_21_60_vs_41_60_shape_TV",
+                "reference_same_run_21_60_vs_61_100_shape_TV",
+                "candidate_same_run_41_60_vs_61_100_shape_TV",
+                "cross_run_late_window_61_100_shape_TV"):
             if coarse[key]>fine[key]+1e-12:
                 raise ValueError("conservative heating spatial TV rose after mesh integration")
     return {
-        "four_disjoint_heating_fields_positive_and_native":True,
-        "late_61_100_native_heating_reproduced_across_inactive_thresholds":True,
-        "deposited_energy_21_60_ev_per_MC_source":float(a.sum()),
-        "deposited_energy_41_60_ev_per_MC_source":float(b.sum()),
-        "deposited_energy_61_100_ev_per_MC_source":float(c.sum()),
-        "heating_shape_sensitivity_to_BurnIn_and_time_at_four_resolutions":levels,
+        "original_native_heat_moments_nonnegative":True,
+        "identical_generation_61_100_heat_reproduction_NOT_assumed":True,
+        "reference_deposited_energy_21_60_ev_per_MC_source":float(a.sum()),
+        "candidate_deposited_energy_41_60_ev_per_MC_source":float(b.sum()),
+        "reference_deposited_energy_61_100_ev_per_MC_source":float(c.sum()),
+        "candidate_deposited_energy_61_100_ev_per_MC_source":float(d.sum()),
+        "late_window_energy_relative_change_candidate_minus_reference":
+            float((d.sum()-c.sum())/c.sum()),
+        "heating_shape_descriptive_multiresolution":levels,
     }
-
 
 def audit_real_inactive_threshold(reference_root: Path | str,
                                   candidate_root: Path | str) -> dict:
