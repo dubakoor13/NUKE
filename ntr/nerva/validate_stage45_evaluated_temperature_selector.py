@@ -53,9 +53,9 @@ class EvaluatedTemperatureSelectionMathTests(unittest.TestCase):
 
     def test_nearest_matches_only_physically_available_10K_tolerance(self):
         good=resolve_evaluated_neutron_temperature(
-            [293.6,600.],605.,method="nearest",nearest_tolerance_k=5.)
+            [293.6,600.],595.,method="nearest",nearest_tolerance_k=5.)
         bad=resolve_evaluated_neutron_temperature(
-            [293.6,600.],605.01,method="nearest",nearest_tolerance_k=5.)
+            [293.6,600.],594.99,method="nearest",nearest_tolerance_k=5.)
         self.assertTrue(good["covered"])
         self.assertFalse(bad["covered"])
 
