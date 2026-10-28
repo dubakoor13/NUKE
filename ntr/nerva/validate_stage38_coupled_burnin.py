@@ -59,20 +59,27 @@ class BurninMathTests(unittest.TestCase):
     def test_cloned_monte_carlo_sources_must_be_verified_not_inferred(self):
         old,new=identical_trajectory()
         r=trajectory_identity(old,new)
-        self.assertTrue(r["native_3000_fission_source_sites_bit_identical_at_both_checkpoints"])
-        self.assertTrue(r["native_k_generation_bit_identical"])
+        self.assertTrue(
+            r["exact_transport_genealogy_between_different_inactive_settings_OBSERVED"])
+        self.assertTrue(r["native_checkpoints"][1]["exact_k_generation_same"])
+        self.assertTrue(r["native_checkpoints"][1]["exact_fission_bank_array_same"])
 
-    def test_identical_seed_but_different_generator_history_fails(self):
+    def test_identical_seed_different_history_must_not_be_reported_paired(self):
         old,new=identical_trajectory()
         new[-1]["k"][99]+=0.01
-        with self.assertRaisesRegex(ValueError,"same seed"):
-            trajectory_identity(old,new)
+        r=trajectory_identity(old,new)
+        self.assertFalse(
+            r["exact_transport_genealogy_between_different_inactive_settings_OBSERVED"])
+        self.assertEqual(
+            r["native_checkpoints"][-1]["first_native_k_generation_divergence_one_based"],100)
 
-    def test_different_source_sites_with_same_k_entropy_fail(self):
+    def test_different_source_sites_even_when_k_entropy_same_are_not_paired(self):
         old,new=identical_trajectory()
         new[-1]["source_bank"][0]+=0.1
-        with self.assertRaisesRegex(ValueError,"same seed"):
-            trajectory_identity(old,new)
+        r=trajectory_identity(old,new)
+        self.assertFalse(
+            r["exact_transport_genealogy_between_different_inactive_settings_OBSERVED"])
+        self.assertFalse(r["native_checkpoints"][-1]["exact_fission_bank_array_same"])
 
     def test_inconsistent_generation_prefix_within_original_HDF5_fails(self):
         old,new=identical_trajectory()
@@ -96,10 +103,10 @@ class BurninMathTests(unittest.TestCase):
     def test_identical_heat_all_windows_no_tv_or_bias(self):
         a=np.ones((12,12,10),dtype=float)
         r=compare_burnin_heating(a,2*a,a,a)
-        self.assertTrue(r["late_61_100_native_heating_reproduced_across_inactive_thresholds"])
-        for lev in r["heating_shape_sensitivity_to_BurnIn_and_time_at_four_resolutions"]:
+        self.assertTrue(r["identical_generation_61_100_heat_reproduction_NOT_assumed"])
+        for lev in r["heating_shape_descriptive_multiresolution"]:
             self.assertEqual(
-                lev["mean_heating_first_active_window_shape_TV_21_60_vs_41_60"],0.)
+                lev["cross_run_first_window_21_60_vs_41_60_shape_TV"],0.)
 
     def test_withholding_initial_20_batches_changes_spatial_heat_shape(self):
         baseline=np.zeros((12,12,10))
@@ -108,18 +115,20 @@ class BurninMathTests(unittest.TestCase):
         late[1,1,0]=1.
         r=compare_burnin_heating(baseline,late,late,late)
         self.assertEqual(
-            r["heating_shape_sensitivity_to_BurnIn_and_time_at_four_resolutions"][0][
-                "mean_heating_first_active_window_shape_TV_21_60_vs_41_60"],1.)
+            r["heating_shape_descriptive_multiresolution"][0][
+                "cross_run_first_window_21_60_vs_41_60_shape_TV"],1.)
         self.assertEqual(
-            r["heating_shape_sensitivity_to_BurnIn_and_time_at_four_resolutions"][-1][
-                "mean_heating_first_active_window_shape_TV_21_60_vs_41_60"],0.)
+            r["heating_shape_descriptive_multiresolution"][-1][
+                "cross_run_first_window_21_60_vs_41_60_shape_TV"],0.)
 
-    def test_unreproduced_identical_late_generation_heating_rejected(self):
+    def test_unreproduced_late_generation_heating_is_reported_as_MC_variation(self):
         a=np.ones((12,12,10),dtype=float)
         inconsistent=a.copy()
         inconsistent[0,0,0]*=2
-        with self.assertRaisesRegex(ValueError,"61-100"):
-            compare_burnin_heating(a,a,a,inconsistent)
+        r=compare_burnin_heating(a,a,a,inconsistent)
+        self.assertGreater(r["heating_shape_descriptive_multiresolution"][0][
+            "cross_run_late_window_61_100_shape_TV"],0)
+        self.assertGreater(r["late_window_energy_relative_change_candidate_minus_reference"],0)
 
     def test_missing_original_openmc_hdf5_fails_closed(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -137,28 +146,35 @@ class ActualOpenMCCoupledBurninTests(unittest.TestCase):
         old=os.environ.get("NUKE_STAGE38_ORIGINAL_STAGE37_HDF5_ROOT")
         new=os.environ.get("NUKE_STAGE38_REAL_40_INACTIVE_HDF5_ROOT")
         if not old or not new:
-            raise RuntimeError("Stage38 mandatory eight original 20+40 inactive source histories absent")
+            raise RuntimeError("Stage38 requires original eight native 20+40 inactive HDF5 checkpoint pairs")
         cls.report=audit_real_inactive_threshold(old,new)
 
-    def test_eight_native_sources_and_exact_k_entropy_source_bank_reproduction(self):
+    def test_sixteen_native_source_checkpoints_and_actual_trajectory_divergence(self):
         report=self.report
         self.assertEqual(report["original_native_hdf5_count"],16)
         self.assertEqual(report["new_reexecuted_openmc_neutron_photon_histories"],4)
-        self.assertTrue(report["same_actual_neutron_transport_trajectories_verified"])
+        self.assertTrue(report["all_individual_native_paths_verified_within_each_run"])
+        self.assertFalse(report[
+            "cross_run_20_inactive_vs_40_inactive_trajectories_EXACTLY_paired"])
         for run in report["per_original_run"]:
             proof=run["native_transport_genealogy_reproducibility"]
-            self.assertTrue(proof["native_k_generation_bit_identical"])
-            self.assertTrue(proof["native_shannon_entropy_bit_identical"])
-            self.assertTrue(proof["native_3000_fission_source_sites_bit_identical_at_both_checkpoints"])
+            self.assertTrue(proof["independent_source_history_prefixes_verified"])
+            self.assertFalse(proof[
+                "exact_transport_genealogy_between_different_inactive_settings_OBSERVED"])
+            self.assertGreater(
+                run["native_source_spatial_TV_20_vs_40_inactive_at_batch_60_100"][1],0)
 
-    def test_active_burnin_shift_and_energy_partition_conservation_not_watts(self):
+    def test_original_disjoint_neutron_photon_energy_partitions_and_limits(self):
         report=self.report
         self.assertTrue(report["genuine_native_material_mesh_particle_heating_closure"])
         for run in report["per_original_run"]:
+            heat=run["native_20_vs_40_inactive_deposited_energy"]
             self.assertGreater(
-                run["native_20_vs_40_inactive_deposited_energy"]["deposited_energy_61_100_ev_per_MC_source"],0.)
-            self.assertTrue(run["native_20_vs_40_inactive_deposited_energy"][
-                "late_61_100_native_heating_reproduced_across_inactive_thresholds"])
+                heat["reference_deposited_energy_61_100_ev_per_MC_source"],0.)
+            self.assertGreater(
+                heat["candidate_deposited_energy_61_100_ev_per_MC_source"],0.)
+            self.assertTrue(heat["identical_generation_61_100_heat_reproduction_NOT_assumed"])
+        self.assertFalse(report["source_bias_due_to_inactive_setting_ISOLATED_from_run_noise"])
         self.assertFalse(report["burnin_20_vs_40_improves_fission_source_stationarity_PROVEN"])
         self.assertFalse(report["qualified_original_hot_nerva_reactor_power_watts"])
 
