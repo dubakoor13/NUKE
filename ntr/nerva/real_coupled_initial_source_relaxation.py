@@ -279,7 +279,7 @@ def audit_original_initialization_experiment(root: str | Path) -> tuple[dict,dic
             meta, sources, summed, histories = [], [], [], []
             heat_signature = None
             for batch in BATCHES:
-                file = run / f"statepoint.{batch}.h5"
+                file = run / f"statepoint.{batch:03d}.h5"
                 if not file.is_file() or not file.stat().st_size:
                     raise FileNotFoundError("actual OpenMC source checkpoint missing: "+str(file))
                 native = _identity(file,seed=seed,batch=batch)
