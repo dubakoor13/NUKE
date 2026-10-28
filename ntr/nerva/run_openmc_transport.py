@@ -76,6 +76,16 @@ def parse_args() -> argparse.Namespace:
                         help="Uniform OpenMC hydrogen material density for snapshot feedback.")
     parser.add_argument("--photon-transport", action="store_true")
     parser.add_argument(
+        "--diagnostic-disable-user-tallies",
+        action="store_true",
+        help=(
+            "Controlled neutron source genealogy experiment ONLY: suppress "
+            "user scoring tallies while retaining identical physical geometry, "
+            "materials, nuclear data, eigenvalue source, and neutron/photon "
+            "tracking. This is NOT a reactor heating result."
+        ),
+    )
+    parser.add_argument(
         "--require-local-heating-data",
         action="store_true",
         help=(
@@ -319,6 +329,12 @@ def main() -> int:
         model.settings.statepoint = {"batches": stages}
     if args.seed is not None:
         model.settings.seed = args.seed
+    if args.diagnostic_disable_user_tallies:
+        # Numerical counterfactual: does activation of user scoring tallies
+        # change the original fission-source trajectory? No change to the
+        # sampled neutron/photon physics, fuel, boundaries or nuclear data.
+        # Never report source-only output as a physical heat estimate.
+        model.tallies = openmc.Tallies()
     model.export_to_xml(directory=args.output)
 
     provenance = {
@@ -382,6 +398,11 @@ def main() -> int:
         "statepoint": None,
     }
 
+    if args.diagnostic_disable_user_tallies:
+        provenance["config"]["diagnostic_no_user_tallies"] = True
+        provenance["run_policy"] += (
+            "; SOURCE-ONLY DIAGNOSTIC; no physical heating tallies"
+        )
     provenance_path = args.output / "transport_provenance.json"
     provenance_path.write_text(
         json.dumps(provenance, indent=2) + "\n",
