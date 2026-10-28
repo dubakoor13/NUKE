@@ -24,3 +24,13 @@ New GitHub Actions workflow `nerva-stage33-real-coupled-source-time.yml` execute
 **Hard qualification flags remain FALSE** even if all tests pass: critical NASA NERVA core model, stationary fission source, independent neutron-history uncertainty, hot evaluated data coverage, physical deposited watts or benchmark match. These cold, highly subcritical conditions are not a validated historical NERVA operating point. Three snapshots per chain provide a measured spatial drift diagnostic only, without a valid convergence hypothesis test.
 
 No genuine Stage33 numerical values are claimed until dedicated Actions execution succeeds and original resulting HDF5 passes this audit.
+
+
+## Executed original C++ OpenMC Stage33 evidence — verified 2026-10-28
+
+[Dedicated official-coupled-transport run 40741032756](https://github.com/dubakoor13/NUKE/actions/runs/40741032756) **completed SUCCESS** on experiment-code SHA `f6d6872fc55ebfc545b67dcabdc96de9dac3264f`. The GitHub Actions log records 10/10 synthetic adversarial tests and 2/2 tests that reopened all **12 newly generated real HDF5 source checkpoints**. Original coupled neutron+photon/electron/positron heating and material/mesh energy partitions reconserved in all four final statepoints. The original HDF5/XML/data/temporal JSON archive is artifact **12839092884**, uploaded with 21-day retention (expires about **2026-11-18**).
+
+- **Actual observed mean same-seed 4×4×10 source spatial TV from final batch 30 to 65:** `0.6015`. This is a distributional difference between genuine recorded source banks, **not** a p-value or a calibrated stationarity test.
+- Same four genuine OpenMC runs reproducibly produced total mean source-normalized coupled heating of **879437.4771363476 eV/source** and between-seed sample SD **10230.500892604981 eV/source**, agreeing with the prior Stage31 physical experiment; still **not** watts.
+- All 12 native HDF5 statepoint identities and the 30→45→65 exact k-generation and entropy prefixes passed. An additional successful pull-request run may be separately checked; this explicit result applies to run 40741032756.
+- **Physical conclusion:** meaningful spatial source drift persists in the cold three-ring subcritical surrogate. Stationary source, independent history uncertainty and hot operating NERVA **remain unqualified**. Stage34 will independently recover nonoverlapping active-window heating from these same HDF5 moments.
