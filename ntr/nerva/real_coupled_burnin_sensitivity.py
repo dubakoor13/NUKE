@@ -26,6 +26,7 @@ from .real_coupled_initial_source_relaxation import (
     _native_heating,
     _sha,
 )
+from .source_bank_convergence import read_source_bank
 from .real_coupled_spatial_heating_stability import (
     conservative_block_sum,
     total_variation,
@@ -249,11 +250,13 @@ def audit_real_inactive_threshold(reference_root: Path | str,
                 raise ValueError("evaluated neutron photon nuclear data differs")
             records=[]
             summed=[]
+            banks=[]
             native_fingerprints=[]
             signature=None
             for idx,(folder,inactive) in enumerate(zip(paths,(20,40))):
                 hists=[]
                 heats=[]
+                source_hist=[]
                 for batch in CHECKPOINTS:
                     file=folder/f"statepoint.{batch:03d}.h5"
                     if not file.is_file():
@@ -269,6 +272,15 @@ def audit_real_inactive_threshold(reference_root: Path | str,
                         signature=current_signature
                     elif signature!=current_signature:
                         raise ValueError("native physical mesh/material/tally estimator changed")
+                    bank,bank_metadata=read_source_bank(
+                        file, lower_cm=tally["mesh_lower_left_cm"],
+                        upper_cm=tally["mesh_upper_right_cm"],
+                        bins=(4,4,10))
+                    if (bank_metadata["seed"]!=seed
+                            or bank_metadata["completed_batch"]!=batch
+                            or bank_metadata["statepoint_sha256"]!=_sha(file)):
+                        raise ValueError("actual native source bank hash/seed identity inconsistent")
+                    source_hist.append(bank)
                     hists.append(identity)
                     heats.append(tally)
                     native_fingerprints.append(_sha(file))
@@ -276,7 +288,12 @@ def audit_real_inactive_threshold(reference_root: Path | str,
                     raise ValueError("final original OpenMC statepoint SHA256 differs from provenance")
                 records.append(hists)
                 summed.append(heats)
+                banks.append(source_hist)
             genealogy=trajectory_identity(records[0],records[1])
+            bank_tv=[
+                total_variation(banks[0][i],banks[1][i])
+                for i in range(2)
+            ]
             hist={}
             for domain in ("mesh","materials","particles"):
                 original_first,original_late=recover_disjoint_sums(
@@ -302,11 +319,13 @@ def audit_real_inactive_threshold(reference_root: Path | str,
                 hist["candidate_active41_60"]["mesh"],
                 hist["native_active61_100_20_inactive"]["mesh"],
                 hist["native_active61_100_40_inactive"]["mesh"])
-            # Important: same HDF5 current generation despite different
-            # threshold. Differences in k-generation summaries are entirely
-            # selection effects from excluding early batches.
+            # A within-reference-HDF5 suffix comparison is a controlled
+            # tally-exclusion test. Cross-run source paths are not assumed
+            # to be paired and no physical effect can be isolated.
             k=records[0][-1]["k"]
             ent=records[0][-1]["entropy"]
+            k_candidate=records[1][-1]["k"]
+            ent_candidate=records[1][-1]["entropy"]
             run={
                 "initial_source":mode,"rng_seed":seed,
                 "genuine_native_statepoint_sha256_20_inactive_60_and_100":
@@ -314,11 +333,18 @@ def audit_real_inactive_threshold(reference_root: Path | str,
                 "genuine_native_statepoint_sha256_40_inactive_60_and_100":
                     native_fingerprints[2:],
                 "native_transport_genealogy_reproducibility":genealogy,
+                "native_source_spatial_TV_20_vs_40_inactive_at_batch_60_100":bank_tv,
                 "native_20_vs_40_inactive_deposited_energy":heating,
                 "generation_k_mean_after_20_inactive":float(np.mean(k[20:])),
-                "generation_k_mean_after_40_inactive":float(np.mean(k[40:])),
+                "generation_k_mean_after_40_inactive_in_same_REFERENCE_history":
+                    float(np.mean(k[40:])),
+                "generation_k_mean_after_40_inactive_in_new_candidate_history":
+                    float(np.mean(k_candidate[40:])),
                 "source_shannon_entropy_mean_after_20_inactive":float(np.mean(ent[20:])),
-                "source_shannon_entropy_mean_after_40_inactive":float(np.mean(ent[40:])),
+                "source_shannon_entropy_mean_after_40_inactive_in_same_REFERENCE_history":
+                    float(np.mean(ent[40:])),
+                "source_shannon_entropy_mean_after_40_inactive_in_new_candidate_history":
+                    float(np.mean(ent_candidate[40:])),
             }
             runs.append(run)
             all_pairwise_heating.append(heating)
@@ -328,19 +354,33 @@ def audit_real_inactive_threshold(reference_root: Path | str,
         "new_reexecuted_openmc_neutron_photon_histories":4,
         "source_modes":list(MODES),
         "seeds_per_mode":list(SEEDS),
-        "same_actual_neutron_transport_trajectories_verified":True,
+        "all_individual_native_paths_verified_within_each_run":True,
+        "cross_run_20_inactive_vs_40_inactive_trajectories_EXACTLY_paired":
+            bool(all(x["native_transport_genealogy_reproducibility"][
+                "exact_transport_genealogy_between_different_inactive_settings_OBSERVED"]
+                     for x in runs)),
+        "cross_run_source_histories_are_statistically_independent_PROVEN":False,
         "same_original_NNDC_nuclear_data_and_physical_reactor_configuration":True,
         "genuine_native_material_mesh_particle_heating_closure":True,
         "per_original_run":runs,
-        "descriptive_mean_early_heat_burnin_shape_TV_12x12x10":
-            float(np.mean([r["heating_shape_sensitivity_to_BurnIn_and_time_at_four_resolutions"][0][
-                "mean_heating_first_active_window_shape_TV_21_60_vs_41_60"] for r in all_pairwise_heating])),
+        "observed_mean_between_20_and_40_inactive_source_bank_TV_at_batch_100":
+            float(np.mean([run[
+                "native_source_spatial_TV_20_vs_40_inactive_at_batch_60_100"][1]
+                for run in runs])),
+        "observed_mean_late_heat_shape_TV_across_different_runs_12x12x10":
+            float(np.mean([r[
+                "heating_shape_descriptive_multiresolution"][0][
+                "cross_run_late_window_61_100_shape_TV"]
+                for r in all_pairwise_heating])),
+        "source_bias_due_to_inactive_setting_ISOLATED_from_run_noise":False,
         "burnin_20_vs_40_improves_fission_source_stationarity_PROVEN":False,
         "qualified_original_hot_nerva_reactor_power_watts":False,
         "notes":[
-            "Same-seed trajectory is paired ONLY AFTER exact k/entropy/source-bank equality is verified.",
-            "Changing inactive batches only changes tally inclusion and reported active statistics.",
-            "This is NOT two independent fission-source replicates.",
+            "Same seed label DOES NOT prove bit-identical or statistically independent fission trajectories.",
+            "Observed native source path differences are reported, not hidden or called causal burn-in effects.",
+            "Within one historical trajectory, k/entropy after 20 vs after 40 is a true selection comparison.",
+            "Different inactive settings change tally accumulation; comparison of reruns is also affected by source realization.",
+            "This is NOT a controlled paired Monte Carlo experiment unless exact native path equality is separately established.",
             "Temporal windows share correlated fission ancestors; no IID SEM or coverage claims.",
             "3D coupled heating in eV/Monte Carlo starting source, not physical W/cm^3.",
             "Cold strongly subcritical surrogate is not a validated historical NERVA reactor.",
@@ -358,13 +398,17 @@ def main() -> int:
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(result,indent=2,allow_nan=False)+"\n",encoding="utf-8")
     print("Native original neutron+photon statepoints audited:",result["original_native_hdf5_count"])
-    print("Bit-identical native transport source histories despite burn-in change: YES")
-    print("Mean fine-3D heating shape TV, inactive20 vs inactive40:",result[
-        "descriptive_mean_early_heat_burnin_shape_TV_12x12x10"])
+    print("Exact source trajectories shared across reruns (verified, not assumed):",
+          result["cross_run_20_inactive_vs_40_inactive_trajectories_EXACTLY_paired"])
+    print("Observed final source bank TV between reruns:",
+          result["observed_mean_between_20_and_40_inactive_source_bank_TV_at_batch_100"])
+    print("Observed fine-mesh LATE heating TV between reruns:",
+          result["observed_mean_late_heat_shape_TV_across_different_runs_12x12x10"])
     for r in result["per_original_run"]:
         print("seed",r["rng_seed"],"initial source",r["initial_source"],
               "k20",r["generation_k_mean_after_20_inactive"],
-              "k40",r["generation_k_mean_after_40_inactive"])
+              "within SAME original run k40",
+              r["generation_k_mean_after_40_inactive_in_same_REFERENCE_history"])
     print("Stationary source and operating NERVA thermal watts qualified: NO")
     return 0
 
