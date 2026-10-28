@@ -16,6 +16,7 @@ def build_model(
     assembly: str = "core",
     *,
     eigenvalue_entropy_mesh: bool = True,
+    initial_fission_source: str = "legacy-broad",
 ) -> openmc.Model:
     """Construct a NERVA-derived core, cluster, mixed core, or full reactor assembly."""
     if config is None:
@@ -60,11 +61,16 @@ def build_model(
         }
 
     half_length = 0.5 * config.active_length_cm
-    source_radius = max(0.5, 0.8 * source_region_radius)
+    # Changing the *initial guess* for the fission source is a numerical
+    # source-relaxation experiment, NOT a reactor geometry or enrichment change.
+    if initial_fission_source not in ("legacy-broad", "central-compact"):
+        raise ValueError("initial_fission_source must be legacy-broad or central-compact")
+    extent_fraction = 0.8 if initial_fission_source == "legacy-broad" else 0.35
+    source_radius = max(0.5, extent_fraction * source_region_radius)
     settings.source = openmc.IndependentSource(
         space=openmc.stats.Box(
-            (-source_radius, -source_radius, -0.8 * half_length),
-            (source_radius, source_radius, 0.8 * half_length),
+            (-source_radius, -source_radius, -extent_fraction * half_length),
+            (source_radius, source_radius, extent_fraction * half_length),
         ),
         constraints={"fissionable": True},
     )

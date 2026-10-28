@@ -63,6 +63,9 @@ def parse_args() -> argparse.Namespace:
             "(including the last batch); permits source shape checks over time."
         ),
     )
+    parser.add_argument("--initial-fission-source", choices=("legacy-broad", "central-compact"),
+                        default="legacy-broad",
+                        help="Initial fissionable-only eigenvalue source box; no geometry/material modifications.")
     parser.add_argument("--seed", type=int, default=None,
                         help="Explicit independent OpenMC random seed for statistical replicas.")
     parser.add_argument("--fuel-temperature-k", type=float,
@@ -310,7 +313,8 @@ def main() -> int:
             )
     if args.seed is not None and not 1 <= args.seed < 2**63:
         raise ValueError("OpenMC seed must be a positive 63-bit integer")
-    model = build_model(config, assembly=args.assembly)
+    model = build_model(config, assembly=args.assembly,
+                        initial_fission_source=args.initial_fission_source)
     if args.statepoint_batches is not None:
         model.settings.statepoint = {"batches": stages}
     if args.seed is not None:
@@ -333,6 +337,7 @@ def main() -> int:
             "batches": config.batches,
             "inactive": config.inactive,
             "statepoint_batches": args.statepoint_batches,
+            "initial_fission_source": args.initial_fission_source,
             "control_drum_angle_deg": config.control_drum_angle_deg,
             "fuel_temperature_k": config.fuel_temperature_k,
             "hydrogen_temperature_k": config.hydrogen_temperature_k,
