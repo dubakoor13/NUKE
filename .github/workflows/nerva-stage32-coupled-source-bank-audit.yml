@@ -1,0 +1,61 @@
+name: NUKE Stage32 audit four original coupled fission-source banks
+
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_coupled_source_bank_audit.py'
+      - 'ntr/nerva/validate_stage32_coupled_source_banks.py'
+      - '.github/workflows/nerva-stage32-coupled-source-bank-audit.yml'
+  push:
+    paths:
+      - 'ntr/nerva/real_coupled_source_bank_audit.py'
+      - 'ntr/nerva/validate_stage32_coupled_source_banks.py'
+      - '.github/workflows/nerva-stage32-coupled-source-bank-audit.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  original-native-hdf5-source-bank-observation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install HDF5 and numerical IO dependencies
+        run: python -m pip install --disable-pip-version-check 'numpy>=1.26,<3' 'h5py>=3.10,<4'
+      - name: Download FOUR original executed coupled HDF5 statepoints from successful Stage31 run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage31 build/stage32
+          gh run download 40326333031 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage31-original-four-seed-coupled-heating-hdf5 \
+            -D build/stage31
+          test -s build/stage31/actual_four_seed_coupled_heating_covariance.json
+          for seed in 13007 23011 33013 43019; do
+            test -s "build/stage31/seed_${seed}/statepoint.65.h5"
+          done
+      - name: Adversarial source bank spatial statistics and forged evidence tests
+        run: python -m unittest ntr.nerva.validate_stage32_coupled_source_banks.SourceBankSpatialMathTests -v
+      - name: Require genuine Stage31 source banks and report final-source spatial diagnostics
+        env:
+          NUKE_STAGE32_ORIGINAL_FOUR_SEED_ROOT: build/stage31
+        run: |
+          set -euo pipefail
+          python -m ntr.nerva.real_coupled_source_bank_audit \
+            --root build/stage31 \
+            --output build/stage32/real_final_source_bank_diagnostics.json
+          python -m unittest ntr.nerva.validate_stage32_coupled_source_banks.ActualOriginalCoupledFissionBankTests -v
+      - name: Retain read-only physical bank diagnostics and provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage32-original-coupled-final-fission-bank-audit
+          path: build/stage32/*.json
+          retention-days: 21
+          if-no-files-found: warn
