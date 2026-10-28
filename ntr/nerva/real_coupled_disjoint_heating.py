@@ -127,9 +127,9 @@ def _native_tallies(path: Path) -> dict:
             }
 
         signature = {
-            "mesh_dimensions_xyz": list(mesh.dimension),
-            "mesh_lower_left_cm": list(mesh.lower_left),
-            "mesh_upper_right_cm": list(mesh.upper_right),
+            "mesh_dimensions_xyz": [int(x) for x in mesh.dimension],
+            "mesh_lower_left_cm": [float(x) for x in mesh.lower_left],
+            "mesh_upper_right_cm": [float(x) for x in mesh.upper_right],
             "material_filter_ids": [
                 str(getattr(v, "id", v)) for v in material.filters[0].bins
             ],
