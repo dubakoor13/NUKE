@@ -1,0 +1,87 @@
+name: NUKE Stage40 three original OpenMC neutron source genealogy controls
+
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_coupled_three_arm_source_control.py'
+      - 'ntr/nerva/validate_stage40_three_arm_source.py'
+      - '.github/workflows/nerva-stage40-three-arm-source-controls.yml'
+  push:
+    paths:
+      - 'ntr/nerva/real_coupled_three_arm_source_control.py'
+      - 'ntr/nerva/validate_stage40_three_arm_source.py'
+      - '.github/workflows/nerva-stage40-three-arm-source-controls.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  original-openmc-coupled-three-arm-source-genealogy-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Recover three previously executed original OpenMC C++ HDF5 ensembles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage40_original_20 build/stage40_replay_20 \
+            build/stage40_changed_40 build/stage40_result
+          gh run download 40747291683 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage37-original-broad-vs-compact-neutron-photon-hdf5 \
+            -D build/stage40_original_20
+          gh run download 40751331777 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage39-original-identical-openmc-source-replay-hdf5 \
+            -D build/stage40_replay_20
+          gh run download 40749064255 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage38-original-40inactive-neutron-photon-hdf5 \
+            -D build/stage40_changed_40
+          for mode in legacy-broad central-compact; do
+            for seed in 13007 23011; do
+              for dir in build/stage40_original_20 build/stage40_replay_20 build/stage40_changed_40; do
+                test -s "$dir/$mode/seed_$seed/transport_provenance.json"
+                for batch in 060 100; do
+                  test -s "$dir/$mode/seed_$seed/statepoint.$batch.h5"
+                done
+              done
+              for dir in build/stage40_original_20 build/stage40_replay_20; do
+                test -s "$dir/$mode/seed_$seed/statepoint.030.h5"
+              done
+            done
+          done
+      - name: Check three-way source path and heat in pinned genuine OpenMC Python reader
+        run: |
+          set -euo pipefail
+          docker pull openmc/openmc:v0.15.3
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              python -m unittest ntr.nerva.validate_stage40_three_arm_source.ThreeArmSourceControlMathTests -v
+              python -m ntr.nerva.real_coupled_three_arm_source_control \
+                --original-20 /repo/build/stage40_original_20 \
+                --identical-repeat-20 /repo/build/stage40_replay_20 \
+                --changed-inactive-40 /repo/build/stage40_changed_40 \
+                --output /repo/build/stage40_result/actual_native_three_arm_openmc_source.json
+              NUKE_STAGE40_GENUINE_STAGE37=/repo/build/stage40_original_20 \
+              NUKE_STAGE40_GENUINE_STAGE39=/repo/build/stage40_replay_20 \
+              NUKE_STAGE40_GENUINE_STAGE38=/repo/build/stage40_changed_40 \
+                python -m unittest ntr.nerva.validate_stage40_three_arm_source.ActualOriginalOpenMCThreeArmTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage40_result/actual_native_three_arm_openmc_source.json\")); assert r[\"actual_native_60_100_source_checkpoints_reopened\"]==24 and r[\"all_unchanged_source_bank_and_entropy_paths_repeat_exactly\"] and r[\"all_changed_inactive_source_banks_diverge_from_original\"] and not r[\"source_stationarity_and_inactive_bias_statistically_qualified\"]; print(\"REAL HDF5 source genealogy three-arm numerical control accepted, NO hot reactor qualification\")"
+            '
+      - name: Preserve original native physically grounded three-arm control result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage40-three-arm-original-native-source-genealogy-physics
+          path: build/stage40_result/*.json
+          if-no-files-found: warn
+          retention-days: 21
