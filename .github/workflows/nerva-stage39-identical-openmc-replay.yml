@@ -1,0 +1,113 @@
+name: NUKE Stage39 genuine OpenMC identical-configuration C++ neutron replay
+
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_coupled_identical_replay.py'
+      - 'ntr/nerva/validate_stage39_identical_replay.py'
+      - '.github/workflows/nerva-stage39-identical-openmc-replay.yml'
+  push:
+    paths:
+      - 'ntr/nerva/real_coupled_identical_replay.py'
+      - 'ntr/nerva/validate_stage39_identical_replay.py'
+      - '.github/workflows/nerva-stage39-identical-openmc-replay.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  original-openmc-same-source-same-seed-same-inactive-reproducibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Recover original Stage37 native neutron/photon statepoints
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage39_original build/stage39_replay build/stage39_results
+          gh run download 40747291683 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage37-original-broad-vs-compact-neutron-photon-hdf5 \
+            -D build/stage39_original
+          for mode in legacy-broad central-compact; do
+            for seed in 13007 23011; do
+              test -s "build/stage39_original/$mode/seed_$seed/transport_provenance.json"
+              for checkpoint in 030 060 100; do
+                test -s "build/stage39_original/$mode/seed_$seed/statepoint.$checkpoint.h5"
+              done
+            done
+          done
+      - name: Pin original neutron and photon OpenMC 0.15.3 evaluated data C++ engine
+        run: |
+          set -euo pipefail
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' > build/stage39_replay/openmc_image_repo_digest.json
+      - name: Run four actual identical neutron photon source and heating experiments
+        run: |
+          docker run --rm --cpus=2 --memory=6g -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              test -s "$OPENMC_CROSS_SECTIONS"
+              openmc --version
+              python -m unittest ntr.nerva.validate_stage39_identical_replay.IdenticalReplayMathTests -v
+              for mode in legacy-broad central-compact; do
+                for seed in 13007 23011; do
+                  echo "ORIGINAL OpenMC identical replay: source=$mode seed=$seed inactive=20"
+                  python -m ntr.nerva.run_openmc_transport \
+                    --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                    --assembly core --rings 3 \
+                    --particles 3000 --batches 100 --inactive 20 \
+                    --statepoint-batches 30 60 100 --seed "$seed" \
+                    --initial-fission-source "$mode" \
+                    --hydrogen-temperature-k 293.6059129982851 \
+                    --photon-transport \
+                    --heating-mesh-dimensions 12 12 10 \
+                    --diagnostic-energy-groups 24 --axial-mesh-bins 24 \
+                    --output "/repo/build/stage39_replay/$mode/seed_$seed"
+                  for checkpoint in 030 060 100; do
+                    test -s "/repo/build/stage39_replay/$mode/seed_$seed/statepoint.$checkpoint.h5"
+                  done
+                done
+              done
+              python -m ntr.nerva.real_coupled_identical_replay \
+                --reference /repo/build/stage39_original \
+                --replay /repo/build/stage39_replay \
+                --output /repo/build/stage39_results/actual_identical_openmc_replay.json
+              NUKE_STAGE39_REAL_STAGE37_REFERENCE=/repo/build/stage39_original \
+                NUKE_STAGE39_REAL_IDENTICAL_REPLAY=/repo/build/stage39_replay \
+                python -m unittest ntr.nerva.validate_stage39_identical_replay.ActualIdenticalOpenMCReplayTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage39_results/actual_identical_openmc_replay.json\")); assert r[\"actual_native_HDF5_statepoints_reopened\"]==24 and r[\"all_actual_reactor_geometry_materials_tallies_settings_data_identical\"] and not r[\"source_stationarity_and_neutron_history_independence_qualified\"]; print(\"REAL identical-settings replay checked; reactor qualification remains false\")"
+            '
+      - name: Archive newly rerun four original OpenMC 0.15.3 neutron photon StatePoints
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage39-original-identical-openmc-source-replay-hdf5
+          path: |
+            build/stage39_replay/openmc_image_repo_digest.json
+            build/stage39_replay/*/seed_*/*.json
+            build/stage39_replay/*/seed_*/*.xml
+            build/stage39_replay/*/seed_*/statepoint.030.h5
+            build/stage39_replay/*/seed_*/statepoint.060.h5
+            build/stage39_replay/*/seed_*/statepoint.100.h5
+            build/stage39_replay/*/seed_*/summary.h5
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Preserve original Monte Carlo reproducibility and energy conservation JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage39-original-identical-run-source-heating-physics
+          path: build/stage39_results/*.json
+          retention-days: 21
+          if-no-files-found: warn
