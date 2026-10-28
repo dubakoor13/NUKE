@@ -70,11 +70,11 @@ def disjoint_raw_moments(cumulative_sums, cumulative_squared_sums, counts, *, la
     return intervals
 
 
-def _native_tallies(path: Path) -> dict:
+def _native_tallies(path: Path, *, expected_particles: int = 3000) -> dict:
     """Read original OpenMC tally moments, preserving native mesh axis order."""
     import openmc
 
-    identity = _hdf5_identity(path)
+    identity = _hdf5_identity(path, expected_particles=expected_particles)
     with openmc.StatePoint(str(path), autolink=False) as statepoint:
         by_name = {}
         for tally in statepoint.tallies.values():
