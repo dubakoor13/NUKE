@@ -86,6 +86,12 @@ def build_materials(config: NervaConfig) -> dict[str, openmc.Material]:
     aluminum.set_density("g/cm3", config.aluminum_density_g_cm3)
     aluminum.add_element("Al", 1.0, percent_type="ao")
 
+    # Preserve composition/density/geometry. Apply the explicitly modeled
+    # coating, metallic and absorber temperatures to the actual C++ physics.
+    if config.structural_solid_temperature_k is not None:
+        for structural in (zrc, inconel, b4c, aluminum):
+            structural.temperature = config.structural_solid_temperature_k
+
     # Comparison control: same Be/graphite/ZrH solid temperatures in
     # both free-gas and bound-scattering models; only S(a,b) differs.
     if config.bound_solid_temperature_k is not None:

@@ -77,6 +77,10 @@ def parse_args() -> argparse.Namespace:
             "every explicitly selected material temperature; never extrapolate."
         ),
     )
+    parser.add_argument("--structural-solid-temperature-k", type=float,
+                        help="Explicit uniform coating/tube/absorber/vessel material neutron temperature [K].")
+    parser.add_argument("--require-physical-hot-neutron-xs", action="store_true",
+                        help="Fail closed unless all declared material neutron kT grids cover this explicit fixed-density hot snapshot.")
     parser.add_argument("--fuel-temperature-k", type=float,
                         help="Uniform OpenMC fuel surrogate temperature for snapshot feedback.")
     parser.add_argument("--hydrogen-temperature-k", type=float,
@@ -224,6 +228,7 @@ def main() -> int:
     config = NervaConfig(
         core_rings=args.rings,
         neutron_temperature_method=args.neutron_temperature_method,
+        structural_solid_temperature_k=args.structural_solid_temperature_k,
         thermal_scattering_treatment=args.thermal_scattering,
         bound_solid_temperature_k=args.bound_solid_temperature_k,
         bound_nearest_temperature_tolerance_k=args.bound_nearest_temperature_tolerance_k,
@@ -321,6 +326,25 @@ def main() -> int:
         raise RuntimeError("OpenMC neutron temperature method differs from audited evaluation")
 
 
+    if args.require_physical_hot_neutron_xs:
+        from .hot_neutron_temperature_data_qualification import (
+            qualify_explicit_hot_neutron_data,
+        )
+        hot_report = qualify_explicit_hot_neutron_data(
+            config, temperature_audit,
+        )
+        hot_path = args.output / "physical_hot_neutron_xs_qualification.json"
+        hot_path.write_text(
+            json.dumps(hot_report, indent=2, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        if not hot_report["qualified_hot_incident_neutron_data_support"]:
+            raise RuntimeError(
+                "HOT OPENMC NEUTRON TRANSPORT REJECTED: unavailable evaluated "
+                "isotope temperatures or implicit solid temperatures; "
+                f"see {hot_path}. No extrapolated hot cross sections allowed."
+            )
+
     if (args.fuel_temperature_k is not None
             or args.hydrogen_temperature_k is not None
             or config.thermal_scattering_treatment == "evaluated-bound") and not temperature_audit[
@@ -388,6 +412,8 @@ def main() -> int:
             "control_drum_angle_deg": config.control_drum_angle_deg,
             "fuel_temperature_k": config.fuel_temperature_k,
             "neutron_temperature_method": config.neutron_temperature_method,
+            "structural_solid_temperature_k": config.structural_solid_temperature_k,
+            "physical_hot_neutron_xs_coverage_requested": args.require_physical_hot_neutron_xs,
             "hydrogen_temperature_k": config.hydrogen_temperature_k,
             "thermal_scattering_treatment": config.thermal_scattering_treatment,
             "bound_solid_temperature_k": config.bound_solid_temperature_k,

@@ -1,0 +1,81 @@
+name: NUKE Stage46 original evaluated hot neutron data qualification
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/config.py'
+      - 'ntr/nerva/materials.py'
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/hot_neutron_temperature_data_qualification.py'
+      - 'ntr/nerva/validate_stage46_hot_neutron_data_qualification.py'
+      - '.github/workflows/nerva-stage46-real-hot-neutron-data-preflight.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/config.py'
+      - 'ntr/nerva/materials.py'
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/hot_neutron_temperature_data_qualification.py'
+      - 'ntr/nerva/validate_stage46_hot_neutron_data_qualification.py'
+      - '.github/workflows/nerva-stage46-real-hot-neutron-data-preflight.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  reject-unsupported-hot-neutron-physics-with-real-evaluated-data:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pin official evaluated-neutron nuclear-data and OpenMC v0.15.3 environment
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage46_real_evaluated_hot_rejection
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' > build/stage46_real_evaluated_hot_rejection/image.json
+      - name: Execute actual HDF5 physical-temperature coverage tests and verify rejection
+        run: |
+          set -euo pipefail
+          docker run --rm --cpus=2 --memory=6g -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              test -s "$OPENMC_CROSS_SECTIONS"
+              NUKE_STAGE46_ACTUAL_EVALUATED_NEUTRON_CROSS_SECTIONS="$OPENMC_CROSS_SECTIONS" \
+                python -m unittest ntr.nerva.validate_stage46_hot_neutron_data_qualification -v
+              set +e
+              python -m ntr.nerva.run_openmc_transport \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --assembly core --rings 3 --particles 3000 \
+                --batches 24 --inactive 8 --seed 13007 \
+                --neutron-temperature-method interpolation \
+                --fuel-temperature-k 900 \
+                --hydrogen-temperature-k 600 \
+                --bound-solid-temperature-k 600 \
+                --structural-solid-temperature-k 600 \
+                --require-physical-hot-neutron-xs --export-only \
+                --output /repo/build/stage46_real_evaluated_hot_rejection \
+                > /repo/build/stage46_real_evaluated_hot_rejection/rejected_hot_log.txt 2>&1
+              code=$?
+              set -e
+              test "$code" -ne 0
+              test -s /repo/build/stage46_real_evaluated_hot_rejection/physical_hot_neutron_xs_qualification.json
+              python -c "import json; r=json.load(open(\"/repo/build/stage46_real_evaluated_hot_rejection/physical_hot_neutron_xs_qualification.json\")); assert r[\"all_declared_solid_and_coolant_temperatures_explicit\"] and not r[\"qualified_hot_incident_neutron_data_support\"] and len(r[\"neutron_isotopes_with_missing_hot_coverage\"])>0 and not r[\"historical_NASA_NERVA_hot_reactor_validated\"]; print(\"Genuine evaluated NNDC neutron HDF5 correctly rejects unsupported hot nuclear physics; no fake hot statepoint\")"
+              grep -q "HOT OPENMC NEUTRON TRANSPORT REJECTED" /repo/build/stage46_real_evaluated_hot_rejection/rejected_hot_log.txt
+              test ! -f /repo/build/stage46_real_evaluated_hot_rejection/statepoint.24.h5
+            '
+      - name: Preserve original evaluated nuclear-data rejection and missing kT coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage46-real-evaluated-hot-neutron-coverage-negative-test
+          path: |
+            build/stage46_real_evaluated_hot_rejection/*.json
+            build/stage46_real_evaluated_hot_rejection/rejected_hot_log.txt
+          retention-days: 21
+          if-no-files-found: warn
