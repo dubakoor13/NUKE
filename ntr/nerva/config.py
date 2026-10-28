@@ -50,6 +50,10 @@ class NervaConfig:
     # temperature coverage must be checked independently. Free-gas
     # remains a surrogate, never "NASA validated".
     thermal_scattering_treatment: str = "free-gas"
+    # Actual OpenMC neutron cross-section selection. Interpolation requires
+    # two evaluated kT tables bracketing every explicitly requested nuclide
+    # temperature; it cannot manufacture high-temperature nuclear data.
+    neutron_temperature_method: str = "nearest"
     bound_solid_temperature_k: float | None = None
     # User-selected nearest nuclear-data temperature tolerance [K].
     # A small finite tolerance <=5 K does NOT replace hot evaluated data.
@@ -181,6 +185,14 @@ class NervaConfig:
         # Temperature tolerance is also allowed in the free-gas control
         # so both sides of a controlled neutron-scattering comparison use
         # exactly the same solver temperature method and material conditions.
+        if self.neutron_temperature_method not in ("nearest", "interpolation"):
+            raise ValueError("neutron_temperature_method must be nearest or interpolation")
+        if (self.neutron_temperature_method == "interpolation"
+                and self.thermal_scattering_treatment == "evaluated-bound"):
+            raise ValueError(
+                "temperature interpolation with evaluated-bound S(a,b) must "
+                "not be assumed without independently qualified kernel interpolation"
+            )
         if self.thermal_scattering_treatment not in ("free-gas", "evaluated-bound"):
             raise ValueError(
                 "thermal_scattering_treatment must be 'free-gas' or "
