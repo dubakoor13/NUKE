@@ -20,7 +20,7 @@ import h5py
 import numpy as np
 
 from .real_coupled_burnin_sensitivity import strict_native_identity
-from .real_coupled_initial_source_relaxation import _sha
+from .real_coupled_initial_source_relaxation import _sha, _native_heating
 from .real_coupled_spatial_heating_stability import total_variation
 from .source_bank_convergence import read_source_bank
 
@@ -83,8 +83,7 @@ def validate_native_tally_control(baseline: Path,
         config.append(cfg)
     if (config[0]!=config[1] or hashes[0]!=hashes[1]):
         raise ValueError("real source-only experiment altered settings, geometry or data")
-    # StatePoints reflect OpenMC's C++ actual runtime neutron source tracks.
-    actual=[]
+    # Histogram must use the SAME physically defined native source-mesh\n    # bounds as prior validated Stage37–41 source convergence tests.\n    original_heating = _native_heating(baseline / 'statepoint.100.h5')\n    actual=[]
     for index,path in enumerate(paths):
         hists=[]
         for batch in BATCHES:
@@ -101,8 +100,8 @@ def validate_native_tally_control(baseline: Path,
                             actual_tallies["ids"][()]).size:
                         raise ValueError("source-only native C++ HDF5 stored scoring tally IDs")
             bank,metadata=read_source_bank(
-                native,lower_cm=(-100.,-100.,-200.),
-                upper_cm=(100.,100.,200.),
+                native,lower_cm=original_heating['mesh_lower_left_cm'],
+                upper_cm=original_heating['mesh_upper_right_cm'],
                 bins=FISSION_MESH)
             # Same fixed histogram physical extents across modes.
             if (metadata["seed"]!=SEED
