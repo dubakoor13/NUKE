@@ -1,0 +1,116 @@
+name: NUKE Stage48 genuine evaluated neutron source convergence across independent seeds
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_multitemperature_independent_seed_neutronics.py'
+      - 'ntr/nerva/validate_stage48_multitemperature_independent_seeds.py'
+      - '.github/workflows/nerva-stage48-multitemperature-independent-seeds.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  real-evaluated-multitemperature-source-stability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Recover same official evaluated multi-temperature neutron library as Stage47
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage48/nuclear_data/unpacked build/stage48/results build/stage48/original_transport
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 --format '{{json .RepoDigests}}' \
+            > build/stage48/nuclear_data/openmc_cpp_image_digest.json
+          uri="https://anl.box.com/shared/static/9igk353zpy8fn9ttvtrqgzvw1vtejoz6.xz"
+          curl --fail --location --show-error --silent \
+            --connect-timeout 60 --max-time 1800 --retry 3 --retry-delay 10 \
+            --output build/stage48/nuclear_data/official_endfb71_hdf5.tar.xz "$uri"
+          echo "5bc4b62a602d569e3a801c3499f03378192e83623c3eb39500804178706781f9  build/stage48/nuclear_data/official_endfb71_hdf5.tar.xz" | sha256sum -c -
+          tar -xJf build/stage48/nuclear_data/official_endfb71_hdf5.tar.xz \
+            -C build/stage48/nuclear_data/unpacked
+          rm build/stage48/nuclear_data/official_endfb71_hdf5.tar.xz
+          xs=$(find build/stage48/nuclear_data/unpacked -type f -name cross_sections.xml | head -n 1)
+          test -s "$xs"
+          test "$(find build/stage48/nuclear_data/unpacked -name cross_sections.xml | wc -l)" -eq 1
+          echo "2789cb61537a56a14b555ca97f439ed14896bd6db9bfe6460e066db3c96843db  $xs" | sha256sum -c -
+          printf '%s\n' "$uri" > build/stage48/nuclear_data/library_origin.txt
+          sha256sum "$xs" > build/stage48/nuclear_data/cross_sections_index.sha256
+      - name: Verify eight mathematical source/independent-seed tests before transport
+        run: |
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -m unittest \
+                ntr.nerva.validate_stage48_multitemperature_independent_seeds.IndependentSeedMultiTemperatureMathTests -v
+            '
+      - name: Execute EIGHT genuine official neutron C++ source histories (4 seeds x 2 temperatures)
+        run: |
+          docker run --rm --cpus=2 --memory=7g -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              xs=$(find /repo/build/stage48/nuclear_data/unpacked -type f -name cross_sections.xml | head -n 1)
+              test -s "$xs"
+              export OPENMC_CROSS_SECTIONS="$xs"
+              for temp in 750 900; do
+                for seed in 13007 23011 33013 43019; do
+                  echo "GENUINE evaluated multi-kT OpenMC neutron C++ transport: $temp K seed=$seed"
+                  python -m ntr.nerva.run_openmc_transport \
+                    --cross-sections "$xs" --assembly core --rings 3 \
+                    --batches 100 --inactive 20 --particles 3000 --seed "$seed" \
+                    --statepoint-batches 60 100 \
+                    --neutron-temperature-method interpolation \
+                    --fuel-temperature-k "$temp" \
+                    --hydrogen-temperature-k "$temp" \
+                    --bound-solid-temperature-k "$temp" \
+                    --structural-solid-temperature-k "$temp" \
+                    --require-physical-hot-neutron-xs \
+                    --heating-mesh-dimensions 12 12 10 \
+                    --diagnostic-energy-groups 24 --axial-mesh-bins 24 \
+                    --output "/repo/build/stage48/original_transport/T${temp}K/seed_${seed}"
+                  for batch in 060 100; do
+                    test -s "/repo/build/stage48/original_transport/T${temp}K/seed_${seed}/statepoint.$batch.h5"
+                  done
+                done
+              done
+              python -m ntr.nerva.real_multitemperature_independent_seed_neutronics \
+                --root /repo/build/stage48/original_transport \
+                --cross-sections "$xs" \
+                --output /repo/build/stage48/results/real_multitemperature_independent_seeds.json
+              NUKE_STAGE48_ACTUAL_CPP_HDF5_ROOT=/repo/build/stage48/original_transport \
+              NUKE_STAGE48_ACTUAL_MULTI_KT_XS="$xs" \
+                python -m unittest \
+                  ntr.nerva.validate_stage48_multitemperature_independent_seeds.ActualEvaluatedMultiTemperatureIndependentSeedOpenMC -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage48/results/real_multitemperature_independent_seeds.json\")); assert r[\"original_OpenMC_CPP_neutron_eigenvalue_transport_runs\"]==8 and r[\"actual_original_HDF5_source_statepoints_inspected\"]==16 and not r[\"temperature_coefficient_or_worth_statistically_qualified\"]; print(\"Original evaluated-data independent-seed neutron source physics verified; hot NASA NERVA not qualified\")"
+            '
+      - name: Archive all 16 ORIGINAL OpenMC neutron source HDF5 plus raw provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage48-16-original-multitemperature-independent-neutron-hdf5
+          path: |
+            build/stage48/nuclear_data/openmc_cpp_image_digest.json
+            build/stage48/nuclear_data/library_origin.txt
+            build/stage48/nuclear_data/cross_sections_index.sha256
+            build/stage48/original_transport/*/seed_*/*.xml
+            build/stage48/original_transport/*/seed_*/*.json
+            build/stage48/original_transport/*/seed_*/statepoint.060.h5
+            build/stage48/original_transport/*/seed_*/statepoint.100.h5
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Archive independent-seed neutron source statistical limitations and physics JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage48-original-independent-seed-neutron-source-qa
+          path: build/stage48/results/*.json
+          retention-days: 21
+          if-no-files-found: warn
