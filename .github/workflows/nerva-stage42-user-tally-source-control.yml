@@ -1,0 +1,90 @@
+name: NUKE Stage42 original OpenMC source tally-activation HDF5 control
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/real_coupled_tally_activation_source_control.py'
+      - 'ntr/nerva/validate_stage42_tally_activation_source.py'
+      - '.github/workflows/nerva-stage42-user-tally-source-control.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/run_openmc_transport.py'
+      - 'ntr/nerva/real_coupled_tally_activation_source_control.py'
+      - 'ntr/nerva/validate_stage42_tally_activation_source.py'
+      - '.github/workflows/nerva-stage42-user-tally-source-control.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit-original-openmc-source-with-and-without-user-tallies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Retrieve genuine original scored Stage41 native coupled source HDF5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage42_baseline_scored build/stage42_source_only build/stage42_results
+          gh run download 40753528970 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage41-six-original-1-thread-openmc-coupled-HDF5 \
+            -D build/stage42_baseline_scored
+      - name: Retrieve FOUR previously executed original source-only C++ HDF5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Four genuine independent one-thread photon+neutron OpenMC C++
+          # runs completed in 40756403944. A Python comment-escaping bug
+          # blocked analysis only; original HDF5 execution was successful.
+          gh run download 40756403944 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage42-four-original-openmc-source-only-1-thread-hdf5 \
+            -D build/stage42_source_only
+          for inactive in 20 40; do
+            for mode in legacy-broad central-compact; do
+              src="build/stage42_source_only/inactive$inactive/$mode/seed_13007"
+              original="build/stage42_baseline_scored/$(test "$inactive" = 20 && echo original20 || echo changed40)/$mode/seed_13007"
+              test -s "$src/transport_provenance.json"
+              test -s "$original/transport_provenance.json"
+              for checkpoint in 060 100; do
+                test -s "$src/statepoint.$checkpoint.h5"
+                test -s "$original/statepoint.$checkpoint.h5"
+              done
+            done
+          done
+      - name: Verify original source-bank/entropy/k physics with official pinned OpenMC reader
+        run: |
+          set -euo pipefail
+          docker pull openmc/openmc:v0.15.3
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              python -m unittest ntr.nerva.validate_stage42_tally_activation_source.TallyActivationControlMathTests -v
+              python -m ntr.nerva.real_coupled_tally_activation_source_control \
+                --stage41-scored-originals /repo/build/stage42_baseline_scored \
+                --new-no-user-tally-runs /repo/build/stage42_source_only \
+                --output /repo/build/stage42_results/actual_neutron_genealogy_scoring_control.json
+              NUKE_STAGE42_REAL_SCORED_STAGE41=/repo/build/stage42_baseline_scored \
+              NUKE_STAGE42_REAL_NO_USER_TALLIES=/repo/build/stage42_source_only \
+                python -m unittest ntr.nerva.validate_stage42_tally_activation_source.GenuineOpenMCTallyFreeControlTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage42_results/actual_neutron_genealogy_scoring_control.json\")); assert r[\"genuine_actual_openmc_hdf5_checkpoint_files_inspected\"]==16 and r[\"all_four_original_source_only_runs_have_no_user_scoring_tallies\"] and not r[\"hot_historical_NERVA_or_physical_watts_qualified\"]; print(\"ORIGINAL source-only OpenMC C++ physics evidence verified, no reactor heat\")"
+            '
+      - name: Archive machine-readable actual source genealogy vs tally scoring
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage42-verified-original-source-scoring-control
+          path: build/stage42_results/*.json
+          retention-days: 21
+          if-no-files-found: warn
