@@ -1,0 +1,152 @@
+name: NUKE Stage47 genuine official evaluated multi-temperature neutron transport
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_evaluated_multitemperature_transport.py'
+      - 'ntr/nerva/validate_stage47_real_multitemperature_neutronics.py'
+      - '.github/workflows/nerva-stage47-genuine-multitemperature-xs.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_evaluated_multitemperature_transport.py'
+      - 'ntr/nerva/validate_stage47_real_multitemperature_neutronics.py'
+      - '.github/workflows/nerva-stage47-genuine-multitemperature-xs.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  actual-evaluated-neutron-interpolation-and-source-physics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pin official OpenMC v0.15.3 and independently check source sampling
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage47_actual/nuclear_data \
+            build/stage47_actual/source build/stage47_results
+          gh api "repos/openmc-dev/openmc/contents/src/nuclide.cpp?ref=v0.15.3" \
+            --jq '.content' | base64 -d > build/stage47_actual/source/nuclide.cpp
+          test "$(git hash-object build/stage47_actual/source/nuclide.cpp)" = \
+            "5ae6e30ee24e4f16c31fd04dbf9b7c9b4afa5c3e"
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' > build/stage47_actual/openmc_image_digest.json
+      - name: Recover OFFICIAL processed multi-temperature ENDF/B-VII.1 HDF5 release
+        run: |
+          set -euo pipefail
+          # https://openmc.org/data/ official release built by OpenMC developers.
+          # Several GB: download is time/disk bounded and NEVER substituted
+          # with the cold-only built-in NNDC test library on failure.
+          uri="https://anl.box.com/shared/static/9igk353zpy8fn9ttvtrqgzvw1vtejoz6.xz"
+          printf '%s\n' "$uri" > build/stage47_actual/nuclear_data/library_origin.txt
+          archive=build/stage47_actual/nuclear_data/official_endfb71_hdf5.tar.xz
+          curl --fail --location --show-error --silent \
+            --connect-timeout 60 --max-time 1800 \
+            --retry 3 --retry-delay 12 \
+            --output "$archive" "$uri"
+          test "$(stat -c '%s' "$archive")" -gt 100000000
+          file "$archive"
+          test "$(file -b "$archive")" != "HTML document"
+          sha256sum "$archive" > build/stage47_actual/nuclear_data/full_archive_sha256.txt
+          mkdir -p build/stage47_actual/nuclear_data/unpacked
+          tar -xJf "$archive" -C build/stage47_actual/nuclear_data/unpacked
+          rm -f "$archive"
+          mapfile -t indexes < <(find build/stage47_actual/nuclear_data/unpacked \
+            -name cross_sections.xml -type f)
+          test "${#indexes[@]}" -eq 1
+          test -s "${indexes[0]}"
+          printf '%s\n' "${indexes[0]}" > build/stage47_actual/nuclear_data/xs_index_relative.txt
+          sha256sum "${indexes[0]}" > build/stage47_actual/nuclear_data/xs_index_sha256.txt
+      - name: Verify mathematical interpolation rejection and REAL ENDF/B multi-kT support
+        run: |
+          set -euo pipefail
+          docker run --rm --cpus=2 --memory=7g -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -m unittest \
+                ntr.nerva.validate_stage47_real_multitemperature_neutronics.MultitemperatureInterpolationMathTests -v
+              xs=$(find /repo/build/stage47_actual/nuclear_data/unpacked \
+                -name cross_sections.xml -type f | head -n 1)
+              test -s "$xs"
+              export OPENMC_CROSS_SECTIONS="$xs"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              python -c "from ntr.nerva.real_evaluated_multitemperature_transport import verify_upstream_cpp_temperature_sampling; from pathlib import Path; x=verify_upstream_cpp_temperature_sampling(Path(\"/repo/build/stage47_actual/source/nuclide.cpp\")); assert x[\"stochastic_evaluated_table_sampling_confirmed\"]; print(\"Real official upstream neutron kT stochastic table selector verified\")"
+            '
+      - name: Execute TWO original OpenMC C++ fixed-geometry multi-kT neutron physics runs
+        run: |
+          set -euo pipefail
+          docker run --rm --cpus=2 --memory=7g -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              xs=$(find /repo/build/stage47_actual/nuclear_data/unpacked \
+                -name cross_sections.xml -type f | head -n 1)
+              test -s "$xs"
+              export OPENMC_CROSS_SECTIONS="$xs"
+              for config in intermediate_750K reference_900K; do
+                temp=750
+                if [ "$config" = reference_900K ]; then temp=900; fi
+                echo "REAL original OpenMC multitemperature neutron transport at $temp K"
+                python -m ntr.nerva.run_openmc_transport \
+                  --cross-sections "$xs" --assembly core --rings 3 \
+                  --batches 24 --inactive 8 --particles 3000 --seed 13007 \
+                  --neutron-temperature-method interpolation \
+                  --fuel-temperature-k "$temp" \
+                  --hydrogen-temperature-k "$temp" \
+                  --bound-solid-temperature-k "$temp" \
+                  --structural-solid-temperature-k "$temp" \
+                  --require-physical-hot-neutron-xs \
+                  --output "/repo/build/stage47_actual/$config"
+                test -s "/repo/build/stage47_actual/$config/statepoint.24.h5"
+                test -s "/repo/build/stage47_actual/$config/physical_hot_neutron_xs_qualification.json"
+              done
+              python -m ntr.nerva.real_evaluated_multitemperature_transport \
+                --results /repo/build/stage47_actual \
+                --cross-sections "$xs" \
+                --upstream-cpp /repo/build/stage47_actual/source/nuclide.cpp \
+                --output /repo/build/stage47_results/verified_original_multi_kT_neutron_transport.json
+              NUKE_STAGE47_ORIGINAL_MULTI_KT_RUNS=/repo/build/stage47_actual \
+              NUKE_STAGE47_GENUINE_MULTI_KT_XS_INDEX="$xs" \
+              NUKE_STAGE47_PINNED_CPP_SOURCE=/repo/build/stage47_actual/source/nuclide.cpp \
+                python -m unittest \
+                  ntr.nerva.validate_stage47_real_multitemperature_neutronics.ActualEvaluatedMultitemperatureOpenMCTests -v
+              python -c "import json; d=json.load(open(\"/repo/build/stage47_results/verified_original_multi_kT_neutron_transport.json\")); assert d[\"original_evaluated_neutron_source_runs\"]==2 and d[\"real_multi_temperature_evaluated_neutron_brackets\"][\"verified_unique_evaluated_isotopes\"]>=1 and not d[\"reactor_watts_or_hot_NASA_NERVA_model_qualified\"]; print(\"REAL evaluated neutron kT C++ source interpolation evidence PASSED (NOT validated NERVA)\")"
+            '
+      - name: Preserve actual neutron HDF5, evaluated isotope SHA256 audit and original provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage47-original-750k-900k-neutron-physics-hdf5
+          path: |
+            build/stage47_actual/openmc_image_digest.json
+            build/stage47_actual/nuclear_data/library_origin.txt
+            build/stage47_actual/nuclear_data/full_archive_sha256.txt
+            build/stage47_actual/nuclear_data/xs_index_relative.txt
+            build/stage47_actual/nuclear_data/xs_index_sha256.txt
+            build/stage47_actual/source/nuclide.cpp
+            build/stage47_actual/intermediate_750K/*.json
+            build/stage47_actual/intermediate_750K/*.xml
+            build/stage47_actual/intermediate_750K/statepoint.24.h5
+            build/stage47_actual/reference_900K/*.json
+            build/stage47_actual/reference_900K/*.xml
+            build/stage47_actual/reference_900K/statepoint.24.h5
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Preserve genuine evaluated nuclear kT table and source physics JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage47-genuine-multitemperature-neutron-xs-physics
+          path: build/stage47_results/*.json
+          retention-days: 21
+          if-no-files-found: warn
