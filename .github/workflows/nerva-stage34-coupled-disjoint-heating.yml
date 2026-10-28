@@ -55,8 +55,8 @@ jobs:
               python -m unittest ntr.nerva.validate_stage34_coupled_disjoint_heating.DisjointHeatingMomentTests -v
               python -m ntr.nerva.real_coupled_disjoint_heating \
                 --root build/stage34_original \
-                --output build/stage34_results/actual_disjoint_coupled_heating.json
-              NUKE_STAGE34_ORIGINAL_REAL_HDF5_ROOT=build/stage34_original \
+                --output /repo/build/stage34_results/actual_disjoint_coupled_heating.json
+              NUKE_STAGE34_ORIGINAL_REAL_HDF5_ROOT=/repo/build/stage34_original \
                 python -m unittest ntr.nerva.validate_stage34_coupled_disjoint_heating.ActualRealDisjointOpenMCHeatingTests -v
               python -c "import json; r=json.load(open(\"build/stage34_results/actual_disjoint_coupled_heating.json\")); assert r[\"genuine_openmc_statepoints_reverified\"]==12; assert r[\"all_raw_moment_telescope_and_final_heat_identical\"]; assert not r[\"fission_source_stationarity_qualified\"]; print(\"ORIGINAL native disjoint heating physical energy closure accepted; source/hot NERVA NOT QUALIFIED\")"
             '
