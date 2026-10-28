@@ -1,0 +1,70 @@
+name: NUKE Stage34 genuine coupled OpenMC disjoint heating windows
+
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_coupled_disjoint_heating.py'
+      - 'ntr/nerva/validate_stage34_coupled_disjoint_heating.py'
+      - '.github/workflows/nerva-stage34-coupled-disjoint-heating.yml'
+  push:
+    paths:
+      - 'ntr/nerva/real_coupled_disjoint_heating.py'
+      - 'ntr/nerva/validate_stage34_coupled_disjoint_heating.py'
+      - '.github/workflows/nerva-stage34-coupled-disjoint-heating.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  recover-three-actual-openmc-heating-windows-from-twelve-native-hdf5:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download actual successful Stage33 neutron photon OpenMC checkpoints
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage34_original build/stage34_results
+          gh run download 40741032756 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage33-original-coupled-temporal-fission-source-hdf5 \
+            -D build/stage34_original
+          test -s build/stage34_original/actual_four_seed_coupled_heating_covariance.json
+          test -s build/stage34_original/actual_coupled_temporal_fission_source.json
+          for seed in 13007 23011 33013 43019; do
+            for batch in 30 45 65; do
+              test -s "build/stage34_original/seed_${seed}/statepoint.${batch}.h5"
+            done
+          done
+      - name: Recover physical OpenMC tally sums with original installed OpenMC Python reader
+        run: |
+          set -euo pipefail
+          docker pull openmc/openmc:v0.15.3
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              python -m unittest ntr.nerva.validate_stage34_coupled_disjoint_heating.DisjointHeatingMomentTests -v
+              python -m ntr.nerva.real_coupled_disjoint_heating \
+                --root /repo/build/stage34_original \
+                --output /repo/build/stage34_results/actual_disjoint_coupled_heating.json
+              NUKE_STAGE34_ORIGINAL_REAL_HDF5_ROOT=/repo/build/stage34_original \
+                python -m unittest ntr.nerva.validate_stage34_coupled_disjoint_heating.ActualRealDisjointOpenMCHeatingTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage34_results/actual_disjoint_coupled_heating.json\")); assert r[\"genuine_openmc_statepoints_reverified\"]==12; assert r[\"all_raw_moment_telescope_and_final_heat_identical\"]; assert not r[\"fission_source_stationarity_qualified\"]; print(\"ORIGINAL native disjoint heating physical energy closure accepted; source/hot NERVA NOT QUALIFIED\")"
+            '
+      - name: Retain genuine disjoint-window heating, source and native SHA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage34-original-coupled-disjoint-heating
+          path: build/stage34_results/*.json
+          if-no-files-found: warn
+          retention-days: 21
