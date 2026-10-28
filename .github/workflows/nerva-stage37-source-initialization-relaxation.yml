@@ -62,7 +62,8 @@ jobs:
                     --diagnostic-energy-groups 24 --axial-mesh-bins 24 \
                     --output "/repo/build/stage37/$mode/seed_$seed"
                   for checkpoint in 30 60 100; do
-                    test -s "/repo/build/stage37/$mode/seed_$seed/statepoint.$checkpoint.h5"
+                    printf -v padded "%03d" "$checkpoint"
+                    test -s "/repo/build/stage37/$mode/seed_$seed/statepoint.$padded.h5"
                   done
                 done
               done
@@ -83,8 +84,8 @@ jobs:
             build/stage37/openmc_image_repo_digest.json
             build/stage37/*/seed_*/*.json
             build/stage37/*/seed_*/*.xml
-            build/stage37/*/seed_*/statepoint.30.h5
-            build/stage37/*/seed_*/statepoint.60.h5
+            build/stage37/*/seed_*/statepoint.030.h5
+            build/stage37/*/seed_*/statepoint.060.h5
             build/stage37/*/seed_*/statepoint.100.h5
             build/stage37/*/seed_*/summary.h5
           retention-days: 21
