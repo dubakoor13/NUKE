@@ -68,6 +68,15 @@ def parse_args() -> argparse.Namespace:
                         help="Initial fissionable-only eigenvalue source box; no geometry/material modifications.")
     parser.add_argument("--seed", type=int, default=None,
                         help="Explicit independent OpenMC random seed for statistical replicas.")
+    parser.add_argument(
+        "--neutron-temperature-method", choices=("nearest","interpolation"),
+        default="nearest",
+        help=(
+            "Actual OpenMC incident neutron XS selection. Interpolation "
+            "requires two physical evaluated neutron kT tables bracketing "
+            "every explicitly selected material temperature; never extrapolate."
+        ),
+    )
     parser.add_argument("--fuel-temperature-k", type=float,
                         help="Uniform OpenMC fuel surrogate temperature for snapshot feedback.")
     parser.add_argument("--hydrogen-temperature-k", type=float,
@@ -214,6 +223,7 @@ def main() -> int:
 
     config = NervaConfig(
         core_rings=args.rings,
+        neutron_temperature_method=args.neutron_temperature_method,
         thermal_scattering_treatment=args.thermal_scattering,
         bound_solid_temperature_k=args.bound_solid_temperature_k,
         bound_nearest_temperature_tolerance_k=args.bound_nearest_temperature_tolerance_k,
@@ -305,6 +315,11 @@ def main() -> int:
         json.dumps(temperature_audit, indent=2) + "\n",
         encoding="utf-8",
     )
+    # The preflight must audit exactly the selector sent to C++ neutron
+    # transport. A range check is insufficient for a nearest-table run.
+    if temperature_audit["neutron_temperature_method"] != config.neutron_temperature_method:
+        raise RuntimeError("OpenMC neutron temperature method differs from audited evaluation")
+
 
     if (args.fuel_temperature_k is not None
             or args.hydrogen_temperature_k is not None
@@ -372,6 +387,7 @@ def main() -> int:
             "initial_fission_source": args.initial_fission_source,
             "control_drum_angle_deg": config.control_drum_angle_deg,
             "fuel_temperature_k": config.fuel_temperature_k,
+            "neutron_temperature_method": config.neutron_temperature_method,
             "hydrogen_temperature_k": config.hydrogen_temperature_k,
             "thermal_scattering_treatment": config.thermal_scattering_treatment,
             "bound_solid_temperature_k": config.bound_solid_temperature_k,
