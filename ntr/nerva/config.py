@@ -55,6 +55,9 @@ class NervaConfig:
     # temperature; it cannot manufacture high-temperature nuclear data.
     neutron_temperature_method: str = "nearest"
     bound_solid_temperature_k: float | None = None
+    # Explicit coating/tube/absorber/vessel solid state. Hot snapshots
+    # must not silently inherit a cold implicit OpenMC material default.
+    structural_solid_temperature_k: float | None = None
     # User-selected nearest nuclear-data temperature tolerance [K].
     # A small finite tolerance <=5 K does NOT replace hot evaluated data.
     bound_nearest_temperature_tolerance_k: float = 0.0
@@ -209,6 +212,11 @@ class NervaConfig:
                 "evaluated-bound thermal scattering requires explicit "
                 "bound_solid_temperature_k and matching evaluated S(a,b)"
             )
+        if self.structural_solid_temperature_k is not None and (
+            not math.isfinite(self.structural_solid_temperature_k)
+            or self.structural_solid_temperature_k <= 0
+        ):
+            raise ValueError("structural solid temperature must be positive finite K")
         if self.fuel_temperature_k is not None and (
             not math.isfinite(self.fuel_temperature_k) or self.fuel_temperature_k <= 0
         ):
