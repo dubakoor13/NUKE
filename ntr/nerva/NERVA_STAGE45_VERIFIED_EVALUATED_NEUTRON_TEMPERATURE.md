@@ -24,7 +24,7 @@ The code fails closed for `interpolation` plus unqualified bound neutron `S(a,b)
 | Source bank at batch 24, native SHA256 | `3e8c376b34...` | **Exactly same** |
 | Active-generation k arithmetic mean | **0.01083503021721516** | **0.01083503021721516** |
 | Final source Shannon entropy | **5.5155276730** | **5.5155276730** |
-| Max absolute difference between k-generation histories | colspan: **5.204170427930421×10⁻¹⁸** | |
+| Maximum absolute difference between the two k-generation histories | **5.204170427930421×10⁻¹⁸ (pair comparison)** | **5.204170427930421×10⁻¹⁸ (pair comparison)** |
 
 **Critical numerical observation:** Official OpenMC **explicitly warns** for the interpolation-request run that the C0 cross sections exist **at only one temperature**, and the C++ solver **reverts to its nearest temperature method**. The two equal C++ neutron histories therefore **do not demonstrate interpolation between distinct evaluated neutron temperatures**. The XML correctly accepts the interpolation request, but physical **multi-temperature interpolation remains unexercised** with this cold-only evaluated library. The recorded results and Stage45 JSON must distinguish *requested* versus *physically executed* method.
 
