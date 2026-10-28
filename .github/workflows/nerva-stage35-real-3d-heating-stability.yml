@@ -1,0 +1,76 @@
+name: NUKE Stage35 genuine OpenMC 3D heating-window spatial stability
+
+on:
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_coupled_spatial_heating_stability.py'
+      - 'ntr/nerva/validate_stage35_coupled_spatial_heating.py'
+      - '.github/workflows/nerva-stage35-real-3d-heating-stability.yml'
+  push:
+    paths:
+      - 'ntr/nerva/real_coupled_spatial_heating_stability.py'
+      - 'ntr/nerva/validate_stage35_coupled_spatial_heating.py'
+      - '.github/workflows/nerva-stage35-real-3d-heating-stability.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  genuine-coupled-hdf5-three-dimensional-heating-stability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download real Stage33 twelve HDF5 and independently accepted Stage34 results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage35_original build/stage35_baseline build/stage35_results
+          gh run download 40741032756 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage33-original-coupled-temporal-fission-source-hdf5 \
+            -D build/stage35_original
+          gh run download 40742640556 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage34-original-coupled-disjoint-heating \
+            -D build/stage35_baseline
+          test -s build/stage35_baseline/actual_disjoint_coupled_heating.json
+          test -s build/stage35_original/actual_four_seed_coupled_heating_covariance.json
+          for seed in 13007 23011 33013 43019; do
+            for batch in 30 45 65; do
+              test -s "build/stage35_original/seed_${seed}/statepoint.${batch}.h5"
+            done
+          done
+      - name: Run pinned original OpenMC v0.15.3 StatePoint reader and spatial physics checks
+        run: |
+          set -euo pipefail
+          docker pull openmc/openmc:v0.15.3
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
+              python -m unittest ntr.nerva.validate_stage35_coupled_spatial_heating.SpatialHeatingMathTests -v
+              python -m ntr.nerva.real_coupled_spatial_heating_stability \
+                --root /repo/build/stage35_original \
+                --stage34-report /repo/build/stage35_baseline/actual_disjoint_coupled_heating.json \
+                --output /repo/build/stage35_results/actual_3d_heating_stability.json
+              NUKE_STAGE35_ACTUAL_OPENMC_12_HDF5=/repo/build/stage35_original \
+              NUKE_STAGE35_ACTUAL_STAGE34_JSON=/repo/build/stage35_baseline/actual_disjoint_coupled_heating.json \
+                python -m unittest ntr.nerva.validate_stage35_coupled_spatial_heating.ActualOriginalOpenMC3DHeatingTests -v
+              test -s /repo/build/stage35_results/actual_3d_heating_stability.npz
+              python -c "import json; r=json.load(open(\"/repo/build/stage35_results/actual_3d_heating_stability.json\")); assert r[\"original_native_hdf5_checked\"]==12 and r[\"independent_accepted_stage34_axial_heating_verified\"] and not r[\"absolute_physical_reactor_watts_known\"]; print(\"Original genuine coupled 3D spatial heat stable-diagnostics accepted, NOT operating NERVA watts\")"
+            '
+      - name: Archive original-source-linked full 3D physical fields and statistics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage35-original-openmc-3d-spatial-heating-stability
+          path: build/stage35_results/*
+          retention-days: 21
+          if-no-files-found: warn
