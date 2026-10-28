@@ -134,7 +134,7 @@ def measure_3d_heating_stability(values: np.ndarray) -> dict:
                 float(np.percentile(relative_sd, 90)) if relative_sd.size else None,
             "largest_voxel_fraction_across_seed_average": float(np.max(average)),
             "largest_voxel_index_xyz_of_seed_average":
-                list(np.unravel_index(int(np.argmax(average)), _FINE)),
+                [int(v) for v in np.unravel_index(int(np.argmax(average)), _FINE)],
             "summed_seed_mean_heat_fraction": float(np.sum(average)),
         })
     return {
@@ -197,7 +197,7 @@ def audit_actual_3d_heating(root: str | Path, stage34_json: str | Path) -> tuple
             original = independent["per_seed"][i]["disjoint_heating_windows"][j]
             matched = recomputed["per_seed"][i]["disjoint_heating_windows"][j]
             for reference in (original, matched):
-                if (original["active_batch_window"] != list(_WINDOWS[j])
+                if (reference["active_batch_window"] != list(_WINDOWS[j])
                         or not math.isclose(float(mean.sum()),
                             reference["heating_ev_per_monte_carlo_start"],
                             rel_tol=1e-10, abs_tol=1e-7)
