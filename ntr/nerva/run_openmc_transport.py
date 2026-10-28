@@ -326,13 +326,6 @@ def main() -> int:
         raise RuntimeError("OpenMC neutron temperature method differs from audited evaluation")
 
 
-    if (args.fuel_temperature_k is not None
-            or args.hydrogen_temperature_k is not None
-            or config.thermal_scattering_treatment == "evaluated-bound") and not temperature_audit[
-        "model_explicit_temperature_coverage_ok"
-    ]:
-        raise RuntimeError("OpenMC temperature feedback outside available neutron XS temperature range")
-
     if args.require_physical_hot_neutron_xs:
         from .hot_neutron_temperature_data_qualification import (
             qualify_explicit_hot_neutron_data,
@@ -351,6 +344,13 @@ def main() -> int:
                 "isotope temperatures or implicit solid temperatures; "
                 f"see {hot_path}. No extrapolated hot cross sections allowed."
             )
+
+    if (args.fuel_temperature_k is not None
+            or args.hydrogen_temperature_k is not None
+            or config.thermal_scattering_treatment == "evaluated-bound") and not temperature_audit[
+        "model_explicit_temperature_coverage_ok"
+    ]:
+        raise RuntimeError("OpenMC temperature feedback outside available neutron XS temperature range")
 
     physical_audit = None
     if args.assembly in ("core", "mixed-core"):
