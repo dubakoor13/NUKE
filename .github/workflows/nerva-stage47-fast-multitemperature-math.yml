@@ -1,0 +1,40 @@
+name: NUKE Stage47 fast upstream C++ neutron interpolation mathematics
+
+on:
+  push:
+    paths:
+      - '.github/workflows/nerva-stage47-fast-multitemperature-math.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  original-v0153-neutron-interpolation-numerical-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pin actual official upstream OpenMC C++ temperature-sampling code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage47_fast_cpp
+          gh api 'repos/openmc-dev/openmc/contents/src/nuclide.cpp?ref=v0.15.3' \
+            --jq '.content' | base64 -d > build/stage47_fast_cpp/nuclide.cpp
+          test "$(git hash-object build/stage47_fast_cpp/nuclide.cpp)" = \
+            "5ae6e30ee24e4f16c31fd04dbf9b7c9b4afa5c3e"
+          docker pull openmc/openmc:v0.15.3
+      - name: Test strict no-fake-data temperature interpolation and C++ SHA
+        run: |
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp openmc/openmc:v0.15.3 bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -m unittest \
+                ntr.nerva.validate_stage47_real_multitemperature_neutronics.MultitemperatureInterpolationMathTests -v
+              python -c "from pathlib import Path; from ntr.nerva.real_evaluated_multitemperature_transport import verify_upstream_cpp_temperature_sampling; v=verify_upstream_cpp_temperature_sampling(Path(\"/repo/build/stage47_fast_cpp/nuclide.cpp\")); assert v[\"stochastic_evaluated_table_sampling_confirmed\"]; print(\"ACTUAL upstream C++ v0.15.3 stochastic neutron 2-kT selection verified\")"
+            '
