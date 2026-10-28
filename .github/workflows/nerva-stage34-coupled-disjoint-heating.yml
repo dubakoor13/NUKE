@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           docker pull openmc/openmc:v0.15.3
           docker run --rm --cpus=2 --memory=6g \
-            -v "$GITHUB_WORKSPACE:/repo" -w /repo \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
             openmc/openmc:v0.15.3 \
             bash -lc '
               set -euo pipefail
@@ -54,11 +54,11 @@ jobs:
               python -c "import openmc; assert not openmc.__file__.startswith(\"/repo/\")"
               python -m unittest ntr.nerva.validate_stage34_coupled_disjoint_heating.DisjointHeatingMomentTests -v
               python -m ntr.nerva.real_coupled_disjoint_heating \
-                --root build/stage34_original \
+                --root /repo/build/stage34_original \
                 --output /repo/build/stage34_results/actual_disjoint_coupled_heating.json
               NUKE_STAGE34_ORIGINAL_REAL_HDF5_ROOT=/repo/build/stage34_original \
                 python -m unittest ntr.nerva.validate_stage34_coupled_disjoint_heating.ActualRealDisjointOpenMCHeatingTests -v
-              python -c "import json; r=json.load(open(\"build/stage34_results/actual_disjoint_coupled_heating.json\")); assert r[\"genuine_openmc_statepoints_reverified\"]==12; assert r[\"all_raw_moment_telescope_and_final_heat_identical\"]; assert not r[\"fission_source_stationarity_qualified\"]; print(\"ORIGINAL native disjoint heating physical energy closure accepted; source/hot NERVA NOT QUALIFIED\")"
+              python -c "import json; r=json.load(open(\"/repo/build/stage34_results/actual_disjoint_coupled_heating.json\")); assert r[\"genuine_openmc_statepoints_reverified\"]==12; assert r[\"all_raw_moment_telescope_and_final_heat_identical\"]; assert not r[\"fission_source_stationarity_qualified\"]; print(\"ORIGINAL native disjoint heating physical energy closure accepted; source/hot NERVA NOT QUALIFIED\")"
             '
       - name: Retain genuine disjoint-window heating, source and native SHA evidence
         if: always()
