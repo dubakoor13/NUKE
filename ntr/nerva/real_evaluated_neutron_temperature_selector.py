@@ -87,7 +87,17 @@ def audit_actual_selector_runs(root:Path|str, *, cross_sections:Path|str) -> dic
                 or not np.isfinite(k).all() or np.any(k<=0)
                 or not np.isfinite(entropy).all()):
             raise ValueError("actual neutron eigenvalue k/entropy/fission source not measured")
-        checks.append((method,provenance,audit,k,entropy,bank))
+        explicit_selections=[
+            selection
+            for row in audit["nuclides"]
+            for request in row["requested_by_material"]
+            for selection in [request.get("actual_transport_temperature_selection")]
+            if selection is not None
+        ]
+        actual_brackets=[x for x in explicit_selections
+                         if x["covered"]
+                         and x["lower_evaluated_K"]!=x["upper_evaluated_K"]]
+        checks.append((method,provenance,audit,k,entropy,bank,actual_brackets))
     a,b=checks
     if any(a[1]["xml_sha256"][key]!=b[1]["xml_sha256"][key]
            for key in ("geometry.xml","materials.xml")):
@@ -99,9 +109,16 @@ def audit_actual_selector_runs(root:Path|str, *, cross_sections:Path|str) -> dic
         "actual_evaluated_neutron_library_index_sha256":_hash(xs),
         "geometry_and_material_xml_identical":True,
         "explicit_material_temperature_K":TEMPERATURE_K,
-        "actual_transport_selectors_exercised":["nearest","interpolation"],
+        "actual_transport_selectors_requested":["nearest","interpolation"],
+        "genuine_between_two_evaluated_temperature_tables_exercised":bool(
+            any(x[6] for x in checks)),
+        "OpenMC_interpolation_request_had_only_one_cold_table_and_can_fallback":bool(
+            not b[6]),
+        "actual_physical_temperature_table_interpolation_verified":False,
         "per_selector":[{
-            "temperature_method":method,
+            "temperature_method_requested_in_settings_XML":method,
+            "two_distinct_evaluated_neutron_kT_tables_used":bool(brackets),
+            "evaluated_interpolation_brackets":brackets,
             "original_statepoint_sha256":provenance["statepoint"]["sha256"],
             "neutron_cross_section_temperature_audit_passed":
                 audit["model_explicit_temperature_coverage_ok"],
@@ -110,7 +127,7 @@ def audit_actual_selector_runs(root:Path|str, *, cross_sections:Path|str) -> dic
             "active_generation_k_max":float(k[8:].max()),
             "entropy_at_final_generation":float(entropy[-1]),
             "native_fission_bank_sha256":hashlib.sha256(bank.tobytes()).hexdigest(),
-        } for method,provenance,audit,k,entropy,bank in checks],
+        } for method,provenance,audit,k,entropy,bank,brackets in checks],
         "max_absolute_k_generation_difference_between_two_selectors":
             float(np.max(np.abs(a[3]-b[3]))),
         "full_native_source_bank_array_bit_identical":bool(np.array_equal(a[5],b[5])),
@@ -119,6 +136,8 @@ def audit_actual_selector_runs(root:Path|str, *, cross_sections:Path|str) -> dic
         "physical_reactor_power_watts_qualified":False,
         "interpretation":[
             "Only one exact cold evaluated table is exercised by these real runs.",
+            "OpenMC reported a fallback to nearest for C0: only one evaluated temperature is available.",
+            "An interpolation keyword in settings.xml is NOT evidence that interpolation was physically performed.",
             "Interpolation between two hot nuclear tables requires a separately available evaluated library.",
             "Numerical selector validation cannot establish temperature feedback coefficient, criticality, or fuel power.",
         ],
