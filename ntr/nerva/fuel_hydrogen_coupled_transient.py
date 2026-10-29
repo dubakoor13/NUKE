@@ -34,6 +34,7 @@ from .coating_radial_fvm import (
     advance_radial_coating_enthalpy, distribute_angular_power_to_radial_layers,
 )
 from .coating_radial_interfaces import radial_interface_power
+from .fuel_wall_nonorthogonal import build_fuel_gradient_reconstruction
 from .coating_angular_interfaces import (
     AngularCoatingInterfaces, build_angular_coating_interfaces,
     angular_interface_power, distribute_channel_coating_power,
@@ -155,7 +156,8 @@ def with_resolved_coating(
 ) -> CoupledCoreModel:
     """Enable coating mass and thermal contact within existing Stage58."""
     if fuel_wall_distance_model not in (
-            "global_half_cell","local_half_depth","moment_normal_depth"):
+            "global_half_cell","local_half_depth","moment_normal_depth",
+            "moment_nonorthogonal_gradient"):
         raise ValueError("unknown embedded fuel wall distance model")
     if (fuel_wall_distance_model=="local_half_depth"
             and angular_sectors is None):
@@ -180,6 +182,11 @@ def with_resolved_coating(
             density_kg_m3=density_kg_m3)
         contacts=build_angular_coating_interfaces(
             model.config,model.solid,coating,angular)
+        if fuel_wall_distance_model=="moment_nonorthogonal_gradient":
+            gradients=build_fuel_gradient_reconstruction(
+                model.config,model.solid)
+            contacts=replace(
+                contacts,fuel_gradient_reconstruction=gradients)
     if radial_layers is None:
         radial=None
     else:
