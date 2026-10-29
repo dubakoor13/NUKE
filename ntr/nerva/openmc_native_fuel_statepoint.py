@@ -357,9 +357,12 @@ def read_openmc_neutron_fuel_statepoint(
         stderr=np.sqrt(variance)
         if np.any(mean < 0):
             raise ValueError("negative mean deposited-energy score cannot be used as heat")
-        # Native OpenMC mesh bins: x,y,z with z fastest (C-order).
-        m=mean.reshape(dims)
-        err=stderr.reshape(dims)
+        # Upstream src/mesh.cpp StructuredMesh::get_bin_from_indices:
+        # bin=((k-1)*ny+(j-1))*nx+(i-1). X varies FASTEST.
+        # Reshaping a native flat mesh tally requires Fortran order.
+        # C order (z fastest) preserves total watts but MISLOCATES HEAT.
+        m=mean.reshape(dims,order="F")
+        err=stderr.reshape(dims,order="F")
         axial=np.sum(m,axis=(0,1))
         # Covariance between mesh bins is absent from the native two-moment
         # export. Sum of individual standard errors bounds correlated total.
