@@ -1,0 +1,76 @@
+name: NUKE Stage62 native OpenMC statepoint physical evidence audit
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/openmc_native_fuel_statepoint.py'
+      - 'ntr/nerva/validate_stage60_native_hdf5_heating.py'
+      - 'ntr/nerva/validate_stage62_native_statepoint_evidence.py'
+      - '.github/workflows/nerva-stage62-statepoint-evidence.yml'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+  pull_request:
+    paths:
+      - 'ntr/nerva/openmc_native_fuel_statepoint.py'
+      - 'ntr/nerva/validate_stage60_native_hdf5_heating.py'
+      - 'ntr/nerva/validate_stage62_native_statepoint_evidence.py'
+      - '.github/workflows/nerva-stage62-statepoint-evidence.yml'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  native-mode-source-physics-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install numerical and HDF5 runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2' 'h5py>=3.10,<4'
+      - name: Stage62 physical evidence tests and Stage52-61 regression
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage62_native_statepoint_evidence -v
+          python -m unittest ntr.nerva.validate_stage61_native_spatial_heating -v
+          python -m unittest ntr.nerva.validate_stage60_native_hdf5_heating -v
+          python -m unittest ntr.nerva.validate_stage59_core_refinement_heating -v
+          python -m unittest ntr.nerva.validate_stage58_fuel_hydrogen_coupling -v
+          python -m unittest ntr.nerva.validate_stage57_hydrogen_transient -v
+          python -m unittest ntr.nerva.validate_stage56_hydrogen_hydraulics -v
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Show statepoint evidence recovered from synthetic HDF5 fixture
+        run: |
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          from ntr.nerva.validate_stage60_native_hdf5_heating import (
+              synthetic_statepoint,FUEL_ID,DATA_SHA)
+          from ntr.nerva.openmc_native_fuel_statepoint import read_openmc_neutron_fuel_statepoint
+          with tempfile.TemporaryDirectory() as directory:
+              path=Path(directory)/'synthetic.statepoint.h5'
+              synthetic_statepoint(path,n=8,photon=False)
+              native=read_openmc_neutron_fuel_statepoint(
+                  path,expected_fuel_material_id=FUEL_ID,
+                  nuclear_data_sha256=DATA_SHA,
+                  source_rate_particles_per_s=1e18,
+                  source_rate_basis='SYNTHETIC source rate, not actual nuclear power',
+                  photon_transport_confirmed_disabled=True)
+              print('Stage62 HDF5 photon transport verified disabled:',native.photon_transport_verified_disabled)
+              print('Stage62 HDF5 OpenMC version:',native.openmc_version)
+              print('Stage62 HDF5 batches, inactive and particles:',
+                    native.n_batches,native.n_inactive,native.n_particles)
+              print('Stage62 HDF5 active tally realizations:',native.active_realizations)
+              print('Stage62 HDF5 SHA256:',native.statepoint_sha256)
+              print('Stage62 fixture SYNTHETIC; actual OpenMC run/data validation NOT performed')
+              assert native.active_realizations==native.n_batches-native.n_inactive
+          PY
