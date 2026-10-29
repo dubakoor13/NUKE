@@ -46,7 +46,7 @@ def input_heating(*,edges=None,neutron=None,photon=None,rate=1e19,unresolved=3.)
 class ConservationAndSourceEvidenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.m=coupled(film=0.,nz=4,nx=16,ny=20)
+        cls.m=coupled(film=0.,nz=4,nx=20,ny=24)
 
     def test_exact_nonuniform_axial_overlap_and_power(self):
         src=input_heating()
@@ -152,14 +152,14 @@ class ConservationAndSourceEvidenceTests(unittest.TestCase):
     def test_wrong_coupled_mesh_does_not_reuse_incompatible_mapping(self):
         mapping=project_openmc_axial_fuel_heating(
             self.m.solid,input_heating())
-        bad=coupled(film=0.,nz=2,nx=16,ny=20)
+        bad=coupled(film=0.,nz=2,nx=20,ny=24)
         with self.assertRaises(ValueError):
             check_heating_for_coupled_core(mapping,bad)
 
 
 class IndependentCoupledRefinementTests(unittest.TestCase):
     def test_timestep_refinement_of_nontrivial_sealed_exchange(self):
-        m=coupled(film=1400.,nz=1,nx=16,ny=20)
+        m=coupled(film=1400.,nz=1,nx=20,ny=24)
         old=initial(m,tf=630.,th=320.)
         total=.00012
 
@@ -188,7 +188,7 @@ class IndependentCoupledRefinementTests(unittest.TestCase):
         # walls. Exact Stage53 arc geometry supplies the independent
         # limiting wall resistance when the fuel-side half-cell vanishes.
         errors=[]
-        for nx,ny in ((16,20),(24,30),(40,46)):
+        for nx,ny in ((20,24),(28,34),(40,46)):
             m=coupled(film=1400.,nz=1,nx=nx,ny=ny)
             old=initial(m,tf=500.,th=400.)
             gas=primitive(m.fluid,old.hydrogen)
@@ -215,7 +215,7 @@ class IndependentCoupledRefinementTests(unittest.TestCase):
         self.assertGreater(errors[1],errors[2])
 
     def test_very_large_substep_request_rejected_without_accepting_partial_result(self):
-        m=coupled(film=0.,nz=2,nx=16,ny=20)
+        m=coupled(film=0.,nz=2,nx=20,ny=24)
         old=initial(m)
         before=old.hydrogen.conserved.copy()
         with self.assertRaises(ValueError):
@@ -223,7 +223,7 @@ class IndependentCoupledRefinementTests(unittest.TestCase):
         np.testing.assert_array_equal(old.hydrogen.conserved,before)
 
     def test_coupled_energy_budget_during_externally_heated_open_flow(self):
-        m=coupled(film=1300.,nz=2,nx=16,ny=20)
+        m=coupled(film=1300.,nz=2,nx=20,ny=24)
         old=initial(m,tf=480.,th=395.,vel=12.)
         q=4e5*m.solid.solid_volume_m3
         r=solve(m,old,dt=1.6e-5,q=q,
