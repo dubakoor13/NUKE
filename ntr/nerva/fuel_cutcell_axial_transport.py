@@ -281,7 +281,7 @@ def advance_axial_cutcell(
     scale=max(1.,abs(duf),abs(duh),abs(exported),abs(deposited))
     relative=abs(residual)/scale
     if relative>5e-9:
-        raise ArithmeticError("axial fuel/H2 first law failed")
+        raise ArithmeticError(f"axial fuel/H2 first law failed: residual={residual:.12g} J, scale={scale:.12g} J, dUf={duf:.12g}, dUh={duh:.12g}, outlet={exported:.12g}, deposited={deposited:.12g}")
     interface=model.axial_solid_interface_w_k*(
         newf[:-1,:]-newf[1:,:])
     return AxialCutCellResult(
