@@ -15,7 +15,9 @@ import unittest
 import h5py
 import numpy as np
 
-from .openmc_native_fuel_statepoint import read_openmc_neutron_fuel_statepoint
+from .openmc_native_fuel_statepoint import (
+    read_openmc_neutron_fuel_statepoint, project_native_fuel_heating
+)
 from .openmc_fuel_axial_heat_handoff import (
     project_openmc_axial_fuel_heating, check_heating_for_coupled_core,
 )
@@ -194,6 +196,36 @@ class NativeStatepointMomentTests(unittest.TestCase):
             mapped.mapped_fuel_power_w*1e-5,delta=2e-12)
         self.assertLess(output.relative_first_law_residual,2e-9)
         self.assertIn("SYNTHETIC",native.score.source_rate_basis)
+
+    def test_native_uncertainty_bound_propagates_with_identical_geometry_weights(self):
+        native=self.read()
+        m=coupled(film=0.,nz=4,nx=20,ny=24)
+        projected=project_native_fuel_heating(native,m.solid)
+        upper=projected.axial_uncertainty_upper_bound_w
+        expected=(np.sum(self.stderr,axis=(0,1))
+                  *1e18*1.602176634e-19)
+        np.testing.assert_allclose(upper,expected,rtol=1e-12,atol=1e-13)
+        np.testing.assert_allclose(
+            projected.fuel_cell_uncertainty_upper_bound_w.sum(axis=1),
+            expected,rtol=1e-12,atol=1e-13)
+        self.assertAlmostEqual(
+            projected.total_fuel_uncertainty_upper_bound_w,
+            float(expected.sum()),delta=1e-12)
+        self.assertGreater(projected.relative_total_uncertainty_upper_bound,0.)
+        self.assertLess(projected.relative_total_uncertainty_upper_bound,1.)
+        self.assertIn("covariance",projected.uncertainty_status)
+
+    def test_uncertainty_bound_rejects_negative_or_invalid_axial_input(self):
+        native=self.read()
+        m=coupled(film=0.,nz=4,nx=20,ny=24)
+        with self.assertRaisesRegex(ValueError,"uncertainty"):
+            project_native_fuel_heating(
+                replace(native,axial_uncertainty_upper_bound_ev_per_source=
+                        np.array([-1.,0.,0.,0.])),m.solid)
+        with self.assertRaisesRegex(ValueError,"uncertainty"):
+            project_native_fuel_heating(
+                replace(native,axial_uncertainty_upper_bound_ev_per_source=
+                        np.zeros(3)),m.solid)
 
     def test_nonstatepoint_bytes_rejected(self):
         with h5py.File(self.path,"a") as f:
