@@ -57,10 +57,15 @@ def minimum_channel_ligament_cm(config: NervaConfig) -> float:
 def outer_channel_margin_cm(config: NervaConfig) -> float:
     positions = coolant_channel_positions(config)
     apothem = 0.5 * config.inner_fuel_flat_to_flat_cm
+    # OpenMC HexagonalPrism(orientation="y") has two VERTICAL flats.
+    # Its outward flat normals are x, (x/2 + sqrt(3)y/2) and
+    # (x/2 - sqrt(3)y/2), NOT the old horizontal-flat normals.
+    # Negative values identify actual channel-coating annulus clipping by
+    # the inner fuel prism: the outer ZrC region then owns that area.
     normals = (
-        (0.0, 1.0),
-        (math.sqrt(3.0) / 2.0, 0.5),
-        (math.sqrt(3.0) / 2.0, -0.5),
+        (1.0, 0.0),
+        (0.5, math.sqrt(3.0) / 2.0),
+        (0.5, -math.sqrt(3.0) / 2.0),
     )
     margins = []
     for x, y in positions:
