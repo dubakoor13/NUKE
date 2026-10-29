@@ -1,0 +1,58 @@
+name: NUKE Stage55 nonlinear enthalpy and thermophysical transport
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/fuel_cutcell_nonlinear_enthalpy.py'
+      - 'ntr/nerva/validate_stage55_nonlinear_enthalpy.py'
+      - '.github/workflows/nerva-stage55-nonlinear-enthalpy.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/fuel_cutcell_nonlinear_enthalpy.py'
+      - 'ntr/nerva/validate_stage55_nonlinear_enthalpy.py'
+      - '.github/workflows/nerva-stage55-nonlinear-enthalpy.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  nonlinear-fuel-hydrogen-enthalpy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install sparse numerical runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2'
+      - name: Exact thermophysical enthalpy and nonlinear transient numerical verification
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Print actual converged nonlinear synthetic thermal metrics
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.validate_stage55_nonlinear_enthalpy import setup,laws,run
+          c,m=setup(film=2500.,nz=3)
+          r=run(c,m,laws(nonlinear=True),
+                old_f=345.,old_h=310.,inlet=300.,
+                source_f=1e6*m.solid_volume_m3,dt=.3)
+          print('Stage55 solid finite volumes:',m.fuel_unknowns)
+          print('Stage55 hydrogen unknowns:',m.hydrogen_unknowns)
+          print('Stage55 property-table bounded nonlinear iterations:',r.iterations)
+          print('Stage55 max converged discrete residual [W]:',r.final_max_residual_w)
+          print('Stage55 fuel+H2+outlet specific-enthalpy residual [J]:',r.first_law_residual_j)
+          print('Stage55 relative first-law residual:',r.relative_first_law_residual)
+          print('Stage55 source watts ARE SYNTHETIC, not measured NERVA power')
+          assert r.relative_first_law_residual<2e-9
+          assert r.final_max_residual_w<=2e-8
+          PY
