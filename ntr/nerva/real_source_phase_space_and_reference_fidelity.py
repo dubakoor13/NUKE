@@ -35,6 +35,59 @@ EXPECTED_SOURCE_FIELDS = (
 )
 
 
+def characterize_original_neutron_source(source: np.ndarray) -> dict:
+    """Measure actual full neutron birth phase-space vs exact repeated positions.
+
+    This also accepts small synthetic structured unit arrays, but the native
+    acceptance path separately verifies real OpenMC HDF5 and all 3000 sites.
+    """
+    if (source.ndim!=1 or source.size<2
+            or source.dtype.names!=EXPECTED_SOURCE_FIELDS):
+        raise ValueError("genuine OpenMC neutron source record fields required")
+    n=int(source.size)
+    pos=np.column_stack([source["r"][axis] for axis in ("x","y","z")])
+    direction=np.column_stack([source["u"][axis] for axis in ("x","y","z")])
+    energy=np.asarray(source["E"],dtype=float)
+    time=np.asarray(source["time"],dtype=float)
+    wgt=np.asarray(source["wgt"],dtype=float)
+    norms=np.linalg.norm(direction,axis=1)
+    if (not np.isfinite(pos).all() or not np.isfinite(direction).all()
+            or not np.isfinite(energy).all() or not np.isfinite(time).all()
+            or not np.isfinite(wgt).all() or np.any(wgt<=0)
+            or np.any(energy<=0) or np.max(np.abs(norms-1.))>1e-9):
+        raise ValueError("nonphysical neutron source birth position/direction/energy/weight")
+    unique_pos,inverse,counts=np.unique(
+        pos,axis=0,return_inverse=True,return_counts=True)
+    n_pos=len(unique_pos)
+    n_pe=len(np.unique(np.column_stack((pos,energy)),axis=0))
+    n_peu=len(np.unique(np.column_stack((pos,direction,energy)),axis=0))
+    complete,full_counts=np.unique(source,return_counts=True)
+    n_full=len(complete)
+    if not n_pos<=n_pe<=n_peu<=n_full<=n:
+        raise ValueError("physical neutron full-source uniqueness hierarchy violated")
+    site_w=np.bincount(inverse,weights=wgt,minlength=n_pos)
+    p=site_w/np.sum(site_w)
+    return {
+        "exact_unique_birth_positions":n_pos,
+        "exact_unique_position_and_energy":n_pe,
+        "exact_unique_position_direction_energy":n_peu,
+        "exact_unique_complete_source_particle_records":n_full,
+        "exact_repeated_complete_source_records":n-n_full,
+        "source_sites_sharing_birth_position":n-n_pos,
+        "max_particles_at_one_exact_birth_position":int(np.max(counts)),
+        "max_identical_complete_source_records":int(np.max(full_counts)),
+        "largest_weighted_single_birth_position_fraction":float(np.max(p)),
+        "inverse_simpson_birth_position_count":float(1./np.sum(p*p)),
+        "fraction_unique_birth_positions":n_pos/n,
+        "fraction_unique_complete_particle_records":n_full/n,
+        "source_birth_energy_eV_min_median_max":[
+            float(np.min(energy)),float(np.median(energy)),float(np.max(energy))],
+        "source_birth_energy_fraction_above_100keV":float(
+            np.sum(wgt[energy>=100000.])/np.sum(wgt)),
+        "source_direction_max_unit_norm_error":float(np.max(np.abs(norms-1.))),
+    }
+
+
 def native_phase_space(file: Path, *, seed: int, batch: int) -> dict:
     """Refuse JSON mock or incomplete neutron StatePoint; inspect FULL C++ bank."""
     _sha(file)
@@ -62,41 +115,7 @@ def native_phase_space(file: Path, *, seed: int, batch: int) -> dict:
             or not np.isfinite(k_generation).all() or np.any(k_generation <= 0)):
         raise ValueError("native OpenMC source particle record or histories malformed")
 
-    pos = np.column_stack([source["r"][axis] for axis in ("x", "y", "z")])
-    direction = np.column_stack([source["u"][axis] for axis in ("x", "y", "z")])
-    energy = np.asarray(source["E"], dtype=float)
-    time = np.asarray(source["time"], dtype=float)
-    wgt = np.asarray(source["wgt"], dtype=float)
-    if (not np.isfinite(pos).all() or not np.isfinite(direction).all()
-            or not np.isfinite(energy).all() or not np.isfinite(time).all()
-            or not np.isfinite(wgt).all() or np.any(wgt <= 0)
-            or np.any(energy <= 0)
-            or np.max(np.abs(np.linalg.norm(direction, axis=1)-1)) > 1e-9):
-        raise ValueError("nonphysical neutron source birth position/direction/energy/weight")
-
-    unique_pos, inverse, counts = np.unique(
-        pos, axis=0, return_inverse=True, return_counts=True
-    )
-    n_position_energy = len(np.unique(
-        np.column_stack((pos, energy)), axis=0
-    ))
-    n_position_energy_direction = len(np.unique(
-        np.column_stack((pos, direction, energy)), axis=0
-    ))
-    exact_full_records, full_counts = np.unique(source, return_counts=True)
-    n_full = len(exact_full_records)
-    n_positions = len(unique_pos)
-    if (n_positions > n_position_energy
-            or n_position_energy > n_position_energy_direction
-            or n_position_energy_direction > n_full
-            or n_full > PARTICLES):
-        raise ValueError("actual source phase space richness ordering violated")
-    # All source particles in this real eigenvalue bank have equal weight;
-    # use the weight-aware expression to avoid silently miscounting future
-    # variable-weight neutron source simulations.
-    position_weights = np.bincount(inverse, weights=wgt, minlength=n_positions)
-    fractions = position_weights / np.sum(wgt)
-    effective_positions = 1.0 / float(np.sum(fractions**2))
+    measures=characterize_original_neutron_source(source)
 
     scored = read_executed_multiplication(file)
     if scored["seed"] != seed or scored["completed_batch"] != batch:
@@ -106,26 +125,7 @@ def native_phase_space(file: Path, *, seed: int, batch: int) -> dict:
         "seed": seed,
         "batch": batch,
         "source_sites": PARTICLES,
-        "exact_unique_birth_positions": n_positions,
-        "exact_unique_position_and_energy": n_position_energy,
-        "exact_unique_position_direction_energy": n_position_energy_direction,
-        "exact_unique_complete_source_particle_records": n_full,
-        "exact_repeated_complete_source_records": PARTICLES-n_full,
-        "source_sites_sharing_birth_position": PARTICLES-n_positions,
-        "max_particles_at_one_exact_birth_position": int(np.max(counts)),
-        "largest_weighted_single_birth_position_fraction": float(np.max(fractions)),
-        "inverse_simpson_birth_position_count": effective_positions,
-        "fraction_unique_birth_positions": n_positions/PARTICLES,
-        "fraction_unique_complete_particle_records": n_full/PARTICLES,
-        "source_birth_energy_eV_min_median_max": [
-            float(np.min(energy)), float(np.median(energy)), float(np.max(energy))
-        ],
-        "source_birth_energy_fraction_above_100keV": float(
-            np.sum(wgt[energy >= 100000.])/np.sum(wgt)
-        ),
-        "source_direction_max_unit_norm_error": float(
-            np.max(np.abs(np.linalg.norm(direction, axis=1)-1))
-        ),
+        **measures,
         "native_combined_k": scored["combined_k_effective"],
         "native_combined_k_reported_sem": scored["openmc_reported_combined_k_standard_error"],
         "native_collision_absorption_tracklength_k": {
