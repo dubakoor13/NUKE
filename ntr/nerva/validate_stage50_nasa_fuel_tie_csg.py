@@ -34,9 +34,17 @@ class HistoricalFuelTieAnalyticMathTests(unittest.TestCase):
         p=fuel_analytical_areas(self.c)
         a=p["exact_2d_partition_areas_cm2"]
         self.assertAlmostEqual(sum(a.values()),p["hex_external_total_cross_section_cm2"],places=12)
-        self.assertAlmostEqual(a["fuel_matrix"],2.0500847261282797,places=12)
+        # The REAL OpenMC y-oriented inner hex clips 6 channel coating
+        # rings by 0.00363 cm at the flats; do not double count ZrC.
+        cap=p["area_of_ring_outside_inner_hex_but_inside_exterior_ZrC_cm2"]
+        self.assertEqual(p[
+            "number_outer_channel_coating_rings_clipped_by_actual_inner_hex"],6)
+        self.assertGreater(cap,0)
+        self.assertAlmostEqual(p["negative_channel_coating_to_inner_hex_margin_cm"],
+                               -0.00363,places=12)
+        self.assertAlmostEqual(a["fuel_matrix"],2.0500847261282797+cap,places=11)
         self.assertAlmostEqual(a["hydrogen_coolant_bores"],0.9817891339999295,places=12)
-        self.assertAlmostEqual(a["ZrC_channel_coatings"],0.07804501549680462,places=12)
+        self.assertAlmostEqual(a["ZrC_channel_coatings"],0.07804501549680462-cap,places=11)
         self.assertAlmostEqual(a["ZrC_external_hex_coating"],0.03290896534380883,places=12)
 
     def test_2d_to_3d_hydrogen_volume_and_wetted_surface_consistent(self):
@@ -72,7 +80,7 @@ class HistoricalFuelTieAnalyticMathTests(unittest.TestCase):
 
     def test_inverted_tie_radial_gap_rejected_not_silently_clipped(self):
         c=replace(self.c,tie_zrc_inner_diameter_cm=1.3)
-        with self.assertRaisesRegex(ValueError,"overlap|negative"):
+        with self.assertRaisesRegex(ValueError,"overlap|negative|strictly ordered"):
             tie_analytical_areas(c)
 
     def test_analytical_hex_inside_channel_and_coating_membership(self):
