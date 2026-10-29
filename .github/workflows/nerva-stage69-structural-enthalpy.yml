@@ -72,7 +72,7 @@ jobs:
                   source_rate_basis='SYNTHETIC whole-core only; not one NERVA fuel element',
                   nuclear_data_sha256=SHA)
               allocation=allocate_full_core_structural_heating(ledger)
-              model=make_model(varying=True,contact=100.,bath=5.)
+              model=make_model(varying=True,contact=100.,bath=0.002)
               advance=advance_structural_enthalpy(
                   model,np.ones(7)*500.,
                   dt_s=10.,deposited_power_w=allocation.structural_power_w,
