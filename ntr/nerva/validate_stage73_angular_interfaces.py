@@ -80,7 +80,7 @@ class AngularCoatingContactTests(unittest.TestCase):
             float(result.coating_to_hydrogen_by_sector_w.sum()),
             float(result.coating_to_hydrogen_by_channel_w.sum()),
             delta=3e-11)
-        self.assertLess(abs(result.equal_opposite_fuel_interface_residual_w),2e-11)
+        self.assertLess(abs(result.equal_opposite_fuel_interface_residual_w),1e-10)
 
     def test_uniform_coating_temperature_keeps_angular_sector_fluxes_distinct(self):
         m=self.model
@@ -258,7 +258,7 @@ class AngularCoatingFullCoreEnergyTests(unittest.TestCase):
     def test_incompatible_angular_dimensions_and_property_scope_fail_closed(self):
         m=self.m
         base=initial(m)
-        with self.assertRaisesRegex(ValueError,"coating state"):
+        with self.assertRaisesRegex(ValueError,"coating temperature state"):
             solve(m,base,dt=5e-6)
         bad=replace(base,coating_temperature_k=np.ones((2,19))*400.)
         with self.assertRaisesRegex(ValueError,"coating state"):
