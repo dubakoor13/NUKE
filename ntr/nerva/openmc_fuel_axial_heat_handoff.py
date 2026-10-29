@@ -22,7 +22,6 @@ import math
 import re
 
 import numpy as np
-from scipy.sparse import csr_matrix
 
 from .fuel_cutcell_axial_transport import AxialCutCellModel
 
@@ -89,6 +88,8 @@ class ResolvedFuelHeatingInput:
     source_axial_bin_w: np.ndarray
     mapped_axial_bin_w: np.ndarray
     axial_overlap_m: np.ndarray
+    target_axial_edges_m: np.ndarray
+    target_fuel_areas_cm2: np.ndarray
     transverse_fuel_weights: np.ndarray
     fuel_neutron_power_w: float
     fuel_photon_power_w: float
@@ -164,6 +165,8 @@ def project_openmc_axial_fuel_heating(
         source_axial_bin_w=power_source,
         mapped_axial_bin_w=power_axial,
         axial_overlap_m=overlap,
+        target_axial_edges_m=np.asarray(model.axial_edges_m,dtype=float).copy(),
+        target_fuel_areas_cm2=area.copy(),
         transverse_fuel_weights=weights,
         fuel_neutron_power_w=float(np.sum(qn)*rate*EV_TO_J),
         fuel_photon_power_w=float(np.sum(qp)*rate*EV_TO_J),
@@ -186,6 +189,12 @@ def check_heating_for_coupled_core(
     This function does not make a provenance claim from a string hash.
     """
     shape=(model.nzone,model.solid.transverse.n_fuel)
+    if (not np.array_equal(
+            fuel_heating.target_axial_edges_m,model.solid.axial_edges_m)
+            or not np.array_equal(
+                fuel_heating.target_fuel_areas_cm2,
+                model.solid.transverse.fuel_areas_cm2)):
+        raise ValueError("heating source map belongs to different fuel geometry")
     a=np.asarray(fuel_heating.fuel_deposition_w,dtype=float)
     if (a.shape!=shape or not np.all(np.isfinite(a))
             or np.any(a<0)):
