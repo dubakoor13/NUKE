@@ -1,0 +1,77 @@
+name: NUKE Stage60 native OpenMC HDF5 fuel tally extraction
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/openmc_native_fuel_statepoint.py'
+      - 'ntr/nerva/validate_stage60_native_hdf5_heating.py'
+      - '.github/workflows/nerva-stage60-native-hdf5-fuel.yml'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+  pull_request:
+    paths:
+      - 'ntr/nerva/openmc_native_fuel_statepoint.py'
+      - 'ntr/nerva/validate_stage60_native_hdf5_heating.py'
+      - '.github/workflows/nerva-stage60-native-hdf5-fuel.yml'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  native-hdf5-tally-physics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install HDF5 and sparse numerical runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2' 'h5py>=3.10,<4'
+      - name: Native HDF5 tallies, Stage59 heating and Stage52-58 regressions
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage60_native_hdf5_heating -v
+          python -m unittest ntr.nerva.validate_stage59_core_refinement_heating -v
+          python -m unittest ntr.nerva.validate_stage58_fuel_hydrogen_coupling -v
+          python -m unittest ntr.nerva.validate_stage57_hydrogen_transient -v
+          python -m unittest ntr.nerva.validate_stage56_hydrogen_hydraulics -v
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Print moment extraction from SYNTHETIC native-structured HDF5
+        run: |
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          import numpy as np
+          from ntr.nerva.validate_stage60_native_hdf5_heating import (
+              synthetic_statepoint,FUEL_ID,DATA_SHA)
+          from ntr.nerva.openmc_native_fuel_statepoint import read_openmc_neutron_fuel_statepoint
+          with tempfile.TemporaryDirectory() as directory:
+              filename=Path(directory)/'statepoint.8.h5'
+              mean,stderr=synthetic_statepoint(filename)
+              result=read_openmc_neutron_fuel_statepoint(
+                  filename,expected_fuel_material_id=FUEL_ID,
+                  nuclear_data_sha256=DATA_SHA,
+                  source_rate_particles_per_s=1e18,
+                  source_rate_basis='SYNTHETIC fixture only',
+                  photon_transport_confirmed_disabled=True,
+                  expected_active_length_m=1.32)
+              print('Stage60 original HDF5 file hash:',result.statepoint_sha256)
+              print('Stage60 original HDF5 tally ID:',result.tally_id)
+              print('Stage60 active statistical realizations:',result.active_realizations)
+              print('Stage60 native mesh dimensions:',result.mesh_dimensions)
+              print('Stage60 native HDF5 recovered axial eV per source:',
+                    result.score.fuel_neutron_ev_per_source.tolist())
+              print('Stage60 axial covariance-safe stderr upper bound:',
+                    result.axial_uncertainty_upper_bound_ev_per_source.tolist())
+              print('Stage60 SINCE THE FILE IS SYNTHETIC, NO REAL OPENMC TRANSPORT IS CLAIMED')
+              assert np.allclose(result.score.fuel_neutron_ev_per_source,
+                                 mean.sum(axis=(0,1)))
+          PY
