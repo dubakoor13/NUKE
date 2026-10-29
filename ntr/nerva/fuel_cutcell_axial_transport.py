@@ -280,8 +280,25 @@ def advance_axial_cutcell(
     residual=duf+duh+exported-deposited
     scale=max(1.,abs(duf),abs(duh),abs(exported),abs(deposited))
     relative=abs(residual)/scale
-    if relative>5e-9:
-        raise ArithmeticError(f"axial fuel/H2 first law failed: residual={residual:.12g} J, scale={scale:.12g} J, dUf={duf:.12g}, dUh={duh:.12g}, outlet={exported:.12g}, deposited={deposited:.12g}")
+    # An exactly steady state or mutually cancelling axial fluxes may have
+    # *zero* net deposition/export while the solved system stores 1e5 J.
+    # Forming C*(T_new - T_old) then loses ~eps*C*T absolute precision.
+    # Preserve the original stringent source-relative tolerance AND allow
+    # a separately reported floating-point roundoff floor proportional to
+    # the state-energy terms. This is not an energy-balance adjustment.
+    u_roundoff=(float(np.dot(cf,np.maximum(np.abs(newf.ravel()),
+                                         np.abs(oldf.ravel()))))
+                +float(np.dot(ch,np.maximum(np.abs(newh.ravel()),
+                                         np.abs(oldh.ravel()))))
+                +float(dt_s*np.dot(heatflow,
+                                 np.maximum(np.abs(newh[-1,:]),np.abs(tin)))))
+    allowed=max(5e-9*scale,1e-11*u_roundoff)
+    if abs(residual)>allowed:
+        raise ArithmeticError(
+            f"axial fuel/H2 first law failed: residual={residual:.12g} J, "
+            f"allowed={allowed:.12g} J, scale={scale:.12g} J, "
+            f"dUf={duf:.12g}, dUh={duh:.12g}, "
+            f"outlet={exported:.12g}, deposited={deposited:.12g}")
     interface=model.axial_solid_interface_w_k*(
         newf[:-1,:]-newf[1:,:])
     return AxialCutCellResult(
