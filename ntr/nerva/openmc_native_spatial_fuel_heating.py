@@ -60,6 +60,9 @@ class NativeSpatialFuelHeating:
         "caller must independently prove selected native fuel tally mesh "
         "contains exactly one intended physical fuel-element instance"
     )
+    neutron_fuel_deposition_w: np.ndarray | None = None
+    photon_fuel_deposition_w: np.ndarray | None = None
+
 
 
 def _fuel_only_rectangle_area(
@@ -232,15 +235,27 @@ def project_native_3d_fuel_heating(
             not np.all(np.isfinite(stderr)) or
             np.any(mean<0) or np.any(stderr<0)):
         raise ValueError("native 3D mean or marginal error arrays invalid")
+    neutron=(mean if native.source_mesh_neutron_mean_ev_per_source is None
+             else np.asarray(native.source_mesh_neutron_mean_ev_per_source,dtype=float))
+    photon=(np.zeros_like(mean) if native.source_mesh_photon_mean_ev_per_source is None
+            else np.asarray(native.source_mesh_photon_mean_ev_per_source,dtype=float))
+    if (neutron.shape!=mean.shape or photon.shape!=mean.shape
+            or np.any(neutron<0) or np.any(photon<0)
+            or not np.all(np.isfinite(neutron)) or not np.all(np.isfinite(photon))
+            or not np.allclose(neutron+photon,mean,atol=1e-10,rtol=1e-12)):
+        raise ValueError("native neutron/photon voxel heating contributions inconsistent")
     # Source row index a+nx*b is x-fastest, consistent with native
     # StructuredMesh C++ tally ordering and the overlap matrix columns.
     source_scores=mean.reshape((nx*ny,nz),order="F")
+    source_neutrons=neutron.reshape((nx*ny,nz),order="F")
+    source_photons=photon.reshape((nx*ny,nz),order="F")
     source_errors=stderr.reshape((nx*ny,nz),order="F")
     empty=source_area<=1e-14
     if (np.any(source_scores[empty]>1e-12)
             or np.any(source_errors[empty]>1e-12)):
         raise ValueError("nonzero fuel heating occurs in mesh bin with no fuel")
-    native_axial=np.asarray(native.score.fuel_neutron_ev_per_source)
+    native_axial=(np.asarray(native.score.fuel_neutron_ev_per_source)
+                  +np.asarray(native.score.fuel_photon_ev_per_source))
     if (native_axial.shape!=(nz,) or not np.allclose(
             source_scores.sum(axis=0),native_axial,
             atol=1e-10,rtol=1e-12)):
@@ -250,7 +265,9 @@ def project_native_3d_fuel_heating(
     joule_rate=native.score.source_rate_particles_per_s*EV_TO_J
     # First preserve the source x/y power profile under true material
     # intersections, then remap z independently using true slab overlaps.
-    watts=(weights @ (source_scores @ fz.T)).T*joule_rate
+    neut_w=(weights @ (source_neutrons @ fz.T)).T*joule_rate
+    photon_w=(weights @ (source_photons @ fz.T)).T*joule_rate
+    watts=neut_w+photon_w
     bounds=(weights @ (source_errors @ fz.T)).T*joule_rate
     original_axis=source_scores.sum(axis=0)*joule_rate
     mapped_axis=watts.sum(axis=1)
@@ -270,8 +287,8 @@ def project_native_3d_fuel_heating(
         target_axial_edges_m=model.axial_edges_m.copy(),
         target_fuel_areas_cm2=model.transverse.fuel_areas_cm2.copy(),
         transverse_fuel_weights=fraction,
-        fuel_neutron_power_w=total,
-        fuel_photon_power_w=0.,
+        fuel_neutron_power_w=float(np.sum(neut_w)),
+        fuel_photon_power_w=float(np.sum(photon_w)),
         unresolved_nonfuel_power_w=0.,
         fuel_power_balance_residual_w=err,
         statepoint_sha256=native.statepoint_sha256,
@@ -288,4 +305,6 @@ def project_native_3d_fuel_heating(
         fuel_cell_uncertainty_bound_w=bounds,
         axial_uncertainty_bound_w=np.sum(bounds,axis=1),
         total_uncertainty_bound_w=float(np.sum(bounds)),
+        neutron_fuel_deposition_w=neut_w,
+        photon_fuel_deposition_w=photon_w,
     )

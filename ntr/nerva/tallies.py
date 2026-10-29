@@ -201,8 +201,15 @@ def build_tallies(
             mesh_filter,
             openmc.MaterialFilter([fuel_material]),
         ]
+        if config.photon_transport:
+            # Coupled n/gamma transport: HEATING tracks physical energy
+            # deposition locations. Explicit particle bins preserve
+            # separate neutron and photon contributions without overlap.
+            fuel_heating.filters.append(
+                openmc.ParticleFilter(["neutron", "photon"])
+            )
         fuel_heating.scores = [
-            "heating-local",
+            "heating" if config.photon_transport else "heating-local",
             "fission",
             "nu-fission",
         ]
