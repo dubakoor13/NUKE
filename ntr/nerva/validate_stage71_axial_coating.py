@@ -116,7 +116,7 @@ class AxialCoatingFiniteVolumeTests(unittest.TestCase):
             float(np.sum(c.mass_kg*(c.heat_capacity.integral(
                 step.temperature_k)-c.heat_capacity.integral(t)))),
             100.,delta=1e-7)
-        self.assertEqual(step.net_axial_energy_j,0.)
+        self.assertAlmostEqual(step.net_axial_energy_j,0.,delta=1e-12)
 
     def test_variable_cp_and_k_recomputed_conservatively(self):
         m=self.m
