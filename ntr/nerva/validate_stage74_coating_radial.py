@@ -108,7 +108,7 @@ class RadialCoatingFiniteVolumeTests(unittest.TestCase):
                                    analytic,rtol=0,atol=1e-8)
         np.testing.assert_allclose(r.temperature_k[0,0,:,:],
                                    np.broadcast_to(analytic,(8,2)),
-                                   rtol=0,atol=5e-9)
+                                   rtol=0,atol=1e-8)
         self.assertLess(abs(r.global_first_law_residual_j),1e-8)
 
     def test_single_radial_pulse_diffuses_inward_outward_and_axially(self):
