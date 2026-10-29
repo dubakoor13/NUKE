@@ -7,7 +7,7 @@ import math
 import numpy as np
 
 from .config import NervaConfig
-from .layout import coolant_channel_positions
+from .layout import coolant_channel_positions, minimum_channel_ligament_cm
 
 
 Point = tuple[float, float]
@@ -156,6 +156,8 @@ def fuel_sector_coated_channel_areas_cm2(
     touches the outer hex, or sends a hydrogen bore outside the inner hex.
     """
     config.validate()
+    if minimum_channel_ligament_cm(config)<=0:
+        raise ValueError("actual coated coolant channel annuli overlap")
     radius = config.coated_channel_radius_cm
     bore = config.channel_radius_cm
     apothem = config.inner_fuel_flat_to_flat_cm / 2.0
