@@ -138,6 +138,40 @@ class TrueCurvedHoleHarmonicFluxTests(unittest.TestCase):
                 self.assertTrue(math.isfinite(error))
                 self.assertGreaterEqual(error,0.)
 
+    def test_reference_exposes_actual_interior_improvement_on_three_real_meshes(self):
+        # A known analytical solution is stronger evidence than the
+        # affine-exact face identity from Stage81. Its measured LOCAL
+        # normalized flux error must be lower for the corrected method.
+        levels=self.study.levels
+        for o in levels:
+            self.assertLess(
+                o.stage81_normalized_flux_l1_error,
+                o.stage53_normalized_flux_l1_error)
+            self.assertLess(
+                o.stage81_normalized_flux_l2_error,
+                .5)
+        self.assertGreater(
+            levels[0].stage81_normalized_flux_l1_error,
+            levels[1].stage81_normalized_flux_l1_error)
+        self.assertGreater(
+            levels[1].stage81_normalized_flux_l1_error,
+            levels[2].stage81_normalized_flux_l1_error)
+        self.assertLess(levels[2].stage81_normalized_flux_l1_error,.02)
+
+    def test_independent_circular_wall_power_reveals_unresolved_nonmonotone_error(self):
+        # Stage80's deferred tangential correction is not an accurate
+        # curved-boundary closure merely because energy cancels.
+        wall=[o.stage80_central_wall_relative_error
+              for o in self.study.levels]
+        self.assertGreater(wall[1],wall[0])
+        self.assertGreater(wall[1],wall[2])
+        self.assertGreater(wall[2],.05)
+        self.assertTrue(self.study.unresolved_nonmonotonic_wall_flux)
+        for o in self.study.levels:
+            self.assertLess(
+                o.stage80_central_wall_power_w,
+                o.exact_central_hole_wall_power_w)
+
     def test_no_spurious_claim_of_manufactured_PDE_solution(self):
         study=self.study
         self.assertIn("NOT",study.disclaimer)
