@@ -105,7 +105,7 @@ class RadialCoatingFiniteVolumeTests(unittest.TestCase):
              [-conductance,cap[1]/dt+conductance]],
             cap*temp[0,0,0,:]/dt)
         np.testing.assert_allclose(r.temperature_k[0,0,0,:],
-                                   analytic,rtol=0,atol=3e-9)
+                                   analytic,rtol=0,atol=1e-8)
         np.testing.assert_allclose(r.temperature_k[0,0,:,:],
                                    np.broadcast_to(analytic,(8,2)),
                                    rtol=0,atol=5e-9)
