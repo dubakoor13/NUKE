@@ -1,0 +1,73 @@
+name: NUKE Stage49 original OpenMC neutron source phase-space and NASA reference fidelity
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_source_phase_space_and_reference_fidelity.py'
+      - 'ntr/nerva/validate_stage49_neutron_source_phase_space.py'
+      - '.github/workflows/nerva-stage49-original-neutron-phase-space-qa.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_source_phase_space_and_reference_fidelity.py'
+      - 'ntr/nerva/validate_stage49_neutron_source_phase_space.py'
+      - '.github/workflows/nerva-stage49-original-neutron-phase-space-qa.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify-full-original-neutron-source-phase-space:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Recover Stage48 SIXTEEN actual original 750/900 K OpenMC neutron HDF5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage49_original build/stage49_results
+          gh run download 40767503400 -R "$GITHUB_REPOSITORY" \
+            -n nuke-stage48-16-original-multitemperature-independent-neutron-hdf5 \
+            -D build/stage49_original
+          for temp in 750 900; do
+            for seed in 13007 23011 33013 43019; do
+              folder="build/stage49_original/original_transport/T${temp}K/seed_$seed"
+              test -s "$folder/transport_provenance.json"
+              test -s "$folder/geometry.xml"
+              test -s "$folder/materials.xml"
+              for batch in 060 100; do
+                test -s "$folder/statepoint.$batch.h5"
+              done
+            done
+          done
+      - name: Run eight mathematical and two mandatory native neutron-source physics tests
+        run: |
+          docker pull openmc/openmc:v0.15.3
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -m unittest \
+                ntr.nerva.validate_stage49_neutron_source_phase_space.NeutronBirthPhaseSpaceMathTests -v
+              python -m ntr.nerva.real_source_phase_space_and_reference_fidelity \
+                --stage48-original-hdf5 /repo/build/stage49_original/original_transport \
+                --output /repo/build/stage49_results/original_phase_space_fidelity.json
+              NUKE_STAGE49_ORIGINAL_STAGE48_HDF5_ROOT=/repo/build/stage49_original/original_transport \
+                python -m unittest \
+                  ntr.nerva.validate_stage49_neutron_source_phase_space.GenuineOriginalOpenMCNeutronSourceQA -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage49_results/original_phase_space_fidelity.json\")); assert r[\"original_openmc_v0153_hdf5_inspected\"]==16 and r[\"positions_not_equivalent_to_unique_neutron_source_phase_states\"] and not r[\"historical_NASA_NERVA_reactor_validated\"]; print(\"Native OpenMC neutron source full phase-space correction ACCEPTED\")"
+            '
+      - name: Archive actual source-state richness, estimator and historical mismatch report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage49-original-neutron-source-phase-space-validation
+          path: build/stage49_results/*.json
+          retention-days: 21
+          if-no-files-found: warn
