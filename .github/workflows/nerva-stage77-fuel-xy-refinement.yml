@@ -94,6 +94,12 @@ jobs:
                 study.max_nuclear_source_rebin_difference_j)
           print('Stage77 maximum relative whole-system first-law residual:',
                 study.max_relative_energy_residual)
+          print('Stage77 global fuel-wall half-cell distance [m]:',
+                [case.fuel_wall_half_cell_distance_m for case in study.cases])
+          print('Stage77 unresolved >1% or nonmonotonic metrics:',
+                study.metrics_requiring_further_refinement)
+          print('Stage77 maximum finest-step relative difference:',
+                study.maximum_relative_finest_step)
           for name in ('fuel_peak_k','fuel_volume_mean_k',
                        'coating_peak_k',
                        'fuel_outer_wall_peak_abs_w_m2',
