@@ -40,6 +40,9 @@ class FuelXyRefinementCase:
     initial_fuel_temperature_min_k: float
     initial_fuel_temperature_max_k: float
     minimum_fuel_cutcell_volume_m3: float
+    # Stage70/75 uses a GLOBAL half grid-width at every fuel wall.
+    # This is an explicitly tracked grid-dependent interface assumption.
+    fuel_wall_half_cell_distance_m: float
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,8 @@ class FuelXyConvergenceStudy:
     max_nuclear_source_rebin_difference_j: float
     max_fuel_inventory_discrepancy_m3: float
     max_wall_contact_discrepancy_m2: float
+    metrics_requiring_further_refinement: tuple[str,...]
+    maximum_relative_finest_step: float
     interpretation: str=(
         "Observed three-grid fuel cut-cell XY sensitivity only. "
         "Peak value, cut-face flux, and wall-energy sequences can be "
@@ -168,6 +173,8 @@ def run_fuel_xy_convergence(
             initial_fuel_temperature_max_k=float(
                 np.max(initial.fuel_temperature_k)),
             minimum_fuel_cutcell_volume_m3=min_vol,
+            fuel_wall_half_cell_distance_m=float(
+                model.coating.half_fuel_distance_m),
         ))
     baseline=cases[0]
     vol_error=max(abs(case.fuel_volume_m3-baseline.fuel_volume_m3)
@@ -188,10 +195,26 @@ def run_fuel_xy_convergence(
                        baseline.observation.hydrogen_volume_m3)>3e-11):
             raise ArithmeticError("fuel-only XY study changed coating or H2 geometry")
     obs=[case.observation for case in cases]
+    comparisons={
+        name:_compare(name,tuple(
+            item.measurements[name] for item in obs))
+        for name in METRICS
+    }
+    # Require both decreasing DELTA and a small last-grid change.
+    # A ratio just below unity with a 17% wall-flux variation must NOT
+    # be interpreted as an accurate physical local heat prediction.
+    step_tolerance=0.01
+    unresolved=tuple(
+        name for name,delta in comparisons.items()
+        if (delta.relative_mid_to_fine>step_tolerance
+            or delta.decreasing_successive_differences is False)
+    )
     return FuelXyConvergenceStudy(
         sizes=xy_sizes,cases=tuple(cases),
-        metrics={name:_compare(name,tuple(
-            item.measurements[name] for item in obs)) for name in METRICS},
+        metrics=comparisons,
+        metrics_requiring_further_refinement=unresolved,
+        maximum_relative_finest_step=max(
+            delta.relative_mid_to_fine for delta in comparisons.values()),
         max_relative_energy_residual=max(
             item.relative_first_law_residual for item in obs),
         max_nuclear_source_rebin_difference_j=max(
