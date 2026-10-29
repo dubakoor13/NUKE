@@ -420,7 +420,7 @@ def advance_coupled_core(
                 difference=max(
                     float(np.max(np.abs(target_s-candidate_s))),
                     float(np.max(np.abs(target_h-candidate_h))))
-            else:
+            elif angular is None:
                 coating_net_w=(coating_src+candidate_coating_in-candidate_h)
                 if coat_model.axial_conduction_enabled:
                     trial_axial_diffusion=advance_coating_axial_enthalpy(
@@ -440,6 +440,30 @@ def advance_coupled_core(
                     float(np.max(np.abs(target_s-candidate_s))),
                     float(np.max(np.abs(target_ci-candidate_coating_in))),
                     float(np.max(np.abs(target_h-candidate_h))))
+            else:
+                # Every channel's angular coating cells share physical
+                # cutcell and bore arcs. The coating enthalpy step receives
+                # EXACTLY the signed angular fuel-in minus H2-out powers.
+                coating_net_w=(coating_src+candidate_coating_in-
+                               candidate_angular_out)
+                trial_angular_diffusion=advance_angular_coating_enthalpy(
+                    coat_model,angular,old_coating,
+                    conductivity_w_m_k=model.properties.coating_k_w_m_k,
+                    dt_s=sub_dt,deposition_w=coating_net_w)
+                trial_coating=trial_angular_diffusion.temperature_k
+                cm=.5*(old_coating+trial_coating)
+                target_flux=angular_interface_power(
+                    coat_model,model.solid,model.properties,contacts,
+                    tm,cm,hm)
+                target_s=target_flux.fuel_to_coating_by_fuel_w
+                target_ci=target_flux.fuel_to_coating_by_sector_w
+                target_angular_out=target_flux.coating_to_hydrogen_by_sector_w
+                target_h=target_flux.coating_to_hydrogen_by_channel_w
+                difference=max(
+                    float(np.max(np.abs(target_s-candidate_s))),
+                    float(np.max(np.abs(target_ci-candidate_coating_in))),
+                    float(np.max(np.abs(target_angular_out-candidate_angular_out))),
+                    float(np.max(np.abs(target_h-candidate_h))))
             magnitude=max(1.,float(np.max(np.abs(target_s))),
                           float(np.max(np.abs(target_h))))
             if difference<=wall_relative_tolerance*magnitude:
@@ -448,14 +472,21 @@ def advance_coupled_core(
                 final_hydrogen=trial_fluid.state
                 final_coating=trial_coating
                 final_axial_diffusion=(
-                    trial_axial_diffusion if coat_model is not None else None
-                )
+                    trial_axial_diffusion if coat_model is not None
+                    and angular is None else None)
+                final_angular_diffusion=(
+                    trial_angular_diffusion if angular is not None else None)
                 final_step=trial_fluid
                 max_iters=max(max_iters,iteration)
                 break
             # Global heat stays antisymmetric under a common relaxation.
             candidate_s=.5*(candidate_s+target_s)
-            candidate_h=.5*(candidate_h+target_h)
+            if angular is None:
+                candidate_h=.5*(candidate_h+target_h)
+            else:
+                candidate_angular_out=.5*(
+                    candidate_angular_out+target_angular_out)
+                candidate_h=candidate_angular_out.sum(axis=2)
             if coat_model is not None:
                 candidate_coating_in=.5*(candidate_coating_in+target_ci)
         if not converged:
@@ -476,6 +507,19 @@ def advance_coupled_core(
                     coating_axial_max_node_residual_j,
                     float(np.max(np.abs(
                         final_axial_diffusion.per_node_first_law_residual_j))))
+            if final_angular_diffusion is not None:
+                coating_angular_j+=final_angular_diffusion.face_transfer_j
+                coating_angular_max_node_residual_j=max(
+                    coating_angular_max_node_residual_j,
+                    final_angular_diffusion.maximum_node_residual_j)
+                axial_faces=np.flatnonzero(angular.face_kind==0)
+                ax_left=angular.edge_left[axial_faces]
+                left_zone=ax_left//(19*angular.sector_area_m2.shape[1])
+                left_channel=(
+                    ax_left//angular.sector_area_m2.shape[1])%19
+                np.add.at(
+                    coating_axial_j,(left_zone,left_channel),
+                    final_angular_diffusion.face_transfer_j[axial_faces])
         qtotal+=sub_dt*float(np.sum(fsrc))
         hydrogen_qtotal+=sub_dt*hsrc
         outflow_net+=sub_dt*float(np.sum(
@@ -495,7 +539,7 @@ def advance_coupled_core(
         coat_balance=0.
     else:
         coating_final_energy=float(np.sum(
-            coat_model.mass_kg*coat_model.heat_capacity.integral(tcoat)))
+            coat_mass*coat_model.heat_capacity.integral(tcoat)))
         dcoat=coating_final_energy-initial_coating_energy
         coat_balance=dcoat+coating_out_j-coating_in_j-coating_qtotal
     residual=ds+dh+dcoat+outflow_net-qtotal-hydrogen_source_j-coating_qtotal
@@ -534,4 +578,6 @@ def advance_coupled_core(
         coating_first_law_residual_j=coat_balance,
         coating_axial_interface_j=coating_axial_j,
         coating_axial_max_node_residual_j=coating_axial_max_node_residual_j,
+        coating_angular_face_transfer_j=coating_angular_j,
+        coating_angular_max_node_residual_j=coating_angular_max_node_residual_j,
     )
