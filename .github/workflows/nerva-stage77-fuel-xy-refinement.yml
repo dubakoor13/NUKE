@@ -1,0 +1,110 @@
+name: NUKE Stage77 fuel cut-cell XY convergence in coupled core
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/coating_radial_fvm.py'
+      - 'ntr/nerva/coating_mesh_convergence.py'
+      - 'ntr/nerva/fuel_cutcell_xy_convergence.py'
+      - 'ntr/nerva/coating_radial_interfaces.py'
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/validate_stage74_coating_radial.py'
+      - 'ntr/nerva/validate_stage75_coupled_radial_coating.py'
+      - 'ntr/nerva/validate_stage76_coupled_mesh_convergence.py'
+      - 'ntr/nerva/validate_stage77_fuel_xy_refinement.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage77-fuel-xy-refinement.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/coating_radial_fvm.py'
+      - 'ntr/nerva/coating_mesh_convergence.py'
+      - 'ntr/nerva/fuel_cutcell_xy_convergence.py'
+      - 'ntr/nerva/coating_radial_interfaces.py'
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/validate_stage74_coating_radial.py'
+      - 'ntr/nerva/validate_stage75_coupled_radial_coating.py'
+      - 'ntr/nerva/validate_stage76_coupled_mesh_convergence.py'
+      - 'ntr/nerva/validate_stage77_fuel_xy_refinement.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage77-fuel-xy-refinement.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  fuel-transverse-embedded-boundary-refinement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install sparse and HDF5 runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2' 'h5py>=3.10,<4'
+      - name: Test Stage77 fuel XY refinement and Stage52–76 conservation regressions
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage77_fuel_xy_refinement -v
+          python -m unittest ntr.nerva.validate_stage76_coupled_mesh_convergence -v
+          python -m unittest ntr.nerva.validate_stage75_coupled_radial_coating -v
+          python -m unittest ntr.nerva.validate_stage74_coating_radial -v
+          python -m unittest ntr.nerva.validate_stage73_angular_interfaces -v
+          python -m unittest ntr.nerva.validate_stage72_coating_angular -v
+          python -m unittest ntr.nerva.validate_stage71_axial_coating -v
+          python -m unittest ntr.nerva.validate_stage70_resolved_coating -v
+          python -m unittest ntr.nerva.validate_stage69_structural_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage68_full_core_energy_ledger -v
+          python -m unittest ntr.nerva.validate_stage67_hydrogen_channel_heating -v
+          python -m unittest ntr.nerva.validate_stage66_direct_hydrogen_deposition -v
+          python -m unittest ntr.nerva.validate_stage65_coupled_nuclear_heating -v
+          python -m unittest ntr.nerva.validate_stage64_native_mesh_order -v
+          python -m unittest ntr.nerva.validate_stage63_native_statepoint_format -v
+          python -m unittest ntr.nerva.validate_stage62_native_statepoint_evidence -v
+          python -m unittest ntr.nerva.validate_stage61_native_spatial_heating -v
+          python -m unittest ntr.nerva.validate_stage60_native_hdf5_heating -v
+          python -m unittest ntr.nerva.validate_stage59_core_refinement_heating -v
+          python -m unittest ntr.nerva.validate_stage58_fuel_hydrogen_coupling -v
+          python -m unittest ntr.nerva.validate_stage57_hydrogen_transient -v
+          python -m unittest ntr.nerva.validate_stage56_hydrogen_hydraulics -v
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Show actual XY fuel cutcell convergence and geometric invariants
+        run: |
+          python - <<'PY'
+          from ntr.nerva.fuel_cutcell_xy_convergence import run_fuel_xy_convergence
+          from ntr.nerva.validate_stage76_coupled_mesh_convergence import physical_fixture,BASE,HEAT
+          study=run_fuel_xy_convergence(
+              physical_fixture,base_mesh=BASE,heating=HEAT,
+              xy_sizes=((20,24),(28,32),(36,40)))
+          print('Stage77 fuel XY resolutions:',study.sizes)
+          print('Stage77 genuine physical cutcell counts:',
+                [case.physical_fuel_cutcell_count for case in study.cases])
+          print('Stage77 fuel volume difference [m3]:',
+                study.max_fuel_inventory_discrepancy_m3)
+          print('Stage77 maximum 19-channel arc error [m2]:',
+                study.max_wall_contact_discrepancy_m2)
+          print('Stage77 maximum nuclear source rebin discrepancy [J]:',
+                study.max_nuclear_source_rebin_difference_j)
+          print('Stage77 maximum relative whole-system first-law residual:',
+                study.max_relative_energy_residual)
+          for name in ('fuel_peak_k','fuel_volume_mean_k',
+                       'coating_peak_k',
+                       'fuel_outer_wall_peak_abs_w_m2',
+                       'hydrogen_inner_wall_peak_abs_w_m2',
+                       'fuel_to_coating_energy_j'):
+              d=study.metrics[name]
+              print(name,':',[c.observation.measurements[name] for c in study.cases],
+                    'mid-fine delta:',d.mid_to_fine_abs,
+                    'difference ratio:',d.adjacent_difference_ratio,
+                    'monotonically decreasing:',d.decreasing_successive_differences)
+          print('Stage77 finite-grid diagnostics only, no Richardson/GCI proof or real OpenMC nuclear source')
+          assert study.max_relative_energy_residual<5e-8
+          assert study.max_wall_contact_discrepancy_m2<4e-11
+          PY
