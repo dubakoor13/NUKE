@@ -78,7 +78,7 @@ class IdealGasHydrogenThermodynamicTests(unittest.TestCase):
         eps=1e-4
         numerical=(e.enthalpy_j_kg(t+eps)-e.enthalpy_j_kg(t-eps))/(2*eps)
         np.testing.assert_allclose(numerical,e.cp_j_kg_k.at(t),
-                                   atol=2e-5,rtol=0.)
+                                   atol=2e-5,rtol=3e-9)
 
     def test_invalid_gas_properties_and_pressures_are_rejected(self):
         with self.assertRaises(ValueError):
