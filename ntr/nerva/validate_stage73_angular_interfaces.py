@@ -160,5 +160,118 @@ class AngularCoatingContactTests(unittest.TestCase):
                 np.ones((2,18)),self.angular)
 
 
+from .fuel_cutcell_nonlinear_enthalpy import TemperatureTable
+from .fuel_hydrogen_coupled_transient import with_resolved_coating
+from .validate_stage58_fuel_hydrogen_coupling import coupled,initial,solve
+
+
+def integrated_angular_model(*,nz=2,na=8,film=1200.):
+    base=coupled(film=film,nz=nz,nx=20,ny=24)
+    cp=TemperatureTable(
+        [240.,300.,500.,800.,1100.],
+        [690.,725.,800.,890.,1000.])
+    return with_resolved_coating(
+        base,density_kg_m3=5000.,heat_capacity=cp,
+        contact_resistance_m2_k_w=1e-5,
+        axial_conduction_enabled=True,angular_sectors=na)
+
+
+def integrated_angular_initial(m, *, tf=450.,tc=430.,th=400.):
+    a=initial(m,tf=tf,th=th)
+    return replace(a,coating_temperature_k=np.full(
+        m.angular_coating.sector_mass_kg.shape,tc))
+
+
+class AngularCoatingFullCoreEnergyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.m=integrated_angular_model()
+
+    def test_three_temperature_angular_state_and_full_energy(self):
+        m=self.m
+        old=integrated_angular_initial(m)
+        fuel=np.full_like(old.fuel_temperature_k,3.)
+        coat=np.full((m.nzone,19),2.)
+        gas=np.full((m.nzone,19),1.)
+        r=solve(m,old,dt=5e-6,q=fuel,
+                coating_deposition_w=coat,hydrogen_deposition_w=gas)
+        self.assertEqual(
+            r.state.coating_temperature_k.shape,
+            m.angular_coating.sector_mass_kg.shape)
+        self.assertEqual(len(r.coating_angular_face_transfer_j),
+                         len(m.angular_coating.edge_left))
+        self.assertGreater(r.fuel_to_coating_j,0.)
+        self.assertGreater(r.coating_to_hydrogen_j,0.)
+        self.assertLess(r.relative_first_law_residual,3e-8)
+        self.assertLess(abs(r.coating_first_law_residual_j),3e-7)
+        self.assertAlmostEqual(
+            r.coating_deposition_j,float(coat.sum())*5e-6,delta=1e-13)
+        self.assertAlmostEqual(
+            r.fuel_storage_change_j+r.fuel_to_coating_j,
+            r.fuel_deposition_j,delta=4e-7)
+        self.assertAlmostEqual(
+            r.coating_storage_change_j+r.coating_to_hydrogen_j-
+            r.fuel_to_coating_j,r.coating_deposition_j,delta=4e-7)
+
+    def test_one_sector_coating_heating_uses_only_one_angular_source_bin(self):
+        m=integrated_angular_model(film=0.)
+        initial_state=integrated_angular_initial(
+            m,tf=400.,tc=400.,th=400.)
+        p=np.zeros(m.angular_coating.sector_mass_kg.shape)
+        p[0,0,0]=20.
+        r=solve(m,initial_state,dt=5e-6,
+                coating_deposition_w=p)
+        self.assertAlmostEqual(r.coating_deposition_j,1e-4,delta=1e-14)
+        self.assertGreater(r.state.coating_temperature_k[0,0,0],400.)
+        self.assertEqual(float(r.coating_to_hydrogen_j),0.)
+        self.assertLess(abs(r.coating_first_law_residual_j),5e-7)
+        self.assertLess(r.relative_first_law_residual,3e-8)
+
+    def test_zero_source_equilibrium_keeps_all_three_states(self):
+        m=self.m
+        state=integrated_angular_initial(m,tf=400.,tc=400.,th=400.)
+        r=solve(m,state,dt=5e-6)
+        np.testing.assert_allclose(
+            r.state.coating_temperature_k,state.coating_temperature_k,
+            atol=1e-9,rtol=0)
+        self.assertEqual(r.coating_deposition_j,0.)
+        self.assertLess(abs(r.first_law_residual_j),4e-8)
+        self.assertLess(abs(r.coating_first_law_residual_j),4e-8)
+
+    def test_angular_source_per_channel_uniform_volumetric_projection(self):
+        m=self.m
+        state=integrated_angular_initial(m)
+        w=np.zeros((m.nzone,19))
+        w[0,2]=50.
+        a=solve(m,state,dt=5e-6,coating_deposition_w=w)
+        q=distribute_channel_coating_power(w,m.angular_coating)
+        b=solve(m,state,dt=5e-6,coating_deposition_w=q)
+        np.testing.assert_allclose(
+            a.state.coating_temperature_k,b.state.coating_temperature_k,
+            atol=3e-11,rtol=0)
+        np.testing.assert_allclose(
+            a.state.fuel_temperature_k,b.state.fuel_temperature_k,
+            atol=3e-11,rtol=0)
+        self.assertAlmostEqual(a.coating_deposition_j,b.coating_deposition_j,
+                               delta=1e-13)
+
+    def test_incompatible_angular_dimensions_and_property_scope_fail_closed(self):
+        m=self.m
+        base=initial(m)
+        with self.assertRaisesRegex(ValueError,"coating state"):
+            solve(m,base,dt=5e-6)
+        bad=replace(base,coating_temperature_k=np.ones((2,19))*400.)
+        with self.assertRaisesRegex(ValueError,"coating state"):
+            solve(m,bad,dt=5e-6)
+        state=integrated_angular_initial(m)
+        with self.assertRaisesRegex(ValueError,"coating nuclear deposition"):
+            solve(m,state,coating_deposition_w=np.ones((2,19,7)))
+        with self.assertRaisesRegex(ValueError,"angular coating transport"):
+            with_resolved_coating(
+                coupled(nz=2,nx=20,ny=24),density_kg_m3=5000.,
+                heat_capacity=m.coating.heat_capacity,
+                angular_sectors=8,axial_conduction_enabled=False)
+
+
 if __name__=="__main__":
     unittest.main(verbosity=2)
