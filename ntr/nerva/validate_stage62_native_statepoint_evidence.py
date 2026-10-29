@@ -106,6 +106,18 @@ class Stage62NativeSourceEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"not in native"):
             self.reader()
 
+    def test_missing_statepoint_schema_version_rejected(self):
+        with h5py.File(self.path,"a") as h:
+            del h.attrs["version"]
+        with self.assertRaisesRegex(ValueError,"schema version missing"):
+            self.reader()
+
+    def test_unsupported_statepoint_schema_version_rejected(self):
+        with h5py.File(self.path,"a") as h:
+            h.attrs["version"]=999
+        with self.assertRaisesRegex(ValueError,"unsupported.*schema version"):
+            self.reader()
+
     def test_missing_openmc_version_rejected(self):
         with h5py.File(self.path,"a") as h:
             del h.attrs["openmc_version"]
