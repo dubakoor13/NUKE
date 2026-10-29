@@ -172,6 +172,24 @@ class EmbeddedCurvedWallDistanceTests(unittest.TestCase):
             self.assertIn(
                 "fuel_outer_wall_peak_abs_w_m2",study.metrics)
 
+    def test_synthetic_reference_local_wall_refinement_improvement_measured(self):
+        # Recorded empirical improvement is a REGRESSION on this exact
+        # fixed synthetic benchmark, not evidence of continuum accuracy.
+        flux="fuel_outer_wall_peak_abs_w_m2"
+        energy="fuel_to_coating_energy_j"
+        improved_flux=self.local.metrics[flux].relative_mid_to_fine
+        legacy_flux=self.legacy.metrics[flux].relative_mid_to_fine
+        improved_energy=self.local.metrics[energy].relative_mid_to_fine
+        legacy_energy=self.legacy.metrics[energy].relative_mid_to_fine
+        self.assertLess(improved_flux,legacy_flux)
+        self.assertLess(improved_energy,legacy_energy)
+        # Still not converged to 1% in the local wall flux.
+        self.assertGreater(improved_flux,.01)
+        self.assertIn(flux,self.local.metrics_requiring_further_refinement)
+        # The per-cell source normalization and fuel inventory remain
+        # identical across both physically equivalent models.
+        self.assertLess(self.local.max_nuclear_source_rebin_difference_j,2e-11)
+
     def test_no_false_grid_independence_from_unchanged_peak_fuel_temp(self):
         # Actual observed wall flux differences are reported, never
         # replaced by the tiny peak-fuel-temperature difference.
