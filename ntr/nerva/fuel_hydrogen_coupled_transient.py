@@ -13,7 +13,7 @@ inferred from this computational conservation demonstration.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 
 import numpy as np
@@ -151,14 +151,22 @@ def with_resolved_coating(
     axial_conduction_enabled: bool = False,
     angular_sectors: int | None = None,
     radial_layers: int | None = None,
+    fuel_wall_distance_model: str = "global_half_cell",
 ) -> CoupledCoreModel:
     """Enable coating mass and thermal contact within existing Stage58."""
+    if fuel_wall_distance_model not in (
+            "global_half_cell","local_half_depth"):
+        raise ValueError("unknown embedded fuel wall distance model")
+    if (fuel_wall_distance_model=="local_half_depth"
+            and angular_sectors is None):
+        raise ValueError("local fuel wall model requires angular cutcell contacts")
     coating=build_resolved_coating(
         model.config,model.solid,density_kg_m3=density_kg_m3,
         heat_capacity=heat_capacity,
         contact_resistance_m2_k_w=contact_resistance_m2_k_w,
         axial_conduction_enabled=axial_conduction_enabled,
     )
+    coating=replace(coating,fuel_wall_distance_model=fuel_wall_distance_model)
     if angular_sectors is None:
         angular=None
         contacts=None
