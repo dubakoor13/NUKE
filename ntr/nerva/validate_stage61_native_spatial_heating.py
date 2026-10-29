@@ -54,6 +54,16 @@ class ExactSpatialFuelHandoffTests(unittest.TestCase):
         cls.m=coupled(film=0.,nz=4,nx=20,ny=24)
         cls.native=local_native(cls.m)
 
+    def test_heating_local_is_not_misreported_as_pure_neutron_energy(self):
+        # OpenMC neutron-only heating-local assumes secondary photons
+        # deposit energy locally. A separate photon watt source must not
+        # be added to this score without independent source accounting.
+        self.assertIn("secondary photon",self.native.photon_status)
+        self.assertIn("NOT a pure-neutron",self.native.photon_status)
+        np.testing.assert_array_equal(
+            self.native.score.fuel_photon_ev_per_source,
+            np.zeros(self.native.mesh_dimensions[2]))
+
     def test_native_voxel_to_fuel_cutcell_energy_conservation(self):
         m=self.m
         native=self.native
