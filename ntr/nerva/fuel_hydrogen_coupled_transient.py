@@ -45,6 +45,8 @@ class CoupledCoreResult:
     max_wall_iterations: int
     wall_heat_to_hydrogen_j: np.ndarray
     fuel_deposition_j: float
+    hydrogen_deposition_j: float
+    hydrogen_deposition_per_channel_j: np.ndarray
     fuel_storage_change_j: float
     hydrogen_total_energy_change_j: float
     hydrogen_net_outlet_energy_j: float
@@ -181,6 +183,7 @@ def advance_coupled_core(
     initial: CoupledCoreState,
     *, dt_s: float,
     fuel_deposition_w: object,
+    hydrogen_deposition_w: object = 0.,
     boundary: HydrogenBoundary = HydrogenBoundary(),
     max_wall_iterations: int = 32,
     wall_relative_tolerance: float = 1e-9,
@@ -194,6 +197,13 @@ def advance_coupled_core(
     substep iterates one midpoint interface power with a fully implicit
     solid enthalpy solve. The H2 and solid are always solved from the SAME
     substep initial state until the shared wall power converges.
+
+    fuel_deposition_w and hydrogen_deposition_w are TWO DISTINCT nuclear
+    energy source ledgers. The latter contributes directly to hydrogen
+    total energy, never to wall heat or solid energy, and is evaluated
+    exactly once per physical substep. These source arrays must not
+    contain energy transferred across the fuel/H2 wall: the wall flux is
+    computed by the coupled solver and is internal to the first law.
     """
     if (not math.isfinite(dt_s) or dt_s<=0
             or not math.isfinite(wall_relative_tolerance)
@@ -211,6 +221,14 @@ def advance_coupled_core(
     fsrc=np.asarray(fuel_deposition_w,dtype=float)
     if fsrc.shape!=(nz,nf) or not np.all(np.isfinite(fsrc)):
         raise ValueError("fuel deposition must be finite W [z,cutcell]")
+    if np.any(fsrc<0):
+        raise ValueError("nuclear fuel deposition must be nonnegative W")
+    hsrc=np.asarray(hydrogen_deposition_w,dtype=float)
+    if hsrc.ndim==0:
+        hsrc=np.full((nz,19),float(hsrc))
+    if (hsrc.shape!=(nz,19) or not np.all(np.isfinite(hsrc))
+            or np.any(hsrc<0)):
+        raise ValueError("hydrogen nuclear deposition must be nonnegative finite W [z,19]")
     gas0=primitive(model.fluid,initial.hydrogen)
     pgas=gas0
     speed=float(np.max(
@@ -229,6 +247,7 @@ def advance_coupled_core(
     mf=rho*model.solid.solid_volume_m3
     area=np.zeros((nz,19))
     qtotal=0.
+    hydrogen_qtotal=np.zeros((nz,19),dtype=float)
     outflow_net=0.
     max_iters=0
     initial_fluid_energy=float(np.sum(
@@ -259,7 +278,10 @@ def advance_coupled_core(
         for iteration in range(1,max_wall_iterations+1):
             trial_fluid=advance_transient_hydrogen(
                 model.fluid,old_h,dt_s=sub_dt,
-                wall_heat_w=candidate_h,
+                # The Stage57 fluid total-energy equation receives the
+                # sum of direct nuclear heat and the *separate* internal
+                # wall flux. The solid uses only the wall source opposite.
+                wall_heat_w=candidate_h+hsrc,
                 boundary=boundary,friction_enabled=friction_enabled)
             trial_solid=_advance_solid_only(
                 system,old_t,fsrc-candidate_s,sub_dt,
@@ -290,6 +312,7 @@ def advance_coupled_core(
         hydrogen=final_hydrogen
         area+=sub_dt*candidate_h
         qtotal+=sub_dt*float(np.sum(fsrc))
+        hydrogen_qtotal+=sub_dt*hsrc
         outflow_net+=sub_dt*float(np.sum(
             final_step.outlet_energy_flux_w-final_step.inlet_energy_flux_w))
 
@@ -301,8 +324,10 @@ def advance_coupled_core(
         hydrogen.conserved[...,0]*model.fluid.volume_m3))
     ds=solid_energy-old_solid_energy
     dh=gas_energy-initial_fluid_energy
-    residual=ds+dh+outflow_net-qtotal
-    scale=max(1.,abs(ds),abs(dh),abs(outflow_net),abs(qtotal))
+    hydrogen_source_j=float(np.sum(hydrogen_qtotal))
+    residual=ds+dh+outflow_net-qtotal-hydrogen_source_j
+    scale=max(1.,abs(ds),abs(dh),abs(outflow_net),abs(qtotal),
+              abs(hydrogen_source_j))
     # Energy is obtained by subtracting two large state inventories;
     # permit only a separately tracked floating-point cancellation floor.
     scale_old=(abs(solid_energy)+abs(old_solid_energy)
@@ -317,6 +342,8 @@ def advance_coupled_core(
         substeps=count,max_wall_iterations=max_iters,
         wall_heat_to_hydrogen_j=area,
         fuel_deposition_j=qtotal,
+        hydrogen_deposition_j=hydrogen_source_j,
+        hydrogen_deposition_per_channel_j=hydrogen_qtotal,
         fuel_storage_change_j=ds,
         hydrogen_total_energy_change_j=dh,
         hydrogen_net_outlet_energy_j=outflow_net,
