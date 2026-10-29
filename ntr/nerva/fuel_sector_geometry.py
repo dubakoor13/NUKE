@@ -138,17 +138,79 @@ def fuel_sector_total_areas_cm2(
     )
 
 
+def fuel_sector_coated_channel_areas_cm2(
+    config: NervaConfig,
+) -> np.ndarray:
+    """Exact *inner-hex footprint* of each coated coolant circle [cm²].
+
+    OpenMC uses orientation="y" (vertical flats), not the older
+    horizontal-flat layout assumption. Six outer channels cross a single
+    inner-hex flat by ~0.00363 cm at nominal dimensions. Only the part
+    INSIDE the inner hex displaces the fuel matrix; the outer part is
+    already in the external ZrC region. Coating material identity on
+    both sides is unchanged. This is an exact circle/half-plane cap
+    calculation, not a polygon sampling or fabricated volume correction.
+
+    The geometry formula supports clipping against exactly one flat per
+    channel. Fail closed if a proposed geometry reaches two flats,
+    touches the outer hex, or sends a hydrogen bore outside the inner hex.
+    """
+    config.validate()
+    radius = config.coated_channel_radius_cm
+    bore = config.channel_radius_cm
+    apothem = config.inner_fuel_flat_to_flat_cm / 2.0
+    external_apothem = config.fuel_flat_to_flat_cm / 2.0
+    normals = (
+        (1.0, 0.0),
+        (0.5, math.sqrt(3.0) / 2.0),
+        (0.5, -math.sqrt(3.0) / 2.0),
+    )
+    faces = normals + tuple((-nx, -ny) for nx, ny in normals)
+    effective = []
+    for x, y in coolant_channel_positions(config):
+        distances = [apothem - nx * x - ny * y for nx, ny in faces]
+        if min(distances) <= bore:
+            raise ValueError("hydrogen bore extends beyond actual inner fuel hex")
+        if min(distances) <= 0:
+            raise ValueError("coolant-channel centre lies outside inner fuel hex")
+        outside_outer = [
+            external_apothem - nx * x - ny * y
+            for nx, ny in faces
+        ]
+        if min(outside_outer) <= radius:
+            raise ValueError("coated coolant channel exits actual outer hex")
+        cross = [d for d in distances if d < radius]
+        if len(cross) > 1:
+            raise ValueError("two-flat coated-circle clipping not qualified")
+        cap = 0.0
+        if cross:
+            d = cross[0]
+            cap = (radius**2 * math.acos(d / radius)
+                   - d * math.sqrt(radius**2 - d**2))
+        area = math.pi * radius**2 - cap
+        if area <= math.pi * bore**2:
+            raise ValueError("nonphysical clipped coated-channel area")
+        effective.append(area)
+    if len(effective) != 19:
+        raise ValueError("19 actual fuel-element channels required")
+    return np.asarray(effective, dtype=float)
+
+
 def fuel_sector_fuel_areas_cm2(
     config: NervaConfig,
 ) -> np.ndarray:
-    """Fuel-material area in each sector, excluding the local coated channel."""
-    total = fuel_sector_total_areas_cm2(config)
-    coated_hole = math.pi * config.coated_channel_radius_cm**2
-    fuel = total - coated_hole
+    """Actual 19 Voronoi fuel volumes per axial length in OpenMC CSG.
 
-    if np.any(fuel <= 0.0):
+    The former implementation removed a COMPLETE circle from each
+    inner-hex sector and lost the fuel area of the six clipped rings.
+    This uses only the true inner-hex footprints of those circles.
+    """
+    total = fuel_sector_total_areas_cm2(config)
+    coated_in_fuel = fuel_sector_coated_channel_areas_cm2(config)
+    fuel = total - coated_in_fuel
+    if np.any(fuel <= 0.0) or not np.all(np.isfinite(fuel)):
         raise ValueError(
-            "fuel-sector area is non-positive after coated-channel subtraction"
+            "fuel-sector area is non-positive after true CSG channel subtraction"
         )
     return fuel
 
