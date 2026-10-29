@@ -293,13 +293,20 @@ def advance_coupled_core(
             or np.any(hsrc<0)):
         raise ValueError("hydrogen nuclear deposition must be nonnegative finite W [z,19]")
     coat_model=model.coating
+    angular=model.angular_coating
+    contacts=model.angular_contacts
+    if (angular is None)!=(contacts is None):
+        raise ValueError("angular geometry and physical contact must both be present")
     coating_src=np.asarray(coating_deposition_w,dtype=float)
     if coating_src.ndim==0:
         coating_src=np.full((nz,19),float(coating_src))
-    if (coating_src.shape!=(nz,19) or
+    if angular is not None and coating_src.shape==(nz,19):
+        coating_src=distribute_channel_coating_power(coating_src,angular)
+    desired=(nz,19) if angular is None else angular.sector_mass_kg.shape
+    if (coating_src.shape!=desired or
             not np.all(np.isfinite(coating_src)) or
             np.any(coating_src<0)):
-        raise ValueError("coating nuclear deposition must be nonnegative W [z,19]")
+        raise ValueError("coating nuclear deposition must be nonnegative finite W in physical [z,19,angle] geometry")
     if coat_model is None:
         if initial.coating_temperature_k is not None or np.any(coating_src>0):
             raise ValueError("cannot advance coating heat without resolved coating model")
@@ -309,10 +316,17 @@ def advance_coupled_core(
         if initial.coating_temperature_k is None:
             raise ValueError("resolved coating temperature state required [z,19]")
         tcoat=np.asarray(initial.coating_temperature_k,dtype=float).copy()
-        if tcoat.shape!=(nz,19) or not np.all(np.isfinite(tcoat)):
-            raise ValueError("coating state must have finite temperatures [z,19]")
+        expected_coating_shape=(
+            (nz,19) if angular is None else angular.sector_mass_kg.shape)
+        if (tcoat.shape!=expected_coating_shape
+                or not np.all(np.isfinite(tcoat))):
+            raise ValueError(
+                "coating state must have finite temperatures matching resolved [z,19,angle] geometry")
+        coat_mass=(
+            coat_model.mass_kg if angular is None
+            else angular.sector_mass_kg)
         initial_coating_energy=float(np.sum(
-            coat_model.mass_kg*coat_model.heat_capacity.integral(tcoat)))
+            coat_mass*coat_model.heat_capacity.integral(tcoat)))
     gas0=primitive(model.fluid,initial.hydrogen)
     pgas=gas0
     speed=float(np.max(
@@ -338,6 +352,9 @@ def advance_coupled_core(
     coating_axial_j=(np.zeros((nz-1,19)) if coat_model is not None
                      and coat_model.axial_conduction_enabled else None)
     coating_axial_max_node_residual_j=0.
+    coating_angular_j=(
+        np.zeros(len(angular.edge_left)) if angular is not None else None)
+    coating_angular_max_node_residual_j=0.
     outflow_net=0.
     max_iters=0
     initial_fluid_energy=float(np.sum(
@@ -364,15 +381,24 @@ def advance_coupled_core(
             candidate_h=old_wall_h.copy()
             candidate_s=old_wall_s.copy()
             candidate_coating_in=None
-        else:
+        elif angular is None:
             candidate_s,candidate_coating_in,candidate_h=coating_interface_power(
                 coat_model,model.solid,model.properties,
                 old_t,old_coating,old_gas.temperature_k)
+        else:
+            contact_flux=angular_interface_power(
+                coat_model,model.solid,model.properties,contacts,
+                old_t,old_coating,old_gas.temperature_k)
+            candidate_s=contact_flux.fuel_to_coating_by_fuel_w
+            candidate_coating_in=contact_flux.fuel_to_coating_by_sector_w
+            candidate_angular_out=contact_flux.coating_to_hydrogen_by_sector_w
+            candidate_h=contact_flux.coating_to_hydrogen_by_channel_w
         converged=False
         final_solid=None
         final_hydrogen=None
         final_coating=None
         final_axial_diffusion=None
+        final_angular_diffusion=None
         final_step=None
         for iteration in range(1,max_wall_iterations+1):
             trial_fluid=advance_transient_hydrogen(
