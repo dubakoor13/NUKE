@@ -23,6 +23,11 @@ import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 
 from .fuel_cutcell_conduction_2d import _NORMALS, _inside_hex, _clip_polygon
+from .fuel_embedded_boundary_moments import (
+    fuel_cutcell_volume_centroid_cm,
+    circular_arc_centroid_and_normal_cm,
+    fuel_wall_moment_normal_depth_m,
+)
 from .fuel_cutcell_axial_transport import AxialCutCellModel
 from .fuel_cutcell_nonlinear_enthalpy import NonlinearThermalProperties
 from .layout import coolant_channel_positions
@@ -48,6 +53,8 @@ class AngularCoatingInterfaces:
     # footprint and circular contact ARC normal. Optional to preserve
     # older construction; selected explicitly by the Stage78 model.
     fuel_wall_half_depth_m: csr_matrix | None = None
+    fuel_wall_moment_depth_m: csr_matrix | None = None
+    fuel_wall_tangential_offset_m: csr_matrix | None = None
 
 
 @dataclass(frozen=True)
@@ -159,7 +166,10 @@ def build_angular_coating_interfaces(
     cols=[]
     areas=[]
     depth_area_m3=[]
+    moment_depth_area_m3=[]
+    tangent_offset_area_m3=[]
     polygon_cache={}
+    centroid_cache={}
     inner=np.zeros((19,n),dtype=float)
     for channel,(cx,cy) in enumerate(coords):
         # Outer coating/fuel arcs require a unique physical cutcell owner.
@@ -200,6 +210,19 @@ def build_angular_coating_interfaces(
             arc_normal=(math.cos(theta),math.sin(theta))
             depth=local_fuel_wall_half_depth_m(poly,(x,y),arc_normal)
             depth_area_m3.append(patch_area*depth)
+            material_centroid=centroid_cache.get(fuel_cell)
+            if material_centroid is None:
+                _,xx,yy=fuel_cutcell_volume_centroid_cm(
+                    poly,coords,r_outer,
+                    exact_fuel_area_cm2=float(fuel.fuel_areas_cm2[fuel_cell]))
+                material_centroid=(xx,yy)
+                centroid_cache[fuel_cell]=material_centroid
+            physical_arc=circular_arc_centroid_and_normal_cm(
+                (cx,cy),r_outer,float(left),float(right))
+            moment_depth,tangent=fuel_wall_moment_normal_depth_m(
+                material_centroid,physical_arc)
+            moment_depth_area_m3.append(patch_area*moment_depth)
+            tangent_offset_area_m3.append(patch_area*tangent)
         # The inner bore/H2 area is separately clipped to physical hex.
         cuts=_angle_events(
             cx,cy,r_bore,None,None,ap,angular_edges)
@@ -225,6 +248,21 @@ def build_angular_coating_interfaces(
         raise ArithmeticError("nonphysical embedded fuel contact half-depth")
     local_depth=csr_matrix(
         (depths,outer.indices.copy(),outer.indptr.copy()),shape=outer.shape)
+    def aggregate_moments(values, *, positive):
+        moment=coo_matrix(
+            (values,(rows,cols)),shape=outer.shape).tocsr()
+        if (not np.array_equal(moment.indptr,outer.indptr)
+                or not np.array_equal(moment.indices,outer.indices)):
+            raise ArithmeticError("curved fuel moment/contact topology mismatch")
+        aggregate=moment.data/outer.data
+        if not np.all(np.isfinite(aggregate)) or (
+                positive and np.any(aggregate<=0)):
+            raise ArithmeticError("invalid physical normal fuel-wall centroid distance")
+        return csr_matrix(
+            (aggregate,outer.indices.copy(),outer.indptr.copy()),
+            shape=outer.shape)
+    moment_depth=aggregate_moments(moment_depth_area_m3,positive=True)
+    tangent_offset=aggregate_moments(tangent_offset_area_m3,positive=False)
     reference=coating.fuel_arc_m2
     if reference.shape!=(fuel.n_fuel,19):
         raise ValueError("Stage70 coating contact reference has wrong shape")
@@ -248,6 +286,8 @@ def build_angular_coating_interfaces(
         fuel_arc_residual_m2=fuel_res,
         hydrogen_arc_residual_m2=h2_res,
         fuel_wall_half_depth_m=local_depth,
+        fuel_wall_moment_depth_m=moment_depth,
+        fuel_wall_tangential_offset_m=tangent_offset,
     )
 
 
@@ -284,7 +324,14 @@ def angular_interface_power(
     r_outer=coating.outer_radius_m
     r_mid=coating.geometric_mid_radius_m
     bore=coating.inner_radius_m
-    if coating.fuel_wall_distance_model=="local_half_depth":
+    if coating.fuel_wall_distance_model=="moment_normal_depth":
+        dm=contacts.fuel_wall_moment_depth_m
+        if dm is None or dm.shape!=contacts.fuel_outer_full_m2.shape:
+            raise ValueError("missing physical fuel centroid/arc moment distances")
+        local=np.asarray(dm[fidx,rim.col]).ravel()
+        if np.any(local<=0) or not np.all(np.isfinite(local)):
+            raise ArithmeticError("nonphysical positive fuel centroid-normal wall distance")
+    elif coating.fuel_wall_distance_model=="local_half_depth":
         dm=contacts.fuel_wall_half_depth_m
         if dm is None or dm.shape!=contacts.fuel_outer_full_m2.shape:
             raise ValueError("missing local fuel wall half-depth contact geometry")
