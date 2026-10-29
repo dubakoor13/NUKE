@@ -28,6 +28,7 @@ from .fuel_cutcell_nonlinear_enthalpy import (
 from .resolved_coating_thermal import (
     ResolvedCoatingModel, build_resolved_coating,
     coating_interface_power, advance_coating_enthalpy,
+    advance_coating_axial_enthalpy,
 )
 from .fuel_cutcell_nonlinear_enthalpy import TemperatureTable
 from .hydrogen_transient_fvm import (
@@ -65,6 +66,8 @@ class CoupledCoreResult:
     fuel_to_coating_j: float = 0.
     coating_to_hydrogen_j: float = 0.
     coating_first_law_residual_j: float = 0.
+    coating_axial_interface_j: np.ndarray | None = None
+    coating_axial_max_node_residual_j: float = 0.
 
 
 @dataclass(frozen=True)
@@ -125,12 +128,14 @@ def with_resolved_coating(
     density_kg_m3: float,
     heat_capacity: TemperatureTable,
     contact_resistance_m2_k_w: object = 0.,
+    axial_conduction_enabled: bool = False,
 ) -> CoupledCoreModel:
     """Enable coating mass and thermal contact within existing Stage58."""
     coating=build_resolved_coating(
         model.config,model.solid,density_kg_m3=density_kg_m3,
         heat_capacity=heat_capacity,
         contact_resistance_m2_k_w=contact_resistance_m2_k_w,
+        axial_conduction_enabled=axial_conduction_enabled,
     )
     return CoupledCoreModel(
         model.config,model.solid,model.fluid,model.properties,
@@ -304,6 +309,9 @@ def advance_coupled_core(
     coating_qtotal=0.
     coating_in_j=0.
     coating_out_j=0.
+    coating_axial_j=(np.zeros((nz-1,19)) if coat_model is not None
+                     and coat_model.axial_conduction_enabled else None)
+    coating_axial_max_node_residual_j=0.
     outflow_net=0.
     max_iters=0
     initial_fluid_energy=float(np.sum(
@@ -338,6 +346,7 @@ def advance_coupled_core(
         final_solid=None
         final_hydrogen=None
         final_coating=None
+        final_axial_diffusion=None
         final_step=None
         for iteration in range(1,max_wall_iterations+1):
             trial_fluid=advance_transient_hydrogen(
@@ -360,9 +369,18 @@ def advance_coupled_core(
                     float(np.max(np.abs(target_s-candidate_s))),
                     float(np.max(np.abs(target_h-candidate_h))))
             else:
-                trial_coating=advance_coating_enthalpy(
-                    coat_model,old_coating,dt_s=sub_dt,
-                    net_w=coating_src+candidate_coating_in-candidate_h)
+                coating_net_w=(coating_src+candidate_coating_in-candidate_h)
+                if coat_model.axial_conduction_enabled:
+                    trial_axial_diffusion=advance_coating_axial_enthalpy(
+                        coat_model,old_coating,
+                        conductivity_w_m_k=model.properties.coating_k_w_m_k,
+                        dt_s=sub_dt,net_w=coating_net_w)
+                    trial_coating=trial_axial_diffusion.temperature_k
+                else:
+                    trial_axial_diffusion=None
+                    trial_coating=advance_coating_enthalpy(
+                        coat_model,old_coating,dt_s=sub_dt,
+                        net_w=coating_net_w)
                 cm=.5*(old_coating+trial_coating)
                 target_s,target_ci,target_h=coating_interface_power(
                     coat_model,model.solid,model.properties,tm,cm,hm)
@@ -377,6 +395,9 @@ def advance_coupled_core(
                 final_solid=trial_solid
                 final_hydrogen=trial_fluid.state
                 final_coating=trial_coating
+                final_axial_diffusion=(
+                    trial_axial_diffusion if coat_model is not None else None
+                )
                 final_step=trial_fluid
                 max_iters=max(max_iters,iteration)
                 break
@@ -397,6 +418,12 @@ def advance_coupled_core(
             coating_qtotal+=sub_dt*float(np.sum(coating_src))
             coating_in_j+=sub_dt*float(np.sum(candidate_coating_in))
             coating_out_j+=sub_dt*float(np.sum(candidate_h))
+            if final_axial_diffusion is not None:
+                coating_axial_j+=final_axial_diffusion.axial_interface_j
+                coating_axial_max_node_residual_j=max(
+                    coating_axial_max_node_residual_j,
+                    float(np.max(np.abs(
+                        final_axial_diffusion.per_node_first_law_residual_j))))
         qtotal+=sub_dt*float(np.sum(fsrc))
         hydrogen_qtotal+=sub_dt*hsrc
         outflow_net+=sub_dt*float(np.sum(
@@ -453,4 +480,6 @@ def advance_coupled_core(
         fuel_to_coating_j=coating_in_j,
         coating_to_hydrogen_j=coating_out_j,
         coating_first_law_residual_j=coat_balance,
+        coating_axial_interface_j=coating_axial_j,
+        coating_axial_max_node_residual_j=coating_axial_max_node_residual_j,
     )
