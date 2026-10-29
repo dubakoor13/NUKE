@@ -161,7 +161,7 @@ class CoupledNonlinearTransportTests(unittest.TestCase):
                                    atol=3e-8,rtol=0.)
         np.testing.assert_allclose(r.hydrogen_temperature_k,300.,
                                    atol=1e-9,rtol=0.)
-        self.assertLess(abs(r.first_law_residual_j),2e-7)
+        self.assertLess(r.relative_first_law_residual,2e-9)
 
     def test_nonlinear_upwind_transport_uses_specific_enthalpy(self):
         c,m=setup(film=0.,nz=3)
@@ -180,7 +180,8 @@ class CoupledNonlinearTransportTests(unittest.TestCase):
             rtol=0,atol=4e-7)
         np.testing.assert_allclose(
             r.hydrogen_temperature_k[:,1:],
-            r.hydrogen_temperature_k[:,0,None],atol=5e-9,rtol=0.)
+            np.broadcast_to(r.hydrogen_temperature_k[:,0,None],(3,18)),
+            atol=5e-9,rtol=0.)
         self.assertLess(abs(r.first_law_residual_j),2e-6)
 
     def test_spatially_nonuniform_heating_and_temperature_properties(self):
