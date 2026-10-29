@@ -1,0 +1,66 @@
+name: NUKE Stage58 coupled solid + hydrogen conservative transient
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/validate_stage58_fuel_hydrogen_coupling.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage58-coupled-fuel-hydrogen.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/validate_stage58_fuel_hydrogen_coupling.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage58-coupled-fuel-hydrogen.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  conserved-fuel-hydrogen-energy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install thermal-hydraulic numerical packages
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2'
+      - name: Run Stage58 and earlier numerical regression tests
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage58_fuel_hydrogen_coupling -v
+          python -m unittest ntr.nerva.validate_stage57_hydrogen_transient -v
+          python -m unittest ntr.nerva.validate_stage56_hydrogen_hydraulics -v
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Demonstrate shared fuel and conservative gas energy accounting
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.validate_stage58_fuel_hydrogen_coupling import coupled, initial, solve
+          from ntr.nerva.hydrogen_transient_fvm import primitive
+          m=coupled(film=1400.,nz=2)
+          state=initial(m,tf=550.,th=400.)
+          result=solve(m,state,dt=1e-5)
+          gas=primitive(m.fluid,result.state.hydrogen)
+          print('Stage58 fuel cut-cell unknowns:',m.solid.fuel_unknowns)
+          print('Stage58 hydrogen conserved unknowns:',3*m.nzone*19)
+          print('Stage58 common wall iterations:',result.max_wall_iterations)
+          print('Stage58 acoustic substeps:',result.substeps)
+          print('Stage58 net wall energy to H2 [J]:',result.wall_heat_to_hydrogen_j.sum())
+          print('Stage58 final mean H2 pressure [Pa]:',gas.pressure_pa.mean())
+          print('Stage58 first-law residual [J]:',result.first_law_residual_j)
+          print('Stage58 relative first-law residual:',result.relative_first_law_residual)
+          print('Stage58: synthetic heat transfer and ideal gas; NOT actual NERVA core power')
+          assert result.relative_first_law_residual<1e-8
+          assert gas.temperature_k.mean()>400.
+          PY
