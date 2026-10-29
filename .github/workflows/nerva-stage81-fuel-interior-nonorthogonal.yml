@@ -1,0 +1,133 @@
+name: NUKE Stage81 conservative nonorthogonal interior fuel faces
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/coating_radial_fvm.py'
+      - 'ntr/nerva/coating_mesh_convergence.py'
+      - 'ntr/nerva/fuel_cutcell_xy_convergence.py'
+      - 'ntr/nerva/validate_stage78_embedded_wall_distance.py'
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/resolved_coating_thermal.py'
+      - 'ntr/nerva/coating_radial_interfaces.py'
+      - 'ntr/nerva/coating_angular_interfaces.py'
+      - 'ntr/nerva/fuel_embedded_boundary_moments.py'
+      - 'ntr/nerva/fuel_wall_nonorthogonal.py'
+      - 'ntr/nerva/fuel_interior_nonorthogonal.py'
+      - 'ntr/nerva/validate_stage81_fuel_interior.py'
+      - 'ntr/nerva/validate_stage80_nonorthogonal_fuel.py'
+      - 'ntr/nerva/validate_stage79_fuel_wall_moments.py'
+      - 'ntr/nerva/coating_radial_interfaces.py'
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/validate_stage74_coating_radial.py'
+      - 'ntr/nerva/validate_stage75_coupled_radial_coating.py'
+      - 'ntr/nerva/validate_stage76_coupled_mesh_convergence.py'
+      - 'ntr/nerva/validate_stage77_fuel_xy_refinement.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage81-fuel-interior-nonorthogonal.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/coating_radial_fvm.py'
+      - 'ntr/nerva/coating_mesh_convergence.py'
+      - 'ntr/nerva/fuel_cutcell_xy_convergence.py'
+      - 'ntr/nerva/validate_stage78_embedded_wall_distance.py'
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/resolved_coating_thermal.py'
+      - 'ntr/nerva/coating_radial_interfaces.py'
+      - 'ntr/nerva/coating_angular_interfaces.py'
+      - 'ntr/nerva/fuel_embedded_boundary_moments.py'
+      - 'ntr/nerva/fuel_wall_nonorthogonal.py'
+      - 'ntr/nerva/fuel_interior_nonorthogonal.py'
+      - 'ntr/nerva/validate_stage81_fuel_interior.py'
+      - 'ntr/nerva/validate_stage80_nonorthogonal_fuel.py'
+      - 'ntr/nerva/validate_stage79_fuel_wall_moments.py'
+      - 'ntr/nerva/coating_radial_interfaces.py'
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/validate_stage74_coating_radial.py'
+      - 'ntr/nerva/validate_stage75_coupled_radial_coating.py'
+      - 'ntr/nerva/validate_stage76_coupled_mesh_convergence.py'
+      - 'ntr/nerva/validate_stage77_fuel_xy_refinement.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage81-fuel-interior-nonorthogonal.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  conservative-fuel-interior-nonorthogonal-fvm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install sparse and HDF5 runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2' 'h5py>=3.10,<4'
+      - name: Test Stage81 affine internal Fourier flux and Stage52–80 regressions
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage81_fuel_interior -v
+          python -m unittest ntr.nerva.validate_stage80_nonorthogonal_fuel -v
+          python -m unittest ntr.nerva.validate_stage79_fuel_wall_moments -v
+          python -m unittest ntr.nerva.validate_stage78_embedded_wall_distance -v
+          python -m unittest ntr.nerva.validate_stage77_fuel_xy_refinement -v
+          python -m unittest ntr.nerva.validate_stage76_coupled_mesh_convergence -v
+          python -m unittest ntr.nerva.validate_stage75_coupled_radial_coating -v
+          python -m unittest ntr.nerva.validate_stage74_coating_radial -v
+          python -m unittest ntr.nerva.validate_stage73_angular_interfaces -v
+          python -m unittest ntr.nerva.validate_stage72_coating_angular -v
+          python -m unittest ntr.nerva.validate_stage71_axial_coating -v
+          python -m unittest ntr.nerva.validate_stage70_resolved_coating -v
+          python -m unittest ntr.nerva.validate_stage69_structural_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage68_full_core_energy_ledger -v
+          python -m unittest ntr.nerva.validate_stage67_hydrogen_channel_heating -v
+          python -m unittest ntr.nerva.validate_stage66_direct_hydrogen_deposition -v
+          python -m unittest ntr.nerva.validate_stage65_coupled_nuclear_heating -v
+          python -m unittest ntr.nerva.validate_stage64_native_mesh_order -v
+          python -m unittest ntr.nerva.validate_stage63_native_statepoint_format -v
+          python -m unittest ntr.nerva.validate_stage62_native_statepoint_evidence -v
+          python -m unittest ntr.nerva.validate_stage61_native_spatial_heating -v
+          python -m unittest ntr.nerva.validate_stage60_native_hdf5_heating -v
+          python -m unittest ntr.nerva.validate_stage59_core_refinement_heating -v
+          python -m unittest ntr.nerva.validate_stage58_fuel_hydrogen_coupling -v
+          python -m unittest ntr.nerva.validate_stage57_hydrogen_transient -v
+          python -m unittest ntr.nerva.validate_stage56_hydrogen_hydraulics -v
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Compare wall-only and full interior nonorthogonal fuel flux
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.validate_stage81_fuel_interior import full_factory
+          from ntr.nerva.validate_stage80_nonorthogonal_fuel import corrected_factory
+          from ntr.nerva.validate_stage78_embedded_wall_distance import GRIDS
+          from ntr.nerva.validate_stage76_coupled_mesh_convergence import BASE,HEAT
+          from ntr.nerva.fuel_cutcell_xy_convergence import run_fuel_xy_convergence
+          for name,factory in (
+              ('Stage80 wall-only correction',corrected_factory),
+              ('Stage81 wall and ALL internal fuel-face corrections',full_factory)):
+              study=run_fuel_xy_convergence(
+                  factory,base_mesh=BASE,heating=HEAT,xy_sizes=GRIDS)
+              print('Stage81 flux policy:',name)
+              for key in ('fuel_peak_k','coating_peak_k',
+                          'fuel_outer_wall_peak_abs_w_m2',
+                          'fuel_to_coating_energy_j'):
+                  values=[case.observation.measurements[key] for case in study.cases]
+                  delta=study.metrics[key]
+                  print(key,'values:',values,
+                        'finest relative difference:',delta.relative_mid_to_fine,
+                        'monotone:',delta.decreasing_successive_differences)
+              print('Stage81 unresolved metrics:',
+                    study.metrics_requiring_further_refinement)
+              print('Stage81 maximum relative first-law residual:',
+                    study.max_relative_energy_residual)
+              assert study.max_relative_energy_residual<5e-8
+          print('Stage81 affine face flux is verified; independent curved PDE benchmark is pending')
+          PY

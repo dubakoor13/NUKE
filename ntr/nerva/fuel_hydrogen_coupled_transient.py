@@ -35,6 +35,10 @@ from .coating_radial_fvm import (
 )
 from .coating_radial_interfaces import radial_interface_power
 from .fuel_wall_nonorthogonal import build_fuel_gradient_reconstruction
+from .fuel_interior_nonorthogonal import (
+    InteriorFuelFaceCorrection,build_interior_fuel_face_correction,
+    nonorthogonal_face_heat_w,conservative_face_divergence_w,
+)
 from .coating_angular_interfaces import (
     AngularCoatingInterfaces, build_angular_coating_interfaces,
     angular_interface_power, distribute_channel_coating_power,
@@ -99,6 +103,7 @@ class CoupledCoreModel:
     angular_coating: AngularCoatingMesh | None = None
     angular_contacts: AngularCoatingInterfaces | None = None
     radial_coating: RadialCoatingMesh | None = None
+    interior_fuel_faces: InteriorFuelFaceCorrection | None = None
 
     @property
     def nzone(self) -> int:
@@ -157,7 +162,7 @@ def with_resolved_coating(
     """Enable coating mass and thermal contact within existing Stage58."""
     if fuel_wall_distance_model not in (
             "global_half_cell","local_half_depth","moment_normal_depth",
-            "moment_nonorthogonal_gradient"):
+            "moment_nonorthogonal_gradient","moment_full_nonorthogonal"):
         raise ValueError("unknown embedded fuel wall distance model")
     if (fuel_wall_distance_model=="local_half_depth"
             and angular_sectors is None):
@@ -182,7 +187,8 @@ def with_resolved_coating(
             density_kg_m3=density_kg_m3)
         contacts=build_angular_coating_interfaces(
             model.config,model.solid,coating,angular)
-        if fuel_wall_distance_model=="moment_nonorthogonal_gradient":
+        if fuel_wall_distance_model in (
+                "moment_nonorthogonal_gradient","moment_full_nonorthogonal"):
             gradients=build_fuel_gradient_reconstruction(
                 model.config,model.solid)
             contacts=replace(
@@ -195,9 +201,16 @@ def with_resolved_coating(
         radial=build_radial_coating_mesh(
             model.config,coating,angular,radial_layers=radial_layers,
             density_kg_m3=density_kg_m3)
+    if fuel_wall_distance_model=="moment_full_nonorthogonal":
+        if contacts is None or contacts.fuel_gradient_reconstruction is None:
+            raise ValueError("full nonorthogonal fuel needs angular and LS material centroids")
+        interior=build_interior_fuel_face_correction(
+            model.solid,contacts.fuel_gradient_reconstruction)
+    else:
+        interior=None
     return CoupledCoreModel(
         model.config,model.solid,model.fluid,model.properties,
-        model.solid_density_kg_m3,coating,angular,contacts,radial,
+        model.solid_density_kg_m3,coating,angular,contacts,radial,interior,
     )
 
 
@@ -237,6 +250,19 @@ def _advance_solid_only(
         h=p.fuel_cp_j_kg_k.integral(temp)
         lap,_=system._operators(temp,system.old_h)
         f=(mass*(h-h_old)/dt).ravel()+lap@v-target
+        interior=getattr(system,"interior_fuel_faces",None)
+        if interior is not None:
+            # Deferred nonorthogonal face heat is recomputed using
+            # current nonlinear T/k, with opposite signs to both
+            # physical cutcells. The symmetric positive Jacobian uses
+            # only the true normal-distance TPFA; the correction is
+            # checked in the full residual and damping line search.
+            k=p.fuel_k_w_m_k.at(temp)
+            _,skew,_=nonorthogonal_face_heat_w(
+                interior,temp,k,
+                system.dz/system.model.transverse.axial_length_m)
+            f+=conservative_face_divergence_w(
+                interior,skew,system.nf).ravel()
         if not jacobian:
             return f,None
         cp=p.fuel_cp_j_kg_k.at(temp)
@@ -421,6 +447,13 @@ def advance_coupled_core(
             old_t,old_gas.temperature_k,
             old_gas.temperature_k[0,:],fsrc,
             np.zeros((nz,19)),sub_dt)
+        if model.interior_fuel_faces is not None:
+            # Interior full-correction only when requested explicitly;
+            # all earlier solvers retain their unmodified Stage53
+            # physical face conductance geometry.
+            system.interior_fuel_faces=model.interior_fuel_faces
+            system.lateral_geometry=(
+                model.interior_fuel_faces.modified_full_length_geometry_m)
         if coat_model is None:
             old_wall_s,old_wall_h=_wall_heat(
                 system,old_t,old_gas.temperature_k)

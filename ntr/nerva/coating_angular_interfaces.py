@@ -395,7 +395,8 @@ def angular_interface_power(
     r_mid=coating.geometric_mid_radius_m
     bore=coating.inner_radius_m
     if coating.fuel_wall_distance_model in (
-            "moment_normal_depth","moment_nonorthogonal_gradient"):
+            "moment_normal_depth","moment_nonorthogonal_gradient",
+            "moment_full_nonorthogonal"):
         dm=contacts.fuel_wall_moment_depth_m
         if dm is None or dm.shape!=contacts.fuel_outer_full_m2.shape:
             raise ValueError("missing physical fuel centroid/arc moment distances")
@@ -421,7 +422,8 @@ def angular_interface_power(
         raise ArithmeticError("unphysical angular coating contact resistance")
     jump=(fuel_temperature_k[:,fidx]-
           coating_temperature_k[:,channel,ai])
-    if coating.fuel_wall_distance_model=="moment_nonorthogonal_gradient":
+    if coating.fuel_wall_distance_model in (
+            "moment_nonorthogonal_gradient","moment_full_nonorthogonal"):
         jump=jump-nonorthogonal_fuel_wall_correction_k(
             contacts,fuel_temperature_k,fidx,rim.col)
     flow=arc/resistance*jump

@@ -84,7 +84,8 @@ def radial_interface_power(
     arc=dz[:,None]*rim.data[None,:]/length
     outer_mid=math.sqrt(edges[-2]*edges[-1])
     if coating.fuel_wall_distance_model in (
-            "moment_normal_depth","moment_nonorthogonal_gradient"):
+            "moment_normal_depth","moment_nonorthogonal_gradient",
+            "moment_full_nonorthogonal"):
         depth_map=contacts.fuel_wall_moment_depth_m
         if (depth_map is None or
                 depth_map.shape!=contacts.fuel_outer_full_m2.shape):
@@ -112,7 +113,8 @@ def radial_interface_power(
         raise ArithmeticError("nonphysical fuel/outer ZrC radial contact")
     jump=(fuel_temperature_k[:,cell]-
           coating_temperature_k[:,channel,angle,-1])
-    if coating.fuel_wall_distance_model=="moment_nonorthogonal_gradient":
+    if coating.fuel_wall_distance_model in (
+            "moment_nonorthogonal_gradient","moment_full_nonorthogonal"):
         jump=jump-nonorthogonal_fuel_wall_correction_k(
             contacts,fuel_temperature_k,cell,rim.col)
     flow=arc/outer_res*jump
