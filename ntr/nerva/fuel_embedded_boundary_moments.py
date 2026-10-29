@@ -179,6 +179,8 @@ def circular_arc_centroid_and_normal_cm(
 def fuel_wall_moment_normal_depth_m(
     fuel_centroid_cm:tuple[float,float],
     circular_arc:tuple[float,float,float,float,float],
+    *,
+    allow_nonorthogonal_negative:bool=False,
 ) -> tuple[float,float]:
     """Signed fuel-centroid-to-arc normal and tangential offsets in metres.
 
@@ -197,7 +199,8 @@ def fuel_wall_moment_normal_depth_m(
     vy=fuel_centroid_cm[1]-py
     normal=.01*(vx*ux+vy*uy)
     tangent=.01*(-vx*uy+vy*ux)
-    if normal<=0 or not math.isfinite(normal):
+    if not math.isfinite(normal) or (
+            normal<=0 and not allow_nonorthogonal_negative):
         raise ArithmeticError("nonpositive fuel-centroid normal distance to wall")
     if not math.isfinite(tangent):
         raise ArithmeticError("nonfinite nonorthogonal fuel-wall offset")
