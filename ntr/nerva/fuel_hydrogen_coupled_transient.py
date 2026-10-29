@@ -25,6 +25,11 @@ from .fuel_cutcell_axial_transport import AxialCutCellModel
 from .fuel_cutcell_nonlinear_enthalpy import (
     NonlinearThermalProperties, _NonlinearSystem,
 )
+from .resolved_coating_thermal import (
+    ResolvedCoatingModel, build_resolved_coating,
+    coating_interface_power, advance_coating_enthalpy,
+)
+from .fuel_cutcell_nonlinear_enthalpy import TemperatureTable
 from .hydrogen_transient_fvm import (
     ConservativeHydrogenState, HydrogenBoundary, TransientHydrogenModel,
     advance_transient_hydrogen, primitive,
@@ -36,6 +41,7 @@ class CoupledCoreState:
     """Fuel temperatures [z,physical fuel cut cell]; fluid conserved [z,19,3]."""
     fuel_temperature_k: np.ndarray
     hydrogen: ConservativeHydrogenState
+    coating_temperature_k: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,11 @@ class CoupledCoreResult:
     first_law_residual_j: float
     relative_first_law_residual: float
     maximum_hydrogen_mach: float
+    coating_storage_change_j: float = 0.
+    coating_deposition_j: float = 0.
+    fuel_to_coating_j: float = 0.
+    coating_to_hydrogen_j: float = 0.
+    coating_first_law_residual_j: float = 0.
 
 
 @dataclass(frozen=True)
@@ -63,6 +74,7 @@ class CoupledCoreModel:
     fluid: TransientHydrogenModel
     properties: NonlinearThermalProperties
     solid_density_kg_m3: np.ndarray
+    coating: ResolvedCoatingModel | None = None
 
     @property
     def nzone(self) -> int:
@@ -105,6 +117,25 @@ def build_coupled_core_model(
             or fluid.volume_m3.shape!=(ns,19)):
         raise ValueError("invalid H2 wall coupling layout")
     return CoupledCoreModel(config,solid,fluid,properties,rho.copy())
+
+
+def with_resolved_coating(
+    model: CoupledCoreModel,
+    *,
+    density_kg_m3: float,
+    heat_capacity: TemperatureTable,
+    contact_resistance_m2_k_w: object = 0.,
+) -> CoupledCoreModel:
+    """Enable coating mass and thermal contact within existing Stage58."""
+    coating=build_resolved_coating(
+        model.config,model.solid,density_kg_m3=density_kg_m3,
+        heat_capacity=heat_capacity,
+        contact_resistance_m2_k_w=contact_resistance_m2_k_w,
+    )
+    return CoupledCoreModel(
+        model.config,model.solid,model.fluid,model.properties,
+        model.solid_density_kg_m3,coating,
+    )
 
 
 def _wall_heat(
@@ -184,6 +215,7 @@ def advance_coupled_core(
     *, dt_s: float,
     fuel_deposition_w: object,
     hydrogen_deposition_w: object = 0.,
+    coating_deposition_w: object = 0.,
     boundary: HydrogenBoundary = HydrogenBoundary(),
     max_wall_iterations: int = 32,
     wall_relative_tolerance: float = 1e-9,
@@ -229,6 +261,27 @@ def advance_coupled_core(
     if (hsrc.shape!=(nz,19) or not np.all(np.isfinite(hsrc))
             or np.any(hsrc<0)):
         raise ValueError("hydrogen nuclear deposition must be nonnegative finite W [z,19]")
+    coat_model=model.coating
+    coating_src=np.asarray(coating_deposition_w,dtype=float)
+    if coating_src.ndim==0:
+        coating_src=np.full((nz,19),float(coating_src))
+    if (coating_src.shape!=(nz,19) or
+            not np.all(np.isfinite(coating_src)) or
+            np.any(coating_src<0)):
+        raise ValueError("coating nuclear deposition must be nonnegative W [z,19]")
+    if coat_model is None:
+        if initial.coating_temperature_k is not None or np.any(coating_src>0):
+            raise ValueError("cannot advance coating heat without resolved coating model")
+        tcoat=None
+        initial_coating_energy=0.
+    else:
+        if initial.coating_temperature_k is None:
+            raise ValueError("resolved coating temperature state required [z,19]")
+        tcoat=np.asarray(initial.coating_temperature_k,dtype=float).copy()
+        if tcoat.shape!=(nz,19) or not np.all(np.isfinite(tcoat)):
+            raise ValueError("coating state must have finite temperatures [z,19]")
+        initial_coating_energy=float(np.sum(
+            coat_model.mass_kg*coat_model.heat_capacity.integral(tcoat)))
     gas0=primitive(model.fluid,initial.hydrogen)
     pgas=gas0
     speed=float(np.max(
@@ -248,6 +301,9 @@ def advance_coupled_core(
     area=np.zeros((nz,19))
     qtotal=0.
     hydrogen_qtotal=np.zeros((nz,19),dtype=float)
+    coating_qtotal=0.
+    coating_in_j=0.
+    coating_out_j=0.
     outflow_net=0.
     max_iters=0
     initial_fluid_energy=float(np.sum(
@@ -261,19 +317,27 @@ def advance_coupled_core(
         old_t=t.copy()
         old_h=hydrogen
         old_gas=primitive(model.fluid,old_h)
+        old_coating=None if coat_model is None else tcoat.copy()
         system=_NonlinearSystem(
             model.solid,model.config,model.properties,rho,
             old_gas.density_kg_m3*model.fluid.volume_m3,
             old_t,old_gas.temperature_k,
             old_gas.temperature_k[0,:],fsrc,
             np.zeros((nz,19)),sub_dt)
-        old_wall_s,old_wall_h=_wall_heat(
-            system,old_t,old_gas.temperature_k)
-        candidate_h=old_wall_h.copy()
-        candidate_s=old_wall_s.copy()
+        if coat_model is None:
+            old_wall_s,old_wall_h=_wall_heat(
+                system,old_t,old_gas.temperature_k)
+            candidate_h=old_wall_h.copy()
+            candidate_s=old_wall_s.copy()
+            candidate_coating_in=None
+        else:
+            candidate_s,candidate_coating_in,candidate_h=coating_interface_power(
+                coat_model,model.solid,model.properties,
+                old_t,old_coating,old_gas.temperature_k)
         converged=False
         final_solid=None
         final_hydrogen=None
+        final_coating=None
         final_step=None
         for iteration in range(1,max_wall_iterations+1):
             trial_fluid=advance_transient_hydrogen(
