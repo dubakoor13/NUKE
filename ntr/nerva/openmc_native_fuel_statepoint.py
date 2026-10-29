@@ -34,7 +34,10 @@ import re
 import h5py
 import numpy as np
 
-from .openmc_fuel_axial_heat_handoff import (\n    OpenMCAxialFuelHeating, ResolvedFuelHeatingInput,\n    project_openmc_axial_fuel_heating,\n)
+from .openmc_fuel_axial_heat_handoff import (
+    OpenMCAxialFuelHeating, ResolvedFuelHeatingInput,
+    project_openmc_axial_fuel_heating,
+)
 
 _SHA256 = re.compile(r"^[a-fA-F0-9]{64}$")
 _EXPECTED_TALLY = "nerva_3d_fuel_heating"
