@@ -143,7 +143,7 @@ def nonorthogonal_face_heat_w(
     t=np.asarray(fuel_temperature_k,dtype=float)
     k=np.asarray(conductivity_w_m_k,dtype=float)
     frac=np.asarray(axial_fraction,dtype=float)
-    if (t.ndim!=2 or k.shape!=t or
+    if (t.ndim!=2 or k.shape!=t.shape or
             t.shape[1]!=faces.gradient.centroids_cm.shape[0] or
             frac.shape!=(t.shape[0],) or
             not all(np.all(np.isfinite(x)) for x in (t,k,frac)) or
