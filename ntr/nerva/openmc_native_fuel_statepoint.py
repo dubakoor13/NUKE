@@ -59,6 +59,9 @@ class NativeFuelHeatingTally:
     source_mesh_stderr_ev_per_source: np.ndarray
     statepoint_sha256: str
     openmc_version: tuple[int,int,int]
+    statepoint_format_version: tuple[int,int]
+    current_batch: int
+    energy_mode: str
     photon_transport_verified_disabled: bool
     n_batches: int
     n_inactive: int
@@ -165,14 +168,26 @@ def _metadata_list(dataset: object) -> list[str]:
 def _validate_file_and_tally(hdf: h5py.File, fuel_id: int) -> tuple[h5py.Group,int,tuple[int,int,int],np.ndarray,np.ndarray]:
     if "filetype" not in hdf.attrs or _scalar_string(hdf.attrs["filetype"])!="statepoint":
         raise ValueError("not a native OpenMC statepoint HDF5 file")
-    # OpenMC's StatePoint checks HDF5 schema version 18 in the
-    # supported OpenMC 0.15/0.16 format. A "statepoint" label is not enough.
+    # OpenMC's actual state_point.cpp writes VERSION_STATEPOINT as a
+    # std::array<int, 2>, currently [18, 2]. The OpenMC Python reader
+    # checks the major version [0] for compatibility; a scalar 18 is
+    # NOT a valid native statepoint version.
     if "version" not in hdf.attrs:
         raise ValueError("native OpenMC statepoint schema version missing")
     schema=np.asarray(hdf.attrs["version"])
-    if (schema.ndim!=0 or not np.issubdtype(schema.dtype,np.integer)
-            or int(schema)!=18):
-        raise ValueError("unsupported native OpenMC statepoint HDF5 schema version")
+    if (schema.shape!=(2,)
+            or not np.issubdtype(schema.dtype,np.integer)
+            or int(schema[0])!=18 or int(schema[1])<0):
+        raise ValueError(
+            "unsupported native OpenMC statepoint HDF5 [major,minor] "
+            "schema version")
+    # Energy units and tally estimator semantics differ across transport
+    # regimes. Only continuous-energy eigenvalue heating is accepted.
+    if ("energy_mode" not in hdf
+            or _scalar_string(hdf["energy_mode"][()])!="continuous-energy"):
+        raise ValueError("native continuous-energy transport evidence required")
+    if "current_batch" not in hdf:
+        raise ValueError("native statepoint current_batch metadata missing")
     if "run_mode" not in hdf or _scalar_string(hdf["run_mode"][()])!="eigenvalue":
         raise ValueError("only original OpenMC eigenvalue source-normalized tallies supported")
     # These fields are written by the OpenMC kernel itself. Caller-supplied
@@ -199,8 +214,10 @@ def _validate_file_and_tally(hdf: h5py.File, fuel_id: int) -> tuple[h5py.Group,i
     if any(key not in hdf for key in required):
         raise ValueError("native source generation and particle metadata missing")
     batches,inactive,particles=(int(hdf[name][()]) for name in required)
-    if batches<2 or not 0<=inactive<batches or particles<=0:
-        raise ValueError("invalid source batches, inactive count or particle population")
+    current=int(hdf["current_batch"][()])
+    if (batches<2 or not 0<=inactive<batches or particles<=0
+            or not 1<=current<=batches or current<=inactive):
+        raise ValueError("invalid source batches, current batch, inactive count or particle population")
 
     if "tallies" not in hdf or "tallies_present" not in hdf.attrs or int(hdf.attrs["tallies_present"])!=1:
         raise ValueError("native statepoint does not contain user tally data")
@@ -318,7 +335,9 @@ def read_openmc_neutron_fuel_statepoint(
         n=int(tally["n_realizations"][()])
         if n<2:
             raise ValueError("cannot derive tally uncertainty from fewer than two realizations")
-        active=int(hdf["n_batches"][()])-int(hdf["n_inactive"][()])
+        # A statepoint may be written in the middle of a run. The
+        # programmed n_batches is NOT its completed-current_batch.
+        active=int(hdf["current_batch"][()])-int(hdf["n_inactive"][()])
         if n>active:
             raise ValueError("native fuel tally realizations exceed active eigenvalue batches")
         scores=_metadata_list(tally["score_bins"][()])
@@ -371,6 +390,9 @@ def read_openmc_neutron_fuel_statepoint(
             source_mesh_stderr_ev_per_source=err,
             statepoint_sha256=file_sha,
             openmc_version=tuple(int(x) for x in hdf.attrs["openmc_version"][:3]),
+            statepoint_format_version=tuple(int(x) for x in hdf.attrs["version"]),
+            current_batch=int(hdf["current_batch"][()]),
+            energy_mode=_scalar_string(hdf["energy_mode"][()]),
             photon_transport_verified_disabled=True,
             n_batches=int(hdf["n_batches"][()]),
             n_inactive=int(hdf["n_inactive"][()]),
