@@ -50,7 +50,7 @@ jobs:
           from ntr.nerva.validate_stage59_core_refinement_heating import input_heating
           from ntr.nerva.validate_stage58_fuel_hydrogen_coupling import coupled
           from ntr.nerva.openmc_fuel_axial_heat_handoff import project_openmc_axial_fuel_heating
-          m=coupled(film=0.,nz=4,nx=16,ny=20)
+          m=coupled(film=0.,nz=4,nx=20,ny=24)
           score=input_heating()
           p=project_openmc_axial_fuel_heating(m.solid,score)
           print('Stage59 source axial bins:',len(p.source_axial_bin_w))
