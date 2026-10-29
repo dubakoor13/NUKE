@@ -21,6 +21,7 @@ from .coating_mesh_convergence import (
 from .fuel_cutcell_nonlinear_enthalpy import TemperatureTable
 from .fuel_hydrogen_coupled_transient import with_resolved_coating
 from .validate_stage58_fuel_hydrogen_coupling import coupled,initial
+from .hydrogen_transient_fvm import make_state
 
 
 BASE=CoupledMeshResolution(
@@ -49,9 +50,36 @@ def physical_fixture(mesh:CoupledMeshResolution):
         axial_conduction_enabled=True,
         angular_sectors=mesh.angular_sectors,
         radial_layers=mesh.radial_layers)
+    # Same CONTINUOUS nonuniform initial T(z,theta,r) on every mesh.
+    # This makes axial, azimuthal AND radial refinements physically
+    # informative: a uniform initial state made the old axial comparison
+    # trivially identical. The gas initial state is created from the
+    # authoritative EOS at constant pressure, not prescribed density.
+    zedge=np.asarray(model.solid.axial_edges_m)
+    zcenters=.5*(zedge[:-1]+zedge[1:])
+    zeta=(zcenters-zedge[0])/(zedge[-1]-zedge[0])-.5
+    aa=np.asarray(model.angular_coating.angular_edges_rad)
+    # Exact average of cos(theta) over each angular sector.
+    angular_cos=(np.sin(aa[1:])-np.sin(aa[:-1]))/np.diff(aa)
+    radial_edges=np.asarray(model.radial_coating.radius_edges_m)
+    radii=np.sqrt(radial_edges[1:]*radial_edges[:-1])
+    scaled_radius=(
+        (radii-.5*(radial_edges[0]+radial_edges[-1]))
+        /(radial_edges[-1]-radial_edges[0]))
+    tf=505.+40.*zeta[:,None]*np.ones(
+        (1,model.solid.transverse.n_fuel))
+    tgas=395.+12.*zeta[:,None]*np.ones((1,19))
+    tcoat=(455.+24.*zeta[:,None,None,None]
+           +12.*angular_cos[None,None,:,None]
+           +8.*scaled_radius[None,None,None,:])
+    tcoat=np.broadcast_to(
+        tcoat,model.radial_coating.sector_mass_kg.shape).copy()
     state=initial(model,tf=505.,th=395.)
-    state=replace(state,coating_temperature_k=np.full(
-        model.radial_coating.sector_mass_kg.shape,455.))
+    state=replace(
+        state,fuel_temperature_k=tf,
+        hydrogen=make_state(
+            model.fluid,pressure_pa=3e6,temperature_k=tgas),
+        coating_temperature_k=tcoat)
     return model,state
 
 
