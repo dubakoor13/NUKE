@@ -281,8 +281,13 @@ def read_native_19_channel_hydrogen_heating(
                     (sx,sy,sz),order="F")
                 margins[:,:,:,channel,particle]=err[:,channel,particle].reshape(
                     (sx,sy,sz),order="F")
-        if (np.any(native[area<=1e-13,:]>1e-12)
-                or np.any(margins[area<=1e-13,:]>1e-12)):
+        # Source geometry mask is [x,y,channel]; move channel ahead
+        # of axial and particle dimensions before applying it.
+        outside=area<=1e-13
+        ordered_native=np.transpose(native,(0,1,3,2,4))
+        ordered_errors=np.transpose(margins,(0,1,3,2,4))
+        if (np.any(ordered_native[outside]>1e-12)
+                or np.any(ordered_errors[outside]>1e-12)):
             raise ValueError("hydrogen heating scored outside physical channel bore")
         zsrc=np.linspace(0.,(upper[2]-lower[2])/100.,sz+1)
         overlap=build_axial_overlap_m(zsrc,model.solid.axial_edges_m)
