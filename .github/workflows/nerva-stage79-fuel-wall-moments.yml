@@ -107,6 +107,15 @@ jobs:
               study=run_fuel_xy_convergence(factory,base_mesh=BASE,
                   heating=HEAT,xy_sizes=GRIDS)
               print('Stage79 wall policy:',name)
+              if name.startswith('Stage79'):
+                  m,_=factory(BASE)
+                  contact=m.angular_contacts
+                  print('Stage79 physical nonorthogonal signed normal faces:',
+                        int((contact.fuel_wall_signed_normal_depth_m.data<=0).sum()))
+                  print('Stage79 arc fragments using area/volume fallback:',
+                        contact.nonorthogonal_wall_fallback_count)
+                  print('Stage79 maximum absolute tangential wall offset [m]:',
+                        abs(contact.fuel_wall_tangential_offset_m.data).max())
               for k in (
                   'fuel_peak_k','coating_peak_k',
                   'fuel_outer_wall_peak_abs_w_m2',
