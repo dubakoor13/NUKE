@@ -88,7 +88,7 @@ class HistoricalFuelTieAnalyticMathTests(unittest.TestCase):
         self.assertEqual(_fuel_expected(0.,0.,c),"hydrogen")
         self.assertEqual(_fuel_expected(c.channel_radius_cm+0.0025,0.,c),"zrc")
         self.assertEqual(_fuel_expected(0.2,0.,c),"fuel")
-        self.assertEqual(_fuel_expected(0.,c.fuel_flat_to_flat_cm/2-0.0025,c),"zrc")
+        self.assertEqual(_fuel_expected(c.fuel_flat_to_flat_cm/2-0.0025,0.,c),"zrc")
         with self.assertRaisesRegex(ValueError,"outside"):
             _fuel_expected(0.,self.c.fuel_flat_to_flat_cm,c)
 
@@ -101,7 +101,7 @@ class HistoricalFuelTieAnalyticMathTests(unittest.TestCase):
         self.assertEqual(_tie_expected(0.60,0.,c),"hydrogen")
         self.assertEqual(_tie_expected(0.81,0.,c),"void")
         self.assertEqual(_tie_expected(0.85,0.,c),"graphite")
-        self.assertEqual(_tie_expected(0.,c.fuel_flat_to_flat_cm/2-0.0025,c),"zrc")
+        self.assertEqual(_tie_expected(c.fuel_flat_to_flat_cm/2-0.0025,0.,c),"zrc")
 
     def test_single_geometry_reference_does_not_claim_historical_k_watts(self):
         result=audit_one_historical_element_reference(c=self.c,sample_count=200)
