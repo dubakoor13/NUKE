@@ -16,7 +16,9 @@ from dataclasses import dataclass
 import math
 import numpy as np
 
-from .coating_angular_interfaces import AngularCoatingInterfaces
+from .coating_angular_interfaces import (
+    AngularCoatingInterfaces,nonorthogonal_fuel_wall_correction_k,
+)
 from .coating_radial_fvm import RadialCoatingMesh
 from .fuel_cutcell_axial_transport import AxialCutCellModel
 from .fuel_cutcell_nonlinear_enthalpy import NonlinearThermalProperties
@@ -81,7 +83,8 @@ def radial_interface_power(
     angle=(rim.col%na).astype(int)
     arc=dz[:,None]*rim.data[None,:]/length
     outer_mid=math.sqrt(edges[-2]*edges[-1])
-    if coating.fuel_wall_distance_model=="moment_normal_depth":
+    if coating.fuel_wall_distance_model in (
+            "moment_normal_depth","moment_nonorthogonal_gradient"):
         depth_map=contacts.fuel_wall_moment_depth_m
         if (depth_map is None or
                 depth_map.shape!=contacts.fuel_outer_full_m2.shape):
@@ -107,8 +110,12 @@ def radial_interface_power(
                +coating.contact_resistance_m2_k_w[:,channel])
     if np.any(outer_res<=0) or not np.all(np.isfinite(outer_res)):
         raise ArithmeticError("nonphysical fuel/outer ZrC radial contact")
-    flow=arc/outer_res*(
-        fuel_temperature_k[:,cell]-coating_temperature_k[:,channel,angle,-1])
+    jump=(fuel_temperature_k[:,cell]-
+          coating_temperature_k[:,channel,angle,-1])
+    if coating.fuel_wall_distance_model=="moment_nonorthogonal_gradient":
+        jump=jump-nonorthogonal_fuel_wall_correction_k(
+            contacts,fuel_temperature_k,cell,rim.col)
+    flow=arc/outer_res*jump
     fuel_out=np.zeros((nzone,nfuel))
     to_radial=np.zeros(expected)
     for iz in range(nzone):
