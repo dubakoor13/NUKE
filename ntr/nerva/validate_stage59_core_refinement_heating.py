@@ -156,6 +156,26 @@ class ConservationAndSourceEvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_heating_for_coupled_core(mapping,bad)
 
+    def test_stale_same_shape_heating_geometry_is_rejected(self):
+        from dataclasses import replace
+        mapping=project_openmc_axial_fuel_heating(
+            self.m.solid,input_heating())
+        # The same [nz,nfuel] shape is insufficient to establish that
+        # projected watts belong to this exact physical z/area mesh.
+        other_edges=np.array([0.,.2,.5,.9,1.32])
+        other=replace(
+            self.m,solid=replace(self.m.solid,axial_edges_m=other_edges))
+        with self.assertRaisesRegex(ValueError,"different fuel geometry"):
+            check_heating_for_coupled_core(mapping,other)
+        other_area=self.m.solid.transverse.fuel_areas_cm2.copy()
+        other_area[0]*=1.0001
+        other=replace(
+            self.m,solid=replace(self.m.solid,
+                transverse=replace(self.m.solid.transverse,
+                    fuel_areas_cm2=other_area)))
+        with self.assertRaisesRegex(ValueError,"different fuel geometry"):
+            check_heating_for_coupled_core(mapping,other)
+
 
 class IndependentCoupledRefinementTests(unittest.TestCase):
     def test_timestep_refinement_of_nontrivial_sealed_exchange(self):
