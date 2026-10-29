@@ -1,0 +1,73 @@
+name: NUKE Stage54 axial cut-cell fuel and hydrogen conservation
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/fuel_cutcell_axial_transport.py'
+      - 'ntr/nerva/validate_stage54_fuel_cutcell_axial_transport.py'
+      - '.github/workflows/nerva-stage54-axial-fuel-hydrogen.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/fuel_cutcell_axial_transport.py'
+      - 'ntr/nerva/validate_stage54_fuel_cutcell_axial_transport.py'
+      - '.github/workflows/nerva-stage54-axial-fuel-hydrogen.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  coupled-axial-physics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install numerical runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2'
+      - name: Run axial 3D fuel/1D hydrogen energy-conservation tests
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Print numerical geometry and residual diagnostics
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.config import NervaConfig
+          from ntr.nerva.fuel_cutcell_conduction_2d import build_cutcell_fuel_2d
+          from ntr.nerva.fuel_cutcell_axial_transport import (
+              build_axial_cutcell_model,advance_axial_cutcell)
+          b=build_cutcell_fuel_2d(
+              NervaConfig(),nx=48,ny=56,conductivity_w_m_k=12.,
+              density_kg_m3=1000.,heat_capacity_j_kg_k=1000.,
+              zrc_conductivity_w_m_k=20.,hydrogen_film_w_m2_k=1800.)
+          m=build_axial_cutcell_model(
+              b,axial_edges_m=np.linspace(0.,b.axial_length_m,5),
+              solid_axial_conductivity_w_m_k=12.,
+              hydrogen_mass_kg=.01,hydrogen_cp_j_kg_k=1000.,
+              hydrogen_mass_flow_kg_s=.006,hydrogen_flow_cp_j_kg_k=1000.)
+          q=1.e6*m.solid_volume_m3
+          result=advance_axial_cutcell(
+              m,np.full_like(m.solid_volume_m3,300.),
+              np.full((m.axial_zones,19),300.),
+              dt_s=.15,fuel_source_w=q,
+              hydrogen_source_w=np.zeros((m.axial_zones,19)),
+              inlet_hydrogen_temperature_k=300.)
+          print('Stage54 active 2D cut cells:',b.n_fuel)
+          print('Stage54 axial layers:',m.axial_zones)
+          print('Stage54 3D fuel unknowns:',m.fuel_unknowns)
+          print('Stage54 hydrogen unknowns:',m.hydrogen_unknowns)
+          print('Stage54 exact total fuel volume [m3]:',m.solid_volume_m3.sum())
+          print('Stage54 fuel/H2 global first law residual [J]:',
+                result.conservation_residual_j)
+          print('Stage54 relative energy residual:',result.relative_conservation_residual)
+          assert m.fuel_unknowns==4*b.n_fuel
+          assert result.relative_conservation_residual<5e-9
+          PY
