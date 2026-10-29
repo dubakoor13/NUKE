@@ -1,0 +1,307 @@
+# NUKE / NERVA — Reactor-core physics and numerics: detailed remaining TODO
+
+**Scope:** the user's "first one": the remaining **reactor-core physics and numerical implementation**, not full engine-cycle completion.  
+**Assessment date:** 2026-10-29.  
+**Code basis:** Stage57 branch `feature/nerva-stage57-transient-hydrogen-conservation-20261029`; upstream Stages 51–57 are stacked and may **not be merged into `main`**.  
+**Estimated unfinished implementation:** **30–40% of the specifically scoped core physics/numerics work**, a qualitative planning estimate, NOT a measured percentage.  
+**Separate physical-validation debt:** much larger; green synthetic unit tests cannot establish a NASA-qualified hot NERVA core.
+
+## Status and ground rules
+
+Use `[x]` only for code actually implemented *and tested in the identified revision*; use `[ ]` for work still requiring implementation, integration or acceptable evidence. A checked feature may be **verified numerically but not validated physically**.
+
+**Existing components to reuse, not duplicate:**
+
+- Stage51: `geometry.py`, `fuel_sector_geometry.py`: actual six clipped ZrC channel footprints and OpenMC CSG ownership; corrected fuel mass.
+- Stage52: `fuel_sector_conduction_2d.py`: coarse 19-volume symmetric lateral-heat operator.
+- Stage53: `fuel_cutcell_conduction_2d.py`: exact cut-cell areas, physical fuel-only face conductances, 19 fuel/ZrC interfaces, coupled implicit thermal step.
+- Stage54: `fuel_cutcell_axial_transport.py`: axial solid conduction and per-channel H2 upwinding.
+- Stage55: `fuel_cutcell_nonlinear_enthalpy.py`: bounded tabulated `cp(T)`, `k(T)`, film properties, nonlinear solver, enthalpy-based hydrogen transport.
+- Stage56: `hydrogen_channel_hydraulics.py`: 19-channel ideal-H2 steady compressible pressure, density, velocity and friction.
+- Stage57: `hydrogen_transient_fvm.py`: *separate* 19-channel conservative transient `rho`, `rho*u`, `rho*E` finite-volume flow solver with prescribed external wall heating.
+- Existing OpenMC and source/thermal code: `model.py`, `run_openmc_transport.py`, `openmc_cycle_coupling.py`, `fx2th_conjugate_fuel_transport.py`, `thermal_flow_coupling.py`, plus existing neutronic diagnostics/kinetics.
+- Stage57 focused CI: 76 Stage52–57 synthetic/regression tests passed; **this is not a coupled hot-core validation**.
+
+**Mandatory implementation conventions**
+
+1. **Do not create a parallel independent NERVA core solver** when extending an existing module suffices. Maintain one authoritative integration entry point.
+2. Preserve original physical geometry/material identities while building numerical capability. Do **not** quietly tune enrichment, control drums, reflector or source normalization to make outputs look realistic.
+3. The fluid energy state is conserved **total energy** in Stage57; the solid energy state is **integrated internal enthalpy / heat capacity** from Stage55. Do not advance both Stage55's H2 unknowns and Stage57's H2 unknowns for the same fluid during one timestep.
+4. Every energy-flow term has one producer, one consumer and unit checks. Transported total energy must include kinetic energy; fluid pressure work is already in the Euler energy flux, not an extra wall-energy source.
+5. Distinguish **[implemented]**, **[numerically verified]**, **[evaluated-data qualified]**, **[physically validated]** in tests and reports. Never substitute synthetic watts or surrogate gas properties for the latter two.
+6. Test cases must report exact source code revision, geometry, property-data provenance, nuclear-data library and operating-domain limits.
+7. Do not delete existing alternatives until the replacement agrees with their documented physical limits and regression tests.
+
+## Priority / dependency map
+
+| Priority | Track / intended next stage | Dependency | Deliverable / exit condition |
+|---|---|---|---|
+| **P0** | **C01 — Stage58 coupled fuel + H2** | Stage55 + Stage57 | One energy-conservative transient solid/H2 step; pressure/temperature feedback actually exercised |
+| **P0** | **C02 — Transport-to-thermal heating** | OpenMC statepoint + geometry consistency | Genuine, provenance-bearing heating field maps conservatively into fuel, coating, coolant/ties |
+| **P0** | **C03 — Hot neutron-data qualification** | transport preflight | All required isotopes/material temperatures covered by real evaluated neutron data; explicit rejection otherwise |
+| **P0** | **C04 — Neutronic–thermal iteration** | C01–C03 | State-dependent source/heating, temperature and density iteration converges or fails explicitly |
+| **P1** | C05 — Resolved solid geometry/contact | C01 | Coating/fuel interfaces and axial/radial conduction with mesh-error evidence |
+| **P1** | C06 — Thermophysical real-H2 path | C01 | qualified pressure-dependent EOS and energy derivatives within a documented domain |
+| **P1** | C07 — Neutron source and kinetics verification | C02–C04 | independent-seed source/heating uncertainty, consistent source normalization and kinetics limits |
+| **P1** | C08 — Robust core numerics | C01–C07 | manufactured solutions, conservation, grid/time-step tests, failure handling |
+| **P2** | C09 — Core-only integration/reproducibility | all tracks | one canonical runnable pipeline, pinned inputs, reference results and CI acceptance |
+| **Separate** | C10 — Historical reactor-core validation | above + selected NASA baseline | quantitative benchmark matrix; **not counted as completed by the coding checklist** |
+
+The table is **dependency order**, not evidence that any later stage has been implemented.
+
+---
+
+## C01 — Stage58: physically conservative transient fuel/H2 thermal coupling (P0, START HERE)
+
+**Current real gap:** Stage55 solves a fully coupled *fuel plus H2 enthalpy* thermal system with fixed H2 zone masses; Stage57 separately solves *H2 compressible mass, momentum and total energy* with **externally prescribed wall watts**. They have not been made into a common time advance. Simply calling both would double-advance hydrogen energy and generally violate conservation.
+
+### C01A. Define a shared physical interface
+
+- [ ] **C01.01** Specify the definitive state object: solid temperature per `(axial slab, fuel cut-cell)`; H2 conservative `(rho, rho*u, rho*E)` per `(axial slab, channel)`; optional coating thermal state; simulation time.
+- [ ] **C01.02** Establish one authoritative mapping between axial edges in Stage54/55 and Stage57. Reject mismatched lengths or number of cells instead of interpolating silently.
+- [ ] **C01.03** Reuse Stage53's *exact* fuel/ZrC contact arc area matrix, applied to all axial slabs; preserve the six outer-hex-clipped channel footprints.
+- [ ] **C01.04** Standardize physical units: W/K interface conductance, W per fluid channel/slab, J stored, Pa, K, kg, m/s, m², m³; validate dimensions and 19 channel indices.
+- [ ] **C01.05** Ensure each fuel cut-cell wall contact contributes to exactly one H2 channel and each channel receives exactly the sum of contacting solid-wall transfers.
+- [ ] **C01.06** Expose `H2` thermodynamic quantities (T, rho, p, velocity, internal energy) by conversion from **Stage57's conserved state only**.
+- [ ] **C01.07** Separate Stage55's *solid-only* thermal residual/solve from its legacy coupled H2 enthalpy residual. Preserve the old solver as a tested constant-volume limiting case, not as a second active fluid integrator.
+- [ ] **C01.08** Supply the same wall heat `Q_wall[z,ch]` as a negative source to solid energy and a positive source to Stage57 total energy, with no extra `cp(T)*dT` coolant update.
+
+### C01B. Integrate numerical timestep and feedback
+
+- [ ] **C01.09** Implement a clearly named coupled-step entry point, e.g. `advance_fuel_hydrogen_core(...)`, with explicit initial state, external deposited heat and boundary data.
+- [ ] **C01.10** Support at least one stable *partitioned* scheme: predictor wall transfer, transient-fluid advance, updated fluid T, solid implicit solve, iterate wall transfer until convergence.
+- [ ] **C01.11** Ensure H2 pressure/density changes alter flow-state thermodynamics used for wall convection and fluid storage, not only displayed diagnostics.
+- [ ] **C01.12** Recalculate fuel conductivity and heat capacity from Stage55's bounded property tables at each nonlinear iteration; reject extrapolation.
+- [ ] **C01.13** Recalculate coating conductivity and fluid-side heat-transfer coefficient from valid material/fluid states, documenting the present approximate wall-transfer resistance.
+- [ ] **C01.14** Use Stage57's acoustic CFL condition and explicit subcycling as necessary, while retaining longer implicit solid thermal steps.
+- [ ] **C01.15** Ensure total prescribed fuel/neutron deposition to the solid is divided among substeps **once**; do not apply full-step watts repeatedly as energy.
+- [ ] **C01.16** Ensure wall heat transfer subcycles are conservative even when H2 timesteps differ from fuel timesteps: `sum(Q_fuel_wall*dt) + sum(Q_H2_wall*dt)=0` after summing all substeps.
+- [ ] **C01.17** Provide convergence norms for solid T, coolant T, wall-heat integral, and global first-law balance; do not claim convergence from one variable alone.
+- [ ] **C01.18** Handle iteration failure deterministically: backtrack/halve `dt` or abort with diagnostic fields; do **not** accept unconverged temperatures/negative pressures.
+- [ ] **C01.19** Include explicit physical flow-direction treatment at both channel ends. Stage57 wall/transmissive/simple-reservoir boundaries are not characteristic boundary conditions.
+- [ ] **C01.20** Enforce that solid, coating (if modeled), fluid and external fluxes are counted exactly once in the balance budget.
+- [ ] **C01.21** Provide the reverse control-volume budget: power deposited to solid minus solid storage equals wall transfer + any declared external flux; fluid storage + outlet total-energy flow minus inlet total-energy flow equals wall transfer and other declared fluid sources.
+
+### C01C. Required Stage58 tests
+
+- [ ] **C01.22** *Isolated adiabatic equilibrium:* uniform solid/fluid T and zero flow/heating stay stationary for repeated timesteps.
+- [ ] **C01.23** *Sealed thermal equilibration:* hot solid/cold hydrogen approach equilibrium with **constant total** solid + fluid thermal/kinetic energy.
+- [ ] **C01.24** *Uniform distributed heating:* analytically prescribed fuel watts cause exactly the specified integrated energy rise without double counting.
+- [ ] **C01.25** *Selective channel heating:* heat one contact region; only physically connected fluid passage receives direct wall energy, and lateral solid spreading follows the Stage53 operator.
+- [ ] **C01.26** *Pressure-feedback exercise:* wall heating changes hydrogen T and p in a sealed passage, and this changed state is used on the next wall-heat iteration.
+- [ ] **C01.27** *Open-flow energy accounting:* report H2 inlet/outlet **total** energy including enthalpy/kinetic terms, and compare to solid source and storage.
+- [ ] **C01.28** *Zero-wall-conductance limit:* recovers independent Stage55 **solid-only** conduction plus Stage57 standalone hydrogen dynamics.
+- [ ] **C01.29** *Low-speed fixed-density limit:* reproduces Stage54/55 constant-property reference, within discretization and energy-variable differences.
+- [ ] **C01.30** *Axial thermal pulse:* resolve downstream advection plus axial solid conduction and verify direction and conservation.
+- [ ] **C01.31** *Time-step/subcycling sensitivity:* compare `dt`, `dt/2`, `dt/4` using a fixed reference setup; report errors instead of pass/fail alone.
+- [ ] **C01.32** *Wall-contact mapping:* sum Stage53 interface areas and wall-energy transfers independently before/after thermal-flow integration.
+- [ ] **C01.33** *Invalid-domain tests:* reject out-of-range T, negative densities/pressures, exceeded Mach/CFL, failed nonlinear iteration, empty source, mismatched meshes.
+- [ ] **C01.34** Run Stage52–57 regression suites unchanged; ensure Stage58 new tests do not mask earlier failures.
+
+**Stage58 definition of done:** a runnable *single* transient fuel-plus-19-channel hydrogen simulation, one authoritative H2 state, visible pressure/temperature feedback, demonstrated global/local energy closure, passing limiting-case and refinement tests. This is **numerical verification**, not a NASA-hot-core qualification.
+
+---
+
+## C02 — Genuine OpenMC deposited-heating coupling to the physical fuel volumes (P0)
+
+**Existing:** OpenMC statepoint/tally tools and multiple real transport/source-investigation experiments exist; Stage51–57 geometric/thermal volumes are usable. **Not demonstrated as a fully qualified, reactor-power-driven coupled hot core.**
+
+- [ ] **C02.01** Define a canonical source-data contract including OpenMC statepoint path, geometry/material hash, cross-section library metadata, batch/seed, estimator type and tally normalization.
+- [ ] **C02.02** Explicitly distinguish tally output *per starting/source neutron* from an independently justified physical power [W].
+- [ ] **C02.03** Extract separate neutron and photon deposited-heating components where the chosen scored physics requires both; report missing contributions rather than silently equating neutron-only heating to total reactor watts.
+- [ ] **C02.04** Preserve tally mean, standard deviation, covariance or correctly documented unavailable covariance through mapping.
+- [ ] **C02.05** Map HDF5 fuel-element instance and axial heating into each physical Stage53 cut-cell and Stage54 axial slab using an explicit overlap/conservation operator.
+- [ ] **C02.06** Do not uniformly smear a coarse tally into fine local cells without labeling the assumed reconstruction and its unresolved spatial error.
+- [ ] **C02.07** Include coating, tie-tube, structural and coolant energy-deposition channels only where distinct physical OpenMC material/cell tallies actually support them; retain an explicit `unresolved` bucket otherwise.
+- [ ] **C02.08** Detect and reject identical geometry instance indices mistakenly counted twice, including the six formerly overlapping ZrC caps.
+- [ ] **C02.09** Confirm mesh/tally volume weighting and flux-source mapping respect the 132-cm axial length and actual fuel-only volumes.
+- [ ] **C02.10** Check `sum(mapped heat) + unresolved = justified total deposited heat` within reported stochastic and numerical uncertainties; never force closure through arbitrary residual rescaling.
+- [ ] **C02.11** Explicitly record external physical normalization inputs (actual reactor power/energy balance), with uncertainty and source. Invalid/absent inputs must produce a hard failure or *per-source-particle* diagnostic mode, not fake watts.
+- [ ] **C02.12** Expose one typed heating interface directly consumable by Stage58; avoid five competing adapters that each have a different normalization convention.
+- [ ] **C02.13** Test 1-bin, nonuniform 3D, and mixed cell/mesh instances with exactly integrable synthetic watt patterns.
+- [ ] **C02.14** Test actual OpenMC HDF5 availability/provenance and rejected incomplete photon/evaluated-data cases independently from synthetic-only CI.
+
+**Exit:** physically traceable and uncertainty-bearing *genuine transport* heat can reach the same fuel/H2 volumes without changing total deposition.
+
+---
+
+## C03 — Evaluated-data and actual hot neutron transport qualification (P0)
+
+**Existing:** OpenMC hot-temperature preflight and explicit evaluated-data testing have advanced significantly (including actual interpolation experiments); cold-only nuclear libraries and unsupported temperature points must still be rejected. A successful hot neutron run is not automatically a validated NERVA reactor.
+
+- [ ] **C03.01** Freeze a physically identifiable *reference reactor configuration* before declaring any meaningful core operating-point calculation; distinguish its literature evidence from development surrogates.
+- [ ] **C03.02** Inventory **all** isotopes appearing in occupied transport materials, with density, nuclide composition and relevant neutron/photon reactions.
+- [ ] **C03.03** Record provenance and SHA of evaluated neutron and secondary-photon datasets, plus OpenMC transport version and temperature interpolation method.
+- [ ] **C03.04** For each hot material T, verify bracketing physically evaluated cross-section tables; reject out-of-range T and nearest-table substitution when not justified.
+- [ ] **C03.05** Check thermal-scattering kernel compatibility for moderating materials and note temperature/data gaps instead of making up kernels.
+- [ ] **C03.06** Confirm material temperatures used by actual OpenMC materials match the fluid/solid state being solved, including coating/structural materials.
+- [ ] **C03.07** Run geometry-debug and material-identity audits at each significant operating configuration; preserve Stage51 no-cell-overlap checks.
+- [ ] **C03.08** Run genuine **multi-seed** OpenMC simulations at supported temperatures; report `k_eff`, distribution, cross-section coverage, source histories and tally uncertainty. Do not tune enrichment or source to fabricate representative criticality.
+- [ ] **C03.09** Distinguish strongly subcritical conceptual surrogate configurations from physically representative reactor reference states. Record inability to establish a qualified baseline as a blocker.
+- [ ] **C03.10** Demonstrate robust active-source spatial convergence and isolate initialization/generation dependence; compare independent starting sources and repeated seeds.
+- [ ] **C03.11** Verify native neutron/photon heat tallies and per-material/instance reconciliation independently from user-side aggregation.
+- [ ] **C03.12** Re-run accepted transport cases with alternate particle counts/active generations and compare confidence intervals, not only raw means.
+- [ ] **C03.13** Implement explicit transport acceptance results: `data_qualified`, `source_converged`, `heating_complete`, `geometry_valid`, `physical_baseline_supported`; each must be true before an asserted physically predictive hot-core result.
+
+**Exit:** a reproducible transport case with honest physical/evaluated-data domain and defensible heat/statistics for the selected *reference*, not a source- or geometry-tuned imitation.
+
+---
+
+## C04 — Iterated neutronic–thermal feedback with independent convergence (P0)
+
+- [ ] **C04.01** Define a single state vector transferred between OpenMC and Stage58: fuel/structural T, material density where justified, H2 pressure/T/density, and physical heating field.
+- [ ] **C04.02** Use the same physical material/region identities and consistent axial/cross-sectional volume operators in both directions.
+- [ ] **C04.03** Specify the supported coupling mode: quasi-static heat-shape iteration, outer-step transport refresh, or demonstrably valid transient kinetics; never imply Monte Carlo transport is instantaneously solved every acoustic substep.
+- [ ] **C04.04** Rebuild or update OpenMC material state only within qualified evaluated-data temperature intervals, with explicit physical treatment of density and geometry change.
+- [ ] **C04.05** Separate source normalization/reaction-rate change from thermal-shape change, so `power`, `source particles`, `k_eff` and total deposited heat are not conflated.
+- [ ] **C04.06** Apply physical feedback: changed fuel temperature and hydrogen density modify the next **transport** calculation where consistent.
+- [ ] **C04.07** Implement outer iteration with under-relaxation, bounds, trust/convergence checks and a documented failure mode; conserve heating at each accepted iterate.
+- [ ] **C04.08** Check *at least* fuel temperature, H2 state, spatial heating, total deposited energy and transport statistical convergence before success.
+- [ ] **C04.09** Include stochastic-error-aware stopping conditions so iteration does not chase random tally noise.
+- [ ] **C04.10** Test fixed-zero feedback, synthetic linear feedback, and deliberately divergent feedback against analytical solutions.
+- [ ] **C04.11** Record every outer-iteration state, material/T hash, source seed and mapping residual; preserve restart capability.
+- [ ] **C04.12** Demonstrate at least one full supported-data transport→thermal→transport cycle with a quantified energy balance, without claiming a NASA-qualified output unless C10 is complete.
+
+**Exit:** actual T/density neutronic feedback is exercised and shown to converge *with* quantified Monte Carlo uncertainty.
+
+---
+
+## C05 — Improve solid fuel/coating/tie-interface thermal physics (P1)
+
+- [ ] **C05.01** Decide and document the one reference cross-section representation used by OpenMC, Stage53 cut cells and 3D thermal extrusion.
+- [ ] **C05.02** Replace Stage53's approximate half-cell fuel-to-wall distance with a demonstrably convergent embedded-boundary flux treatment or body-fitted reconstruction near circular holes.
+- [ ] **C05.03** Model coating thermal storage and tangential/through-thickness conduction if its timescale materially affects the selected benchmark; alternatively document a justified zero-storage limit.
+- [ ] **C05.04** Represent effective fuel↔coating contact resistance and uncertainty as explicit user-supplied properties, not hidden constants.
+- [ ] **C05.05** Model outer-hex coating contact and external conduction appropriately; Stage53 currently assumes adiabatic exterior.
+- [ ] **C05.06** Support axial-variable properties, optional anisotropy, and material-region changes without breaking symmetric positive diffusion and energy closure.
+- [ ] **C05.07** Handle fuel/coating thermal expansion and density changes only where physical/model data support them; avoid inconsistent simultaneous geometry and mass changes.
+- [ ] **C05.08** Preserve exact mass/volume for every source region after axial extrusion, and test fuel + coating + channels + tie geometry against transport geometry.
+- [ ] **C05.09** Implement documented tie-tube and relevant periphery thermal exchange *if included in the chosen core reference*. Reuse the repository's existing tie models; avoid rebuilding them unconnected.
+- [ ] **C05.10** Evaluate axial/radial mesh sensitivity of local peak temperature, wall heat flux, spatial heat-flow paths, not only total thermal energy.
+- [ ] **C05.11** Test material discontinuities, zero-contact limit, high-contact limit, diffusion eigenmodes and 2D/3D manufactured temperature solutions.
+- [ ] **C05.12** Flag unsupported damage, stress, corrosion or high-temperature material-failure predictions as not implemented unless separate physics and evidence exist.
+
+**Exit:** thermal field and wall heat flux converge under mesh refinement with material interfaces represented at the fidelity demanded by the reference case.
+
+---
+
+## C06 — Hydrogen material physics and fluid numerical-domain closure (P1)
+
+**Existing:** Stage56/57 ideal H2 transport; separate earlier repository CoolProp/tie-tube/cryogenic modules exist. Do not confuse these two paths.
+
+- [ ] **C06.01** Choose one authoritative EOS path per operating state, with a documented *valid T–p–phase domain* and exact thermodynamic variables needed for the transient total-energy formulation.
+- [ ] **C06.02** If using real-gas properties, implement `p(rho,e)`, `T(rho,e)`, derivatives/sound speed and transport properties from consistent thermodynamic potentials; do not replace `rho=p/RT` alone and keep incompatible ideal energy formulas.
+- [ ] **C06.03** Add property-table bounds and explicit failure for unsupported phase, supercritical or dissociation regimes; do not silently extrapolate.
+- [ ] **C06.04** Check `h=e+p/rho` and thermodynamic derivative consistency in the selected EOS; test reversible zero-heat compression/expansion in a qualified regime.
+- [ ] **C06.05** Audit Stage57's positivity and temperature inversion across every RK stage, low flow, heating, pressure waves and variable cp.
+- [ ] **C06.06** Implement and verify a well-posed subsonic characteristic inlet/outlet treatment appropriate to expected boundary states; preserve wall/simple-reservoir controls as tests only.
+- [ ] **C06.07** Define verified behavior near flow reversal and subsonic/choked transitions. Stage57 presently *rejects* Mach outside its qualified subsonic bound.
+- [ ] **C06.08** Use mass-flux-consistent Reynolds, viscosity, friction and convection relationships. Surface dependencies on actual pressure, temperature and flow.
+- [ ] **C06.09** Verify friction work appears as internal-energy dissipation (not a duplicate loss of total energy); check pressure-work terms and open-boundary kinetic enthalpy.
+- [ ] **C06.10** Compare constant-property ideal-gas solutions and existing Stage56 steady pressure profiles in their common validity limit.
+- [ ] **C06.11** Resolve how per-channel flow and mass inventory are coupled at core inlet/outlet; do not prescribe mutually inconsistent `mdot`, pressure and reservoir states as independent boundary conditions.
+- [ ] **C06.12** Add fully documented numerical stopping/rejection for Mach, temperature, density, EOS failures, acoustic CFL, conservation and nonlinear outer iteration.
+
+**Exit:** consistent energy/EOS/pressure feedback in a documented domain, with no hidden fictitious thermodynamics.
+
+---
+
+## C07 — Neutronic source, heating statistics, and core kinetics interoperability (P1)
+
+- [ ] **C07.01** Confirm actual reactor-core source/convergence diagnostics are still relevant after Stage51 geometric fixes and correct material temperature updates.
+- [ ] **C07.02** Review and resolve reported real OpenMC fission-source reproducibility/sensitivity anomalies using native engine evidence, not user-side synthetic bank replays.
+- [ ] **C07.03** Quantify independent-seed variability of both `k_eff` and spatial **heating**, separating Monte Carlo uncertainty from discretization/coupling error.
+- [ ] **C07.04** Maintain stochastic tally covariance where supported and propagate uncertainty through the C02 source-to-temperature map.
+- [ ] **C07.05** Make the existing r–z multigroup diffusion/precursor models explicitly distinguish transport-derived physically meaningful coefficients from analytic surrogates.
+- [ ] **C07.06** Verify prompt/delayed neutron balance, source normalization, precursor conservation and spatial adjoint calculations under consistent units.
+- [ ] **C07.07** Couple the kinetics *timescale* to thermal/H2 evolution only if a physically justified power normalization and cross-section/kinetics model exist.
+- [ ] **C07.08** Demonstrate limits: fixed-power case, zero-feedback case, delayed-neutron-only test, controlled nonzero-feedback case, and unphysical-input rejection.
+- [ ] **C07.09** Establish statistical error envelopes and independent benchmark calculations for any claimed power/temperature transient; synthetic kinetic constants are numerical demonstrations only.
+
+**Exit:** heating/kinetics inputs have traceable physical meaning and their numerical uncertainty enters the thermal calculation.
+
+---
+
+## C08 — Numerical verification, convergence, robustness, and rejection policy (P1)
+
+- [ ] **C08.01** Define a minimal independent analytic/method-of-manufactured-solutions suite for diffusion, advection, interface exchange, compressibility and integrated enthalpy.
+- [ ] **C08.02** Compare 2D fuel grids across at least three resolutions; report cell count, flux/temperature errors, peak-temperature convergence and numerical order where measurable.
+- [ ] **C08.03** Compare multiple axial mesh sizes (fuel and H2 jointly), explicitly checking gradients, pressure waves and wall-flux shape, not only global inventory.
+- [ ] **C08.04** Compare `dt`, `dt/2`, `dt/4` on the combined Stage58 model and show expected temporal behavior away from nonsmooth events.
+- [ ] **C08.05** Quantify splitting error from thermal–fluid subcycling and compare against a tighter-reference combined solution.
+- [ ] **C08.06** Include a standard 1D ideal-gas Riemann/shock-tube benchmark with reference solution inside the Stage57 property/Mach domain, and explicitly reject tests outside that domain.
+- [ ] **C08.07** Test traveling acoustic perturbations, reflective walls, steady uniform-flow preservation and finite-volume contact discontinuities under relevant regimes.
+- [ ] **C08.08** Verify total mass and energy independently by two methods: control-volume differences and integrated *actual numerical boundary/source face fluxes*.
+- [ ] **C08.09** Test solid–fluid interface antisymmetry to floating-point scale under the same transfer-energy accumulator.
+- [ ] **C08.10** Test zero source, zero flow, hot/cold initialization, near-boundary property temperatures, extreme but admissible conductivity and weak/strong contact.
+- [ ] **C08.11** Confirm unphysical states are rejected rather than silently clipped to valid-looking outputs; document when conservative recovery/retry is used.
+- [ ] **C08.12** Verify tolerance changes do not falsely create passing cases. Relate residual tolerance to absolute energy scale, floating-point error and time discretization.
+- [ ] **C08.13** Check sparse operator structure, symmetry for diffusion, invertibility/conditioning and solver behavior at larger 2D × axial grids.
+- [ ] **C08.14** Profile computational cost separately from physical correctness and ensure no hidden dense matrix assembly at reactor-relevant grid counts.
+- [ ] **C08.15** Run CI with deterministic synthetic tests for each new module, plus separate opt-in evaluated OpenMC regressions using pinned physics-data containers.
+- [ ] **C08.16** Report side-by-side `implemented / regression-pass / real-transport-pass / physically benchmarked` gates for each subsystem.
+
+**Exit:** reproducible numerical accuracy and stability evidence independent of just the equations' self-reported conservation residuals.
+
+---
+
+## C09 — One canonical core simulation and reproducible handoff (P2)
+
+- [ ] **C09.01** Choose one canonical core-only driver, with the full chain `state -> OpenMC heating evidence -> physical fuel cut cells -> fuel/H2 transient -> state + diagnostics`.
+- [ ] **C09.02** Keep legacy reduced models available with documented compatibility/limits, but do not expose five equivalent default solver entry points.
+- [ ] **C09.03** Make all parameter sources explicit: selected baseline, material tables, nuclear data, solid/fluid boundary state and deposited-heating provenance.
+- [ ] **C09.04** Validate schema shape, material identity, mesh size and physical units before expensive transport/thermal calculation.
+- [ ] **C09.05** Emit canonical HDF5/JSON or equivalent results: state histories, exact integrated heat, boundary fluxes, conservation residuals, solver residuals and validity flags.
+- [ ] **C09.06** Record actual code SHA, dependent PR/branch, runtime/compiler/OpenMC build, RNG seeds and nuclear-data hashes.
+- [ ] **C09.07** Supply a deterministic zero/low-power synthetic smoke case requiring no external evaluated data, **clearly labeled synthetic**.
+- [ ] **C09.08** Supply a separate evaluated-data run that refuses to run without qualified input libraries and defensible normalization.
+- [ ] **C09.09** Ensure Stage51–57 stacked PRs and subsequent core work have a documented integration/merge sequence and no orphaned unreviewed physics code.
+- [ ] **C09.10** Make a consolidated acceptance script run all real numerical gates, not just smoke tests, with per-gate PASS/FAIL and linked artifacts.
+- [ ] **C09.11** Summarize changed physical assumptions between versions, expected changes in solution and non-regression scope.
+- [ ] **C09.12** Maintain **this single TODO file** as the canonical core-development checklist; update checkboxes with a commit/CI citation rather than creating redundant milestone reports.
+
+**Exit:** another developer can reproduce the declared numerical core results and see exactly which physically validated claims are *not* supported.
+
+---
+
+## C10 — Separate physical verification/validation blockers (not solved by writing numerics alone)
+
+These items belong in the core work plan but **must not be counted as implemented merely because all code checkboxes above are green**.
+
+- [ ] **C10.01** Choose one explicit historical NASA NERVA core variant and document each geometry/material/power reference with exact source page/table, units and uncertainties.
+- [ ] **C10.02** Audit whether the conceptual model's material loading, multiplication and transport/source behavior can represent that variant. Report discrepancy rather than tuning it invisibly.
+- [ ] **C10.03** Qualify hot evaluated neutron cross-section temperature coverage for **all** active materials and any required thermal-scattering datasets.
+- [ ] **C10.04** Supply traceable physical temperature-dependent fuel/ZrC properties and hydrogen EOS/transport tables, including temperature and pressure validity domains.
+- [ ] **C10.05** Demonstrate transport criticality/source convergence/heating statistics and controlled neutron/photon energy deposition with real OpenMC data and uncertainty.
+- [ ] **C10.06** Benchmark available core power profiles, criticality/reactivity, fuel/coolant temperatures and relevant pressure drops against documented *applicable* data.
+- [ ] **C10.07** Separate reference uncertainty, model discrepancy, Monte Carlo sampling error and thermal/spatial/time-step numerical error.
+- [ ] **C10.08** Reproduce independent benchmark results on a clean environment from pinned files/data and make unsupported historic operating claims fail closed.
+
+**Exit:** a core model physically supported over a **declared** NERVA reference operating envelope; not full engine-cycle completion or hardware certification.
+
+---
+
+## Recommended execution order — no detours
+
+1. **Stage58 / C01.01–C01.34:** couple Stage55 solid to Stage57 H2 *without double-counting energy*. Until this passes, avoid further unrelated subsystem expansion.
+2. **C02 + C03:** make actual OpenMC heating and evaluated hot-neutron transport inputs trustworthy enough to supply power to Stage58.
+3. **C04:** implement physically consistent neutronic–thermal feedback with true transport-data and uncertainty checks.
+4. **C05 + C06:** improve fuel/coating interface fidelity and H2 EOS/BCs, driven by measured core-model sensitivity.
+5. **C07 + C08:** improve source/kinetics interoperability, convergence and numerical acceptance.
+6. **C09:** consolidate into one authoritative reproducible core pipeline.
+7. **C10:** close separate physical/NASA validation before claiming a historically credible hot NERVA core.
+
+## Core completion gates
+
+The **implementation-only** core TODO is complete when all C01–C09 items required for the explicitly selected physical core operating envelope are implemented, checked and demonstrated by the canonical driver.
+
+- [ ] **Gate G1 — Unified state:** Stage58 is one integrated solver, not two independently evolving hydrogen energies.
+- [ ] **Gate G2 — Conservation:** mass, energy and channel-wall heat exchange balance over open/closed boundary cases.
+- [ ] **Gate G3 — Physical source:** genuine OpenMC heating and explicitly justified physical normalization reach thermal volumes with a conserved budget.
+- [ ] **Gate G4 — Hot data:** required evaluated neutron data and thermophysical tables cover the simulated operating state.
+- [ ] **Gate G5 — Feedback:** temperature/density changes actually change transport and coolant pressure/flow, with robust convergence.
+- [ ] **Gate G6 — Spatial/time convergence:** documented mesh and timestep trends for pressure, temperature, wall flux and deposited heating.
+- [ ] **Gate G7 — Integrated execution:** one reproducible input executes the complete core physics path and writes auditable results.
+- [ ] **Gate G8 — Honest evidence:** numerical verification, real Monte Carlo transport and historical validation are individually identified; none is inferred from the others.
+
+**Outside this checklist:** full feed-cycle, pump/turbine shaft matching, nozzle performance and engine-level NASA comparisons. Those are part of the **separate overall NERVA** roadmap, not the estimated 30–40% outstanding core implementation.
