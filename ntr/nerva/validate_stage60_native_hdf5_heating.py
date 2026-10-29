@@ -44,8 +44,10 @@ def synthetic_statepoint(path: Path, *,
     else:
         sumsq=n*(mean**2+(n-1)*err**2)
     tally_scores=np.zeros((nx*ny*nz,3,2))
-    tally_scores[:,0,0]=n*mean.reshape(-1)
-    tally_scores[:,0,1]=sumsq.reshape(-1)
+    # Real OpenMC structured-mesh tally: bin=i + nx*(j + ny*k).
+    # Native data are flat with X fastest (Fortran array order).
+    tally_scores[:,0,0]=n*mean.reshape(-1,order="F")
+    tally_scores[:,0,1]=sumsq.reshape(-1,order="F")
     tally_scores[:,1,0]=n*.25
     tally_scores[:,1,1]=n*(.25**2+(n-1)*.01**2)
     tally_scores[:,2,0]=n*.5
@@ -145,9 +147,9 @@ class NativeStatepointMomentTests(unittest.TestCase):
             self.read(photon_transport_confirmed_disabled="yes")
         self.assertEqual(self.read().photon_status.startswith("neutron-only"),True)
 
-    def test_mesh_xyz_axis_order_is_openmc_z_fastest(self):
-        # Each (x,y,z) carries a distinct synthetic mean. Wrong reshaping
-        # changes the axial mean and violates this explicit reference.
+    def test_mesh_xyz_axis_order_is_openmc_x_fastest(self):
+        # Each (x,y,z) carries a distinct native HDF5 mean, with X varying
+        # fastest. A wrong C-order reshape changes the axial heating.
         result=self.read()
         np.testing.assert_allclose(
             result.source_mesh_mean_ev_per_source,self.mean,rtol=0,atol=1e-14)
