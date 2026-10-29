@@ -5,11 +5,15 @@ on:
     paths:
       - 'ntr/nerva/real_nasa2015_fuel_tie_csg_volume_audit.py'
       - 'ntr/nerva/validate_stage50_nasa_fuel_tie_csg.py'
+      - 'ntr/nerva/layout.py'
+      - 'ntr/nerva/validate_layout.py'
       - '.github/workflows/nerva-stage50-nasa-fuel-tie-csg-geometry.yml'
   pull_request:
     paths:
       - 'ntr/nerva/real_nasa2015_fuel_tie_csg_volume_audit.py'
       - 'ntr/nerva/validate_stage50_nasa_fuel_tie_csg.py'
+      - 'ntr/nerva/layout.py'
+      - 'ntr/nerva/validate_layout.py'
       - '.github/workflows/nerva-stage50-nasa-fuel-tie-csg-geometry.yml'
   workflow_dispatch: {}
 
@@ -37,6 +41,7 @@ jobs:
             openmc/openmc:v0.15.3 bash -lc '
               set -euo pipefail
               export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -m ntr.nerva.validate_layout
               python -m unittest \
                 ntr.nerva.validate_stage50_nasa_fuel_tie_csg.HistoricalFuelTieAnalyticMathTests -v
               python -m ntr.nerva.real_nasa2015_fuel_tie_csg_volume_audit \
