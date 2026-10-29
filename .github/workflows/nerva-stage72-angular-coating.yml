@@ -1,0 +1,81 @@
+name: NUKE Stage72 exact clipped angular ZrC coating finite-volume heat
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/coating_angular_fvm.py'
+      - 'ntr/nerva/validate_stage72_coating_angular.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage72-angular-coating.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/coating_angular_fvm.py'
+      - 'ntr/nerva/validate_stage72_coating_angular.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage72-angular-coating.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  angular-zrc-enthalpy-conservation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install angular quadrature, sparse numerics and HDF5 runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2' 'h5py>=3.10,<4'
+      - name: Verify Stage72 Fourier/clipped sector physics and Stage52–71 regressions
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage72_coating_angular -v
+          python -m unittest ntr.nerva.validate_stage71_axial_coating -v
+          python -m unittest ntr.nerva.validate_stage70_resolved_coating -v
+          python -m unittest ntr.nerva.validate_stage69_structural_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage68_full_core_energy_ledger -v
+          python -m unittest ntr.nerva.validate_stage67_hydrogen_channel_heating -v
+          python -m unittest ntr.nerva.validate_stage66_direct_hydrogen_deposition -v
+          python -m unittest ntr.nerva.validate_stage65_coupled_nuclear_heating -v
+          python -m unittest ntr.nerva.validate_stage64_native_mesh_order -v
+          python -m unittest ntr.nerva.validate_stage63_native_statepoint_format -v
+          python -m unittest ntr.nerva.validate_stage62_native_statepoint_evidence -v
+          python -m unittest ntr.nerva.validate_stage61_native_spatial_heating -v
+          python -m unittest ntr.nerva.validate_stage60_native_hdf5_heating -v
+          python -m unittest ntr.nerva.validate_stage59_core_refinement_heating -v
+          python -m unittest ntr.nerva.validate_stage58_fuel_hydrogen_coupling -v
+          python -m unittest ntr.nerva.validate_stage57_hydrogen_transient -v
+          python -m unittest ntr.nerva.validate_stage56_hydrogen_hydraulics -v
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Print diagnostic from conservative angular coating Fourier pulse
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.validate_stage72_coating_angular import make_mesh
+          from ntr.nerva.coating_angular_fvm import advance_angular_coating_enthalpy
+          m,c,g,k=make_mesh(nz=2,angular_sectors=16)
+          t=np.full((2,19,16),450.)
+          t[0,0,0]=600.
+          r=advance_angular_coating_enthalpy(
+              c,g,t,conductivity_w_m_k=k,
+              dt_s=.1,deposition_w=np.zeros_like(t))
+          print('Stage72 physically resolved 3D angular coating states:',t.shape)
+          print('Stage72 full coating mass [kg]:',g.sector_mass_kg.sum())
+          print('Stage72 channel-1 three angular samples [K]:',r.temperature_k[0,0,:3].tolist())
+          print('Stage72 angular edge count:',int(np.sum(g.face_kind==1)))
+          print('Stage72 axial edge count:',int(np.sum(g.face_kind==0)))
+          print('Stage72 total energy residual [J]:',r.total_first_law_residual_j)
+          print('Stage72 assembled internal face cancellation [J]:',r.internal_flux_cancellation_j)
+          print('Stage72 synthetic material properties; NOT coupled angular boundary transfer or actual OpenMC physics')
+          assert abs(r.total_first_law_residual_j)<2e-8
+          assert abs(r.internal_flux_cancellation_j)<1e-9
+          PY
