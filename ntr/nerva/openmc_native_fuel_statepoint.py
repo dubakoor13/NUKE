@@ -34,7 +34,7 @@ import re
 import h5py
 import numpy as np
 
-from .openmc_fuel_axial_heat_handoff import OpenMCAxialFuelHeating
+from .openmc_fuel_axial_heat_handoff import (\n    OpenMCAxialFuelHeating, ResolvedFuelHeatingInput,\n    project_openmc_axial_fuel_heating,\n)
 
 _SHA256 = re.compile(r"^[a-fA-F0-9]{64}$")
 _EXPECTED_TALLY = "nerva_3d_fuel_heating"
@@ -59,6 +59,67 @@ class NativeFuelHeatingTally:
         "by sum of marginal stderr; inter-bin covariance unavailable"
     )
     photon_status: str = "neutron-only heating-local; photon transport requires separate tally"
+
+
+@dataclass(frozen=True)
+class NativeMappedFuelHeating:
+    """Mean fuel watts and conservative marginal-error bounds per target bin.
+
+    Bounds are NOT an independently measured uncertainty for each mapped
+    bin and are NOT propagated reactor-system covariance. With only
+    tally sum/sum_sq, covariance cannot be reconstructed.
+    """
+    resolved: ResolvedFuelHeatingInput
+    axial_uncertainty_upper_bound_w: np.ndarray
+    fuel_cell_uncertainty_upper_bound_w: np.ndarray
+    total_fuel_uncertainty_upper_bound_w: float
+    relative_total_uncertainty_upper_bound: float
+    uncertainty_status: str = (
+        "conservative triangle-inequality bound from marginal batch "
+        "standard errors; no inter-bin covariance data"
+    )
+
+
+def project_native_fuel_heating(
+    native: NativeFuelHeatingTally,
+    model: object,
+) -> NativeMappedFuelHeating:
+    """Project the exact same positive linear mapping for means and bounds.
+
+    Mean heating is the existing Stage59 source->axial->fuel-only-volume
+    map. Absolute uncertainty upper bounds propagate through those
+    nonnegative weights, without asserting missing covariance is zero.
+    """
+    resolved=project_openmc_axial_fuel_heating(model,native.score)
+    rate=native.score.source_rate_particles_per_s
+    uncertainty_source=np.asarray(
+        native.axial_uncertainty_upper_bound_ev_per_source,dtype=float)
+    shape=(len(native.score.axial_edges_m)-1,)
+    if (uncertainty_source.shape!=shape or
+            not np.all(np.isfinite(uncertainty_source)) or
+            np.any(uncertainty_source<0)):
+        raise ValueError("native axial uncertainty bounds are invalid")
+    unit_rate=rate*1.602176634e-19
+    fractions=resolved.axial_overlap_m/np.diff(
+        np.asarray(native.score.axial_edges_m,dtype=float))[None,:]
+    uncertainty_axial=fractions@(uncertainty_source*unit_rate)
+    uncertainty_fuel=(uncertainty_axial[:,None]
+                      *resolved.transverse_fuel_weights[None,:])
+    conservative_total=float(np.sum(uncertainty_fuel))
+    mean_total=float(resolved.mapped_fuel_power_w)
+    if mean_total<=0:
+        raise ValueError("cannot report relative uncertainty for zero deposited fuel heat")
+    if not np.isclose(float(np.sum(uncertainty_axial)),
+                      float(np.sum(uncertainty_source*unit_rate)),
+                      rtol=1e-13,atol=1e-13):
+        raise ArithmeticError("HDF5 uncertainty-bound weights not conservative")
+    return NativeMappedFuelHeating(
+        resolved=resolved,
+        axial_uncertainty_upper_bound_w=uncertainty_axial,
+        fuel_cell_uncertainty_upper_bound_w=uncertainty_fuel,
+        total_fuel_uncertainty_upper_bound_w=conservative_total,
+        relative_total_uncertainty_upper_bound=conservative_total/mean_total,
+    )
 
 
 def _scalar_string(value: object) -> str:
