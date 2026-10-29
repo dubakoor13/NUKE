@@ -27,7 +27,8 @@ def fixture(path, *, materials=MATERIAL_ORDER, particles=PARTICLE_ORDER,
         mat=tg["tally 3"]
         del mat["name"]
         mat.create_dataset("name",data=np.bytes_("nerva_material_transport"))
-        mat["filters"][...]=[12]
+        del mat["filters"]
+        mat.create_dataset("filters",data=np.array([12],dtype=int))
         scores=["flux","absorption","fission","nu-fission","heating","heating-local"]
         del mat["score_bins"]
         mat.create_dataset("score_bins",data=np.array(scores,dtype="S"))
