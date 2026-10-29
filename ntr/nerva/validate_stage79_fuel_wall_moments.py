@@ -165,6 +165,44 @@ class TrueEmbeddedFuelFirstMoments(unittest.TestCase):
             self.assertTrue(d.interpretation)
         self.assertIn("NOT imply",results.interpretation)
 
+    def test_negative_centroid_tangent_projection_is_exposed_and_fallback_counted(self):
+        # Curved contacts can be locally nonorthogonal: signed material
+        # centroid normal projection is sometimes <= 0. A conservative
+        # volume/true-contact-area depth (not a hidden epsilon clamp)
+        # provides positive resistance ONLY for those patches.
+        totals=[]
+        for nx,ny in GRIDS:
+            m,_=moment_factory(CoupledMeshResolution(
+                nx,ny,BASE.axial_zones,
+                BASE.angular_sectors,BASE.radial_layers))
+            contact=m.angular_contacts
+            signed=contact.fuel_wall_signed_normal_depth_m
+            effective=contact.fuel_wall_moment_depth_m
+            self.assertEqual(signed.shape,effective.shape)
+            self.assertTrue(np.all(np.isfinite(signed.data)))
+            self.assertTrue(np.all(effective.data>0.))
+            totals.append(contact.nonorthogonal_wall_fallback_count)
+        self.assertGreater(sum(totals),0)
+
+    def test_flux_improvement_does_not_hide_nonmonotone_integrated_energy(self):
+        # Measured from truly executed synthetic 20x24,28x32,36x40
+        # Stage75 coupled models at same W/m3 and same physical volume.
+        from .validate_stage78_embedded_wall_distance import (
+            EmbeddedCurvedWallDistanceTests,
+        )
+        local=EmbeddedCurvedWallDistanceTests.local
+        new=self.study
+        peak="fuel_outer_wall_peak_abs_w_m2"
+        integral="fuel_to_coating_energy_j"
+        self.assertLess(
+            new.metrics[peak].relative_mid_to_fine,
+            local.metrics[peak].relative_mid_to_fine)
+        self.assertLess(new.metrics[peak].relative_mid_to_fine,.01)
+        self.assertGreater(new.metrics[integral].relative_mid_to_fine,.01)
+        self.assertFalse(
+            new.metrics[integral].decreasing_successive_differences)
+        self.assertIn(integral,new.metrics_requiring_further_refinement)
+
     def test_nonphysical_material_moment_reference_is_rejected(self):
         poly=[(-1.,-1.),(1.,-1.),(1.,1.),(-1.,1.)]
         with self.assertRaisesRegex(ArithmeticError,"differs"):
