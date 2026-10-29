@@ -53,8 +53,16 @@ def synthetic_statepoint(path: Path, *,
     with h5py.File(path,"w") as h:
         h.attrs["filetype"]=np.bytes_("statepoint")
         h.attrs["tallies_present"]=1
+        h.attrs["photon_transport"]=int(photon)
+        h.attrs["openmc_version"]=np.array([0,15,3],dtype=np.int64)
         h.create_dataset("run_mode",data=np.bytes_("eigenvalue"))
-        tally=h.create_group("tallies/tally 3")
+        h.create_dataset("n_batches",data=n+2)
+        h.create_dataset("n_inactive",data=2)
+        h.create_dataset("n_particles",data=2000)
+        manifest=h.create_group("tallies")
+        manifest.attrs["n_tallies"]=1
+        manifest.attrs["ids"]=np.array([3],dtype=np.int64)
+        tally=manifest.create_group("tally 3")
         tally.create_dataset("name",data=np.bytes_(tally_name))
         tally.create_dataset("score_bins",
                              data=np.array([score_name,"fission","nu-fission"],dtype="S"))
