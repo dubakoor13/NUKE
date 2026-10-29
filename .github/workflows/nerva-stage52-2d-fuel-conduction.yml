@@ -1,0 +1,59 @@
+name: NUKE Stage52 exact-geometry 2D fuel-sector conduction
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/fuel_sector_conduction_2d.py'
+      - 'ntr/nerva/validate_stage52_fuel_sector_conduction_2d.py'
+      - '.github/workflows/nerva-stage52-2d-fuel-conduction.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/fuel_sector_conduction_2d.py'
+      - 'ntr/nerva/validate_stage52_fuel_sector_conduction_2d.py'
+      - '.github/workflows/nerva-stage52-2d-fuel-conduction.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  conservative-planar-fuel-hydrogen-operator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install numerical runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2'
+      - name: Execute genuine exact-geometry 2D finite-volume numerical tests
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+          # validate_layout imports vendored OpenMC; Stage51 tests it in the OpenMC image.
+      - name: Check synthetic physical-unit conservation and face count
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.config import NervaConfig
+          from ntr.nerva.fuel_sector_conduction_2d import build_fuel_sector_conduction_2d
+          op=build_fuel_sector_conduction_2d(
+              NervaConfig(),
+              conductivity_w_m_k=12.,density_kg_m3=1800.,
+              heat_capacity_j_kg_k=1000.,
+              zrc_conductivity_w_m_k=20.,
+              hydrogen_film_w_m2_k=2000.)
+          print("Stage52 actual face pairs:",len(op.face_pairs))
+          print("Stage52 exact fuel volume [m3]:",op.fuel_volume_m3.sum())
+          print("Stage52 clipped fuel/ZrC arcs:",np.count_nonzero(
+              op.fuel_zrc_contact_area_m2 < np.max(op.fuel_zrc_contact_area_m2)-1e-12))
+          print("Stage52 lateral L row-sum max [W/K]:",
+                np.max(np.abs(op.laplacian_w_k @ np.ones(19))))
+          assert len(op.face_pairs)>=30
+          assert np.isclose(op.fuel_volume_m3.sum(),0.000270729921870941,
+                            atol=3e-16,rtol=0.)
+          PY
