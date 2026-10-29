@@ -53,50 +53,54 @@ The table is **dependency order**, not evidence that any later stage has been im
 
 ## C01 — Stage58: physically conservative transient fuel/H2 thermal coupling (P0, START HERE)
 
+**Stage58 first numerical acceptance (2026-10-29):** [PR #172](https://github.com/dubakoor13/NUKE/pull/172) at commit `af3be1ce4b42d7cd35c8b66812bd50e3115caead`, [CI run 40848431073](https://github.com/dubakoor13/NUKE/actions/runs/40848431073) **PASS: 9 new tests and 76 previous Stage52–57 regressions**. Demonstration: 1,008 solid and 114 fluid conserved unknowns; 0.393069737 J wall energy; 9.0381e-12 J absolute global first-law residual. Shared gas state, source antisymmetry and acoustic subcycling verified numerically using **synthetic properties and heating**. Still pending: explicit pressure/flow-dependent film law, characteristic boundaries, independent mesh/timestep convergence, complete invalid-domain matrix, full OpenMC heating and physical validation. This is not an actual hot-core benchmark.
+
+## C01 — Stage58: physically conservative transient fuel/H2 thermal coupling (P0, START HERE)
+
 **Current real gap:** Stage55 solves a fully coupled *fuel plus H2 enthalpy* thermal system with fixed H2 zone masses; Stage57 separately solves *H2 compressible mass, momentum and total energy* with **externally prescribed wall watts**. They have not been made into a common time advance. Simply calling both would double-advance hydrogen energy and generally violate conservation.
 
 ### C01A. Define a shared physical interface
 
-- [ ] **C01.01** Specify the definitive state object: solid temperature per `(axial slab, fuel cut-cell)`; H2 conservative `(rho, rho*u, rho*E)` per `(axial slab, channel)`; optional coating thermal state; simulation time.
-- [ ] **C01.02** Establish one authoritative mapping between axial edges in Stage54/55 and Stage57. Reject mismatched lengths or number of cells instead of interpolating silently.
-- [ ] **C01.03** Reuse Stage53's *exact* fuel/ZrC contact arc area matrix, applied to all axial slabs; preserve the six outer-hex-clipped channel footprints.
+- [x] **C01.01** Specify the definitive state object: solid temperature per `(axial slab, fuel cut-cell)`; H2 conservative `(rho, rho*u, rho*E)` per `(axial slab, channel)`; optional coating thermal state; simulation time.
+- [x] **C01.02** Establish one authoritative mapping between axial edges in Stage54/55 and Stage57. Reject mismatched lengths or number of cells instead of interpolating silently.
+- [x] **C01.03** Reuse Stage53's *exact* fuel/ZrC contact arc area matrix, applied to all axial slabs; preserve the six outer-hex-clipped channel footprints.
 - [ ] **C01.04** Standardize physical units: W/K interface conductance, W per fluid channel/slab, J stored, Pa, K, kg, m/s, m², m³; validate dimensions and 19 channel indices.
-- [ ] **C01.05** Ensure each fuel cut-cell wall contact contributes to exactly one H2 channel and each channel receives exactly the sum of contacting solid-wall transfers.
-- [ ] **C01.06** Expose `H2` thermodynamic quantities (T, rho, p, velocity, internal energy) by conversion from **Stage57's conserved state only**.
-- [ ] **C01.07** Separate Stage55's *solid-only* thermal residual/solve from its legacy coupled H2 enthalpy residual. Preserve the old solver as a tested constant-volume limiting case, not as a second active fluid integrator.
-- [ ] **C01.08** Supply the same wall heat `Q_wall[z,ch]` as a negative source to solid energy and a positive source to Stage57 total energy, with no extra `cp(T)*dT` coolant update.
+- [x] **C01.05** Ensure each fuel cut-cell wall contact contributes to exactly one H2 channel and each channel receives exactly the sum of contacting solid-wall transfers.
+- [x] **C01.06** Expose `H2` thermodynamic quantities (T, rho, p, velocity, internal energy) by conversion from **Stage57's conserved state only**.
+- [x] **C01.07** Separate Stage55's *solid-only* thermal residual/solve from its legacy coupled H2 enthalpy residual. Preserve the old solver as a tested constant-volume limiting case, not as a second active fluid integrator.
+- [x] **C01.08** Supply the same wall heat `Q_wall[z,ch]` as a negative source to solid energy and a positive source to Stage57 total energy, with no extra `cp(T)*dT` coolant update.
 
 ### C01B. Integrate numerical timestep and feedback
 
-- [ ] **C01.09** Implement a clearly named coupled-step entry point, e.g. `advance_fuel_hydrogen_core(...)`, with explicit initial state, external deposited heat and boundary data.
-- [ ] **C01.10** Support at least one stable *partitioned* scheme: predictor wall transfer, transient-fluid advance, updated fluid T, solid implicit solve, iterate wall transfer until convergence.
+- [x] **C01.09** Implement a clearly named coupled-step entry point, e.g. `advance_fuel_hydrogen_core(...)`, with explicit initial state, external deposited heat and boundary data.
+- [x] **C01.10** Support at least one stable *partitioned* scheme: predictor wall transfer, transient-fluid advance, updated fluid T, solid implicit solve, iterate wall transfer until convergence.
 - [ ] **C01.11** Ensure H2 pressure/density changes alter flow-state thermodynamics used for wall convection and fluid storage, not only displayed diagnostics.
-- [ ] **C01.12** Recalculate fuel conductivity and heat capacity from Stage55's bounded property tables at each nonlinear iteration; reject extrapolation.
-- [ ] **C01.13** Recalculate coating conductivity and fluid-side heat-transfer coefficient from valid material/fluid states, documenting the present approximate wall-transfer resistance.
-- [ ] **C01.14** Use Stage57's acoustic CFL condition and explicit subcycling as necessary, while retaining longer implicit solid thermal steps.
-- [ ] **C01.15** Ensure total prescribed fuel/neutron deposition to the solid is divided among substeps **once**; do not apply full-step watts repeatedly as energy.
-- [ ] **C01.16** Ensure wall heat transfer subcycles are conservative even when H2 timesteps differ from fuel timesteps: `sum(Q_fuel_wall*dt) + sum(Q_H2_wall*dt)=0` after summing all substeps.
+- [x] **C01.12** Recalculate fuel conductivity and heat capacity from Stage55's bounded property tables at each nonlinear iteration; reject extrapolation.
+- [x] **C01.13** Recalculate coating conductivity and fluid-side heat-transfer coefficient from valid material/fluid states, documenting the present approximate wall-transfer resistance.
+- [x] **C01.14** Use Stage57's acoustic CFL condition and explicit subcycling as necessary, while retaining longer implicit solid thermal steps.
+- [x] **C01.15** Ensure total prescribed fuel/neutron deposition to the solid is divided among substeps **once**; do not apply full-step watts repeatedly as energy.
+- [x] **C01.16** Ensure wall heat transfer subcycles are conservative even when H2 timesteps differ from fuel timesteps: `sum(Q_fuel_wall*dt) + sum(Q_H2_wall*dt)=0` after summing all substeps.
 - [ ] **C01.17** Provide convergence norms for solid T, coolant T, wall-heat integral, and global first-law balance; do not claim convergence from one variable alone.
-- [ ] **C01.18** Handle iteration failure deterministically: backtrack/halve `dt` or abort with diagnostic fields; do **not** accept unconverged temperatures/negative pressures.
+- [x] **C01.18** Handle iteration failure deterministically: backtrack/halve `dt` or abort with diagnostic fields; do **not** accept unconverged temperatures/negative pressures.
 - [ ] **C01.19** Include explicit physical flow-direction treatment at both channel ends. Stage57 wall/transmissive/simple-reservoir boundaries are not characteristic boundary conditions.
-- [ ] **C01.20** Enforce that solid, coating (if modeled), fluid and external fluxes are counted exactly once in the balance budget.
-- [ ] **C01.21** Provide the reverse control-volume budget: power deposited to solid minus solid storage equals wall transfer + any declared external flux; fluid storage + outlet total-energy flow minus inlet total-energy flow equals wall transfer and other declared fluid sources.
+- [x] **C01.20** Enforce that solid, coating (if modeled), fluid and external fluxes are counted exactly once in the balance budget.
+- [x] **C01.21** Provide the reverse control-volume budget: power deposited to solid minus solid storage equals wall transfer + any declared external flux; fluid storage + outlet total-energy flow minus inlet total-energy flow equals wall transfer and other declared fluid sources.
 
 ### C01C. Required Stage58 tests
 
-- [ ] **C01.22** *Isolated adiabatic equilibrium:* uniform solid/fluid T and zero flow/heating stay stationary for repeated timesteps.
-- [ ] **C01.23** *Sealed thermal equilibration:* hot solid/cold hydrogen approach equilibrium with **constant total** solid + fluid thermal/kinetic energy.
-- [ ] **C01.24** *Uniform distributed heating:* analytically prescribed fuel watts cause exactly the specified integrated energy rise without double counting.
+- [x] **C01.22** *Isolated adiabatic equilibrium:* uniform solid/fluid T and zero flow/heating stay stationary for repeated timesteps.
+- [x] **C01.23** *Sealed thermal equilibration:* hot solid/cold hydrogen approach equilibrium with **constant total** solid + fluid thermal/kinetic energy.
+- [x] **C01.24** *Uniform distributed heating:* analytically prescribed fuel watts cause exactly the specified integrated energy rise without double counting.
 - [ ] **C01.25** *Selective channel heating:* heat one contact region; only physically connected fluid passage receives direct wall energy, and lateral solid spreading follows the Stage53 operator.
-- [ ] **C01.26** *Pressure-feedback exercise:* wall heating changes hydrogen T and p in a sealed passage, and this changed state is used on the next wall-heat iteration.
-- [ ] **C01.27** *Open-flow energy accounting:* report H2 inlet/outlet **total** energy including enthalpy/kinetic terms, and compare to solid source and storage.
-- [ ] **C01.28** *Zero-wall-conductance limit:* recovers independent Stage55 **solid-only** conduction plus Stage57 standalone hydrogen dynamics.
+- [x] **C01.26** *Pressure-feedback exercise:* wall heating changes hydrogen T and p in a sealed passage, and this changed state is used on the next wall-heat iteration.
+- [x] **C01.27** *Open-flow energy accounting:* report H2 inlet/outlet **total** energy including enthalpy/kinetic terms, and compare to solid source and storage.
+- [x] **C01.28** *Zero-wall-conductance limit:* recovers independent Stage55 **solid-only** conduction plus Stage57 standalone hydrogen dynamics.
 - [ ] **C01.29** *Low-speed fixed-density limit:* reproduces Stage54/55 constant-property reference, within discretization and energy-variable differences.
 - [ ] **C01.30** *Axial thermal pulse:* resolve downstream advection plus axial solid conduction and verify direction and conservation.
 - [ ] **C01.31** *Time-step/subcycling sensitivity:* compare `dt`, `dt/2`, `dt/4` using a fixed reference setup; report errors instead of pass/fail alone.
 - [ ] **C01.32** *Wall-contact mapping:* sum Stage53 interface areas and wall-energy transfers independently before/after thermal-flow integration.
 - [ ] **C01.33** *Invalid-domain tests:* reject out-of-range T, negative densities/pressures, exceeded Mach/CFL, failed nonlinear iteration, empty source, mismatched meshes.
-- [ ] **C01.34** Run Stage52–57 regression suites unchanged; ensure Stage58 new tests do not mask earlier failures.
+- [x] **C01.34** Run Stage52–57 regression suites unchanged; ensure Stage58 new tests do not mask earlier failures.
 
 **Stage58 definition of done:** a runnable *single* transient fuel-plus-19-channel hydrogen simulation, one authoritative H2 state, visible pressure/temperature feedback, demonstrated global/local energy closure, passing limiting-case and refinement tests. This is **numerical verification**, not a NASA-hot-core qualification.
 
