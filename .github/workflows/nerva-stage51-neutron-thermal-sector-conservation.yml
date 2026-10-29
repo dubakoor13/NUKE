@@ -1,0 +1,106 @@
+name: NUKE Stage51 real neutron geometry to thermal sector conservation
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/geometry.py'
+      - 'ntr/nerva/fuel_sector_geometry.py'
+      - 'ntr/nerva/validate_fuel_sector_geometry.py'
+      - 'ntr/nerva/real_neutronic_thermal_sector_conservation.py'
+      - 'ntr/nerva/validate_stage51_neutronic_thermal_sector_conservation.py'
+      - '.github/workflows/nerva-stage51-neutron-thermal-sector-conservation.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/geometry.py'
+      - 'ntr/nerva/fuel_sector_geometry.py'
+      - 'ntr/nerva/validate_fuel_sector_geometry.py'
+      - 'ntr/nerva/real_neutronic_thermal_sector_conservation.py'
+      - 'ntr/nerva/validate_stage51_neutronic_thermal_sector_conservation.py'
+      - '.github/workflows/nerva-stage51-neutron-thermal-sector-conservation.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  physical-csg-and-thermal-conservation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pin original OpenMC v0.15.3 transport engine and cold reference neutron data
+        run: |
+          set -euo pipefail
+          mkdir -p build/stage51_results build/stage51_cplusplus
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' > build/stage51_results/openmc_image_digest.json
+      - name: Run 12 true CSG and thermal volume QA tests, legacy validators and original Stage50 regression
+        run: |
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -m ntr.nerva.validate_layout
+              python -m ntr.nerva.validate_fuel_sector_geometry
+              python -m ntr.nerva.validate_fuel_sectors
+              python -m unittest \
+                ntr.nerva.validate_stage51_neutronic_thermal_sector_conservation.FuelThermalCellVolumeNumericalTests -v
+              python -m ntr.nerva.real_neutronic_thermal_sector_conservation \
+                --random-csg-points 3500 \
+                --output /repo/build/stage51_results/real_openmc_csg_and_19_fuel_sector_thermal_mass.json
+              NUKE_STAGE51_REAL_OPENMC_CSG=1 \
+                python -m unittest \
+                  ntr.nerva.validate_stage51_neutronic_thermal_sector_conservation.ActualOpenMCFuelCSGCellAndThermalTests -v
+              NUKE_STAGE50_ORIGINAL_OPENMC_CSG=1 \
+                python -m unittest \
+                  ntr.nerva.validate_stage50_nasa_fuel_tie_csg.ActualTransportOpenMCCSGTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage51_results/real_openmc_csg_and_19_fuel_sector_thermal_mass.json\")); assert r[\"original_openmc_fuel_and_coating_cell_overlap_removed\"] and r[\"actual_nuclear_CSG_material_cell_ownership\"][\"all_actual_cells_unique_for_sampled_real_fuel_and_coating_points\"] and r[\"true_geometry_to_thermal_19_sector_conservation\"][\"synthetic_thermal_energy_conservation_test\"] and not r[\"historical_hot_NERVA_reactor_watts_qualified\"]; print(\"Original OpenMC CSG cell ownership and thermal mass VERIFIED\")"
+            '
+      - name: Execute ACTUAL OpenMC C++ neutron geometry-debug transport at evaluated 294 K
+        run: |
+          docker run --rm --cpus=2 --memory=6g -e OMP_NUM_THREADS=2 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp openmc/openmc:v0.15.3 \
+            bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              test -s "$OPENMC_CROSS_SECTIONS"
+              python -m ntr.nerva.run_openmc_transport \
+                --cross-sections "$OPENMC_CROSS_SECTIONS" \
+                --assembly core --rings 3 \
+                --particles 3000 --batches 24 --inactive 8 \
+                --seed 13007 --neutron-temperature-method nearest \
+                --fuel-temperature-k 293.6059129982851 \
+                --hydrogen-temperature-k 293.6059129982851 \
+                --output /repo/build/stage51_cplusplus --export-only
+              python -c "import openmc; openmc.run(geometry_debug=True,threads=2,cwd=\"/repo/build/stage51_cplusplus\")"
+              python -c "import h5py,numpy as np; p=\"/repo/build/stage51_cplusplus/statepoint.24.h5\"; f=h5py.File(p,\"r\"); assert int(f[\"current_batch\"][()])==24 and int(f[\"n_particles\"][()])==3000 and int(f[\"seed\"][()])==13007; assert np.isfinite(f[\"k_generation\"][()]).all() and (f[\"k_generation\"][()]>0).all(); print(\"Original OpenMC C++ geometry-debug neutron HDF5: PASS\"); f.close()"
+              sha256sum /repo/build/stage51_cplusplus/statepoint.24.h5 \
+                > /repo/build/stage51_results/original_cpp_neutron_statepoint_sha256.txt
+              sha256sum /repo/build/stage51_cplusplus/geometry.xml \
+                /repo/build/stage51_cplusplus/materials.xml \
+                /repo/build/stage51_cplusplus/settings.xml \
+                > /repo/build/stage51_results/original_cpp_geometry_input_shas.txt
+            '
+      - name: Preserve real physical geometry and synthetic thermal conservation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage51-geometry-thermal-physics-results
+          path: build/stage51_results/*
+          retention-days: 21
+          if-no-files-found: warn
+      - name: Preserve native C++ transport geometry-debug source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage51-original-openmc-geometry-debug-neutron-hdf5
+          path: |
+            build/stage51_cplusplus/*.xml
+            build/stage51_cplusplus/*.json
+            build/stage51_cplusplus/statepoint.24.h5
+          retention-days: 21
+          if-no-files-found: warn

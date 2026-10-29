@@ -2,6 +2,8 @@
 
 **Status: real OpenMC CSG verified against independent analytical geometry**, original model unchanged. [Stage50 complete **13/13** tests plus the existing fast layout validator, GitHub Actions 40816631372 (PASS)](https://github.com/dubakoor13/NUKE/actions/runs/40816631372). The old layout helper was corrected to use the same hex orientation as OpenMC; an additional regression verifies the **-0.00363 cm** real inner-coating clearance and a positive **+0.00137 cm** hydrogen bore-to-inner-hex clearance.
 
+> **Stage51 scientific erratum (verified with actual OpenMC geometry-debug):** Stage50's analytical *material* areas and 2,025+1,841 first-match material classifications were correct, but the prior assertion that the two ZrC coatings occupied nonoverlapping **OpenMC CSG cells** was not correct: six channel ZrC cells overlapped the exterior ZrC cell at the inner-hex cap. Their *physical material union* is still ZrC. Stage51 intersects channel-coating CSG cells with the inner hex, verifies unique cell ownership and original C++ geometry-debug transport, and corrects the downstream thermal fuel sector undercount. See [Stage51 verified neutronic–thermal audit](NERVA_STAGE51_VERIFIED_NEUTRON_THERMAL_SECTOR_CSG_AND_ENERGY.md). No material loading/enrichment or outer physical coating region was modified.
+
 ## Source-specific NASA geometry pedigree (no mixed reactor baselines)
 
 **Primary original reference:** Fittje, Borowski and Schnitzler, *Revised Point of Departure Design Options for Nuclear Thermal Propulsion*, NASA NTRS **20150021278**, [official PDF](https://ntrs.nasa.gov/api/citations/20150021278/downloads/20150021278.pdf), PDF **pages 6–8**, Figs. 4–6, Section III.A.

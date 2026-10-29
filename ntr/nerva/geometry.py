@@ -50,7 +50,13 @@ def build_fuel_element_universe(
             openmc.Cell(
                 name=f"ZrC channel coating {index}",
                 fill=materials["zrc"],
-                region=+inner & -outer,
+                # Six outer coated channel rings extend ~0.00363 cm
+                # beyond the y-oriented inner fuel hex. Without this
+                # intersection they geometrically OVERLAP the outer ZrC
+                # cell (+inner_hex). The same ZrC material remains on
+                # both sides, but native OpenMC CSG cell ownership must
+                # be unique for tracking/tally provenance.
+                region=+inner & -outer & -inner_hex,
             ),
         ))
 
