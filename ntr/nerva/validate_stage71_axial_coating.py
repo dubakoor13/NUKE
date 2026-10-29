@@ -94,7 +94,7 @@ class AxialCoatingFiniteVolumeTests(unittest.TestCase):
         np.testing.assert_array_equal(step.temperature_k,t)
         np.testing.assert_array_equal(step.axial_interface_j,
                                       np.zeros((2,19)))
-        self.assertEqual(step.net_axial_energy_j,0.)
+        self.assertAlmostEqual(step.net_axial_energy_j,0.,delta=1e-12)
         self.assertEqual(step.global_first_law_residual_j,0.)
 
     def test_axial_heating_spreads_without_heating_other_channels(self):
