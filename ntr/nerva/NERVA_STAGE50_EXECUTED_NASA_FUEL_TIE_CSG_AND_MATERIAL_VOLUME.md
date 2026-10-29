@@ -1,6 +1,6 @@
 # Stage 50 — NASA 2015 real OpenMC fuel-element and tie-tube CSG material/volume physics
 
-**Status: real OpenMC CSG verified against independent analytical geometry**, original model unchanged. [Stage50 original 12-test verification, GitHub Actions 40816200340 (PASS)](https://github.com/dubakoor13/NUKE/actions/runs/40816200340). A supplemental fast-layout helper correction adds an additional geometry regression and runs `validate_layout` on the same official OpenMC image.
+**Status: real OpenMC CSG verified against independent analytical geometry**, original model unchanged. [Stage50 complete **13/13** tests plus the existing fast layout validator, GitHub Actions 40816631372 (PASS)](https://github.com/dubakoor13/NUKE/actions/runs/40816631372). The old layout helper was corrected to use the same hex orientation as OpenMC; an additional regression verifies the **-0.00363 cm** real inner-coating clearance and a positive **+0.00137 cm** hydrogen bore-to-inner-hex clearance.
 
 ## Source-specific NASA geometry pedigree (no mixed reactor baselines)
 
@@ -46,7 +46,7 @@ The official `openmc/openmc:v0.15.3` Python geometry objects used by NUKE's tran
 
 **Original accepted numerical result:** **2,025** fuel-element actual CSG queries plus **1,841** tie-tube CSG queries, **all matched** the independent actual geometric containment/identification calculation, including H2, fuel, ZrC, Inconel, ZrH, graphite and true void regions. The tests also reject nonphysical channel overlap/hex escape, inverted tie-shell ordering, and historical reactor overclaiming.
 
-[Original successful Stage50 CSG/material physics job](https://github.com/dubakoor13/NUKE/actions/runs/40816200340); [exact numerical material-volume/geometry CSG JSON artifact 12872696110](https://github.com/dubakoor13/NUKE/actions/runs/40816200340/artifacts/12872696110).
+[Original successful Stage50 CSG/material physics job, 13/13 PASS](https://github.com/dubakoor13/NUKE/actions/runs/40816631372); [exact numerical material-volume/geometry CSG JSON artifact 12872696110](https://github.com/dubakoor13/NUKE/actions/runs/40816200340/artifacts/12872696110).
 
 ## Model physics limitations and next priority
 
