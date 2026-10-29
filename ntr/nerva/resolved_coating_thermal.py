@@ -344,10 +344,10 @@ def advance_coating_axial_enthalpy(
             jac=diags(main,format="csr")
         return residual, jac, f
     x=temp0.copy().ravel()
-    tscale=max(
-        1.,float(np.max(np.abs(power))),
-        float(np.max(np.abs(mass*coating.heat_capacity.at(temp0)/dt_s))),
-    )
+    # Do not scale solver convergence by mass*cp/dt: for short
+    # acoustic substeps that term may dwarf REAL thermal fluxes and
+    # would accept essentially an unadvanced coating state.
+    tscale=max(1.,float(np.max(np.abs(power))))
     tolerance=2e-8+relative_tolerance*tscale
     iterations=0
     for count in range(max_iterations):
