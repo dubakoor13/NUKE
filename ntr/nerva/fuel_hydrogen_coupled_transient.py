@@ -25,6 +25,14 @@ from .fuel_cutcell_axial_transport import AxialCutCellModel
 from .fuel_cutcell_nonlinear_enthalpy import (
     NonlinearThermalProperties, _NonlinearSystem,
 )
+from .coating_angular_fvm import (
+    AngularCoatingMesh, build_angular_coating_mesh,
+    advance_angular_coating_enthalpy,
+)
+from .coating_angular_interfaces import (
+    AngularCoatingInterfaces, build_angular_coating_interfaces,
+    angular_interface_power, distribute_channel_coating_power,
+)
 from .resolved_coating_thermal import (
     ResolvedCoatingModel, build_resolved_coating,
     coating_interface_power, advance_coating_enthalpy,
@@ -68,6 +76,8 @@ class CoupledCoreResult:
     coating_first_law_residual_j: float = 0.
     coating_axial_interface_j: np.ndarray | None = None
     coating_axial_max_node_residual_j: float = 0.
+    coating_angular_face_transfer_j: np.ndarray | None = None
+    coating_angular_max_node_residual_j: float = 0.
 
 
 @dataclass(frozen=True)
@@ -78,6 +88,8 @@ class CoupledCoreModel:
     properties: NonlinearThermalProperties
     solid_density_kg_m3: np.ndarray
     coating: ResolvedCoatingModel | None = None
+    angular_coating: AngularCoatingMesh | None = None
+    angular_contacts: AngularCoatingInterfaces | None = None
 
     @property
     def nzone(self) -> int:
@@ -129,6 +141,7 @@ def with_resolved_coating(
     heat_capacity: TemperatureTable,
     contact_resistance_m2_k_w: object = 0.,
     axial_conduction_enabled: bool = False,
+    angular_sectors: int | None = None,
 ) -> CoupledCoreModel:
     """Enable coating mass and thermal contact within existing Stage58."""
     coating=build_resolved_coating(
@@ -137,9 +150,22 @@ def with_resolved_coating(
         contact_resistance_m2_k_w=contact_resistance_m2_k_w,
         axial_conduction_enabled=axial_conduction_enabled,
     )
+    if angular_sectors is None:
+        angular=None
+        contacts=None
+    else:
+        if not axial_conduction_enabled:
+            raise ValueError(
+                "angular coating transport includes axial conduction: enable axial_conduction_enabled"
+            )
+        angular=build_angular_coating_mesh(
+            model.config,coating,angular_sectors=angular_sectors,
+            density_kg_m3=density_kg_m3)
+        contacts=build_angular_coating_interfaces(
+            model.config,model.solid,coating,angular)
     return CoupledCoreModel(
         model.config,model.solid,model.fluid,model.properties,
-        model.solid_density_kg_m3,coating,
+        model.solid_density_kg_m3,coating,angular,contacts,
     )
 
 
