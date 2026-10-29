@@ -58,6 +58,11 @@ class NativeFuelHeatingTally:
     source_mesh_mean_ev_per_source: np.ndarray
     source_mesh_stderr_ev_per_source: np.ndarray
     statepoint_sha256: str
+    openmc_version: tuple[int,int,int]
+    photon_transport_verified_disabled: bool
+    n_batches: int
+    n_inactive: int
+    n_particles: int
     uncertainty_status: str = (
         "per-bin sample mean stderr; axial uncertainty upper-bound "
         "by sum of marginal stderr; inter-bin covariance unavailable"
@@ -162,15 +167,51 @@ def _validate_file_and_tally(hdf: h5py.File, fuel_id: int) -> tuple[h5py.Group,i
         raise ValueError("not a native OpenMC statepoint HDF5 file")
     if "run_mode" not in hdf or _scalar_string(hdf["run_mode"][()])!="eigenvalue":
         raise ValueError("only original OpenMC eigenvalue source-normalized tallies supported")
+    # These fields are written by the OpenMC kernel itself. Caller-supplied
+    # photon_transport_confirmed_disabled is INSUFFICIENT evidence: a
+    # neutron-only heating-local score must not be accepted from a photon
+    # transport statepoint, even if a caller claims otherwise.
+    if "photon_transport" not in hdf.attrs:
+        raise ValueError("native statepoint photon_transport mode metadata missing")
+    photon_mode=np.asarray(hdf.attrs["photon_transport"])
+    if photon_mode.ndim!=0 or not np.issubdtype(photon_mode.dtype,np.integer):
+        raise ValueError("native photon_transport mode must be an integer flag")
+    if int(photon_mode) not in (0,1):
+        raise ValueError("native photon_transport mode flag invalid")
+    if bool(int(photon_mode)):
+        raise ValueError("photon transport enabled in native HDF5: heating-local unsupported")
+    if "openmc_version" not in hdf.attrs:
+        raise ValueError("native OpenMC version metadata missing")
+    version=np.asarray(hdf.attrs["openmc_version"])
+    if (version.ndim!=1 or len(version)<3 or
+            not np.issubdtype(version.dtype,np.integer) or
+            np.any(version[:3]<0)):
+        raise ValueError("native OpenMC version invalid")
+    required=("n_batches","n_inactive","n_particles")
+    if any(key not in hdf for key in required):
+        raise ValueError("native source generation and particle metadata missing")
+    batches,inactive,particles=(int(hdf[name][()]) for name in required)
+    if batches<2 or not 0<=inactive<batches or particles<=0:
+        raise ValueError("invalid source batches, inactive count or particle population")
+
     if "tallies" not in hdf or "tallies_present" not in hdf.attrs or int(hdf.attrs["tallies_present"])!=1:
         raise ValueError("native statepoint does not contain user tally data")
     tg=hdf["tallies"]
+    if "n_tallies" not in tg.attrs or "ids" not in tg.attrs:
+        raise ValueError("native OpenMC tally ID manifest unavailable")
+    declared_ids=np.asarray(tg.attrs["ids"],dtype=int).reshape(-1)
+    count=int(tg.attrs["n_tallies"])
+    if (count<1 or len(declared_ids)!=count or
+            len(set(declared_ids.tolist()))!=count):
+        raise ValueError("native OpenMC tally manifest has invalid identities")
     matches=[group for label,group in tg.items()
              if isinstance(group,h5py.Group) and label.startswith("tally ")
              and "name" in group and _scalar_string(group["name"][()])==_EXPECTED_TALLY]
     if len(matches)!=1:
         raise ValueError("exactly one named NERVA fuel heating tally required")
     tally=matches[0]
+    if int(tally.name.rsplit(" ",1)[-1]) not in declared_ids:
+        raise ValueError("selected fuel tally is not in native OpenMC tally manifest")
     if "score_bins" not in tally or "nuclides" not in tally or "filters" not in tally:
         raise ValueError("OpenMC fuel tally lacks score/nuclide/filter metadata")
     scores=_metadata_list(tally["score_bins"][()])
@@ -269,6 +310,9 @@ def read_openmc_neutron_fuel_statepoint(
         n=int(tally["n_realizations"][()])
         if n<2:
             raise ValueError("cannot derive tally uncertainty from fewer than two realizations")
+        active=int(hdf["n_batches"][()])-int(hdf["n_inactive"][()])
+        if n>active:
+            raise ValueError("native fuel tally realizations exceed active eigenvalue batches")
         scores=_metadata_list(tally["score_bins"][()])
         index=scores.index(_EXPECTED_SCORE)
         data=np.asarray(tally["results"][()],dtype=float)
@@ -318,4 +362,9 @@ def read_openmc_neutron_fuel_statepoint(
             source_mesh_mean_ev_per_source=m,
             source_mesh_stderr_ev_per_source=err,
             statepoint_sha256=file_sha,
+            openmc_version=tuple(int(x) for x in hdf.attrs["openmc_version"][:3]),
+            photon_transport_verified_disabled=True,
+            n_batches=int(hdf["n_batches"][()]),
+            n_inactive=int(hdf["n_inactive"][()]),
+            n_particles=int(hdf["n_particles"][()]),
         )
