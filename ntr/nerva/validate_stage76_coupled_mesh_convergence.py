@@ -92,6 +92,24 @@ class CoupledThermalMeshRefinementTests(unittest.TestCase):
             angular_counts=(8,12,16),
             axial_counts=(2,3,4))
 
+    def test_same_spatially_nonuniform_thermal_profile_across_resolutions(self):
+        # This guards against trivial identical axial-refinement results.
+        # The initial field is sampled from ONE continuous physical
+        # temperature profile, independently of the number of cells.
+        m,state=physical_fixture(
+            CoupledMeshResolution(20,24,3,12,3))
+        self.assertGreater(
+            float(np.ptp(state.fuel_temperature_k[:,0])),10.)
+        self.assertGreater(
+            float(np.ptp(state.coating_temperature_k[:,0,0,0])),5.)
+        self.assertGreater(
+            float(np.ptp(state.coating_temperature_k[0,0,:,0])),10.)
+        self.assertGreater(
+            float(np.ptp(state.coating_temperature_k[0,0,0,:])),1.)
+        from .hydrogen_transient_fvm import primitive
+        h=primitive(m.fluid,state.hydrogen)
+        self.assertGreater(float(np.ptp(h.temperature_k[:,0])),3.)
+
     def test_all_three_independent_refinement_axes_have_three_levels(self):
         s=self.study
         self.assertEqual(set(s.axes),{"radial","angular","axial"})
