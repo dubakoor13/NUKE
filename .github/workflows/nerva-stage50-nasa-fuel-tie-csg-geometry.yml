@@ -1,0 +1,56 @@
+name: NUKE Stage50 NASA fuel/tie CSG material conservation physics
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/real_nasa2015_fuel_tie_csg_volume_audit.py'
+      - 'ntr/nerva/validate_stage50_nasa_fuel_tie_csg.py'
+      - '.github/workflows/nerva-stage50-nasa-fuel-tie-csg-geometry.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/real_nasa2015_fuel_tie_csg_volume_audit.py'
+      - 'ntr/nerva/validate_stage50_nasa_fuel_tie_csg.py'
+      - '.github/workflows/nerva-stage50-nasa-fuel-tie-csg-geometry.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  nasa-geometry-physical-material-openmc-csg:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify the original OpenMC C++ 0.15.3 image
+        run: |
+          mkdir -p build/stage50
+          docker pull openmc/openmc:v0.15.3
+          docker image inspect openmc/openmc:v0.15.3 \
+            --format '{{json .RepoDigests}}' > build/stage50/openmc_cpp_image_digest.json
+      - name: Execute exact geometry closure, real OpenMC CSG and historical discrimination
+        run: |
+          docker run --rm --cpus=2 --memory=6g \
+            -v "$GITHUB_WORKSPACE:/repo" -w /tmp \
+            openmc/openmc:v0.15.3 bash -lc '
+              set -euo pipefail
+              export PYTHONPATH="$(python -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"):/repo"
+              python -m unittest \
+                ntr.nerva.validate_stage50_nasa_fuel_tie_csg.HistoricalFuelTieAnalyticMathTests -v
+              python -m ntr.nerva.real_nasa2015_fuel_tie_csg_volume_audit \
+                --random-csg-points 1800 \
+                --output /repo/build/stage50/actual_openmc_csg_physical_material_partition.json
+              NUKE_STAGE50_ORIGINAL_OPENMC_CSG=1 python -m unittest \
+                ntr.nerva.validate_stage50_nasa_fuel_tie_csg.ActualTransportOpenMCCSGTests -v
+              python -c "import json; r=json.load(open(\"/repo/build/stage50/actual_openmc_csg_physical_material_partition.json\")); assert r[\"original_OpenMC_CSG_analytic_material_membership\"][\"original_openmc_csg_matches_independent_analytic_membership_at_all_points\"] and r[\"element_level_nasa_2015_dimensions\"][\"fuel\"][\"analytical_area_conservation\"] and not r[\"physical_coupled_hot_NERVA_reactor_validated\"]; print(\"Original OpenMC material/void CSG matches independent geometry analytical physics\")"
+            '
+      - name: Archive original exact material-volume/CSG evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuke-stage50-original-nasa-fuel-tie-csg-material-physics
+          path: build/stage50/*.json
+          retention-days: 21
+          if-no-files-found: warn
