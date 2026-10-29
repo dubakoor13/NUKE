@@ -52,6 +52,7 @@ def synthetic_statepoint(path: Path, *,
     tally_scores[:,2,1]=n*(.5**2+(n-1)*.03**2)
     with h5py.File(path,"w") as h:
         h.attrs["filetype"]=np.bytes_("statepoint")
+        h.attrs["version"]=18
         h.attrs["tallies_present"]=1
         h.attrs["photon_transport"]=int(photon)
         h.attrs["openmc_version"]=np.array([0,15,3],dtype=np.int64)
