@@ -76,6 +76,9 @@ class NativeFuelHeatingTally:
         "energy partition and must not be added to independent photon "
         "heating without a separately validated transport accounting"
     )
+    source_mesh_neutron_mean_ev_per_source: np.ndarray | None = None
+    source_mesh_photon_mean_ev_per_source: np.ndarray | None = None
+
 
 
 @dataclass(frozen=True)
