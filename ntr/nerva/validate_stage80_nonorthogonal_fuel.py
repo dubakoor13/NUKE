@@ -170,6 +170,42 @@ class NonorthogonalFuelWallCorrectionTests(unittest.TestCase):
                 broken,state,dt_s=1e-6,
                 fuel_deposition_w=np.zeros_like(state.fuel_temperature_k))
 
+    def test_peak_flux_improvement_does_not_mask_integrated_heat_nonconvergence(self):
+        # One synthetic benchmark: the new model's peak local wall q''
+        # varies less than 1% on the finest change, but its integral
+        # wall energy remains nonmonotonic at ~2%: not grid independent.
+        study=self.full
+        peak=study.metrics["fuel_outer_wall_peak_abs_w_m2"]
+        total=study.metrics["fuel_to_coating_energy_j"]
+        self.assertLess(peak.relative_mid_to_fine,.01)
+        self.assertTrue(peak.decreasing_successive_differences)
+        self.assertGreater(total.relative_mid_to_fine,.015)
+        self.assertFalse(total.decreasing_successive_differences)
+        self.assertIn(
+            "fuel_to_coating_energy_j",
+            study.metrics_requiring_further_refinement)
+
+    def test_public_coupled_builder_explicitly_installs_sparse_gradient_operator(self):
+        from .validate_stage58_fuel_hydrogen_coupling import coupled
+        from .fuel_hydrogen_coupled_transient import with_resolved_coating
+        sample=self.model
+        base=coupled(film=1200.,nz=2,nx=20,ny=24)
+        generated=with_resolved_coating(
+            base,density_kg_m3=5000.,
+            heat_capacity=sample.coating.heat_capacity,
+            contact_resistance_m2_k_w=1e-5,
+            axial_conduction_enabled=True,
+            angular_sectors=8,radial_layers=2,
+            fuel_wall_distance_model="moment_nonorthogonal_gradient")
+        self.assertIsNotNone(
+            generated.angular_contacts.fuel_gradient_reconstruction)
+        self.assertEqual(
+            generated.coating.fuel_wall_distance_model,
+            "moment_nonorthogonal_gradient")
+        self.assertEqual(
+            generated.radial_coating.sector_mass_kg.shape,
+            sample.radial_coating.sector_mass_kg.shape)
+
     def test_previous_centroid_normal_tpfa_remains_available(self):
         from .validate_stage79_fuel_wall_moments import moment_factory
         model,state=moment_factory(BASE)
