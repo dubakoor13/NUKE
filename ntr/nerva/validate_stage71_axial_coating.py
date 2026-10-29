@@ -52,7 +52,7 @@ class AxialCoatingFiniteVolumeTests(unittest.TestCase):
         dz=np.diff(c.axial_edges_m)
         area=c.volume_m3/dz[:,None]
         self.assertTrue(c.axial_conduction_enabled)
-        np.testing.assert_allclose(area,area[:1,:],rtol=5e-11,atol=1e-15)
+        np.testing.assert_allclose(area,np.broadcast_to(area[:1,:],area.shape),rtol=5e-11,atol=1e-15)
         self.assertGreater(float(np.min(area)),0.)
         self.assertLess(float(np.sum(area)),1e-4)
 
