@@ -173,7 +173,7 @@ class ExactSpatialFuelHandoffTests(unittest.TestCase):
                 isolated_element_geometry_confirmed=True)
 
     def test_outside_fuel_voxel_must_not_carry_nonzero_fuel_heating(self):
-        native=local_native(self.m,dim=(5,5,4))
+        native=local_native(self.m,dim=(12,12,4))
         # Source corners have no fuel where the inner hex is truncated.
         with self.assertRaisesRegex(ValueError,"no fuel"):
             project_native_3d_fuel_heating(
