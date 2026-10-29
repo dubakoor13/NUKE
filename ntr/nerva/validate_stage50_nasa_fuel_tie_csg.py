@@ -7,6 +7,7 @@ import os
 import unittest
 
 from .config import NervaConfig
+from .layout import outer_channel_margin_cm
 from .real_nasa2015_fuel_tie_csg_volume_audit import (
     audit_one_historical_element_reference,
     fuel_analytical_areas,
@@ -55,6 +56,18 @@ class HistoricalFuelTieAnalyticMathTests(unittest.TestCase):
                                19*math.pi*self.c.coolant_bore_diameter_cm*132.)
         self.assertAlmostEqual(sum(p["exact_active_length_volumes_cm3"].values()),
                                p["total_element_volume_cm3"],places=9)
+
+    def test_existing_fast_layout_matches_actual_vertical_flat_openmc_orientation(self):
+        # This former helper incorrectly returned a +0.1059 cm clearance
+        # by using the flat-horizontal normals. Actual OpenMC y hex
+        # clips six channel coatings across its INNER hex by 0.00363cm.
+        p=fuel_analytical_areas(self.c)
+        self.assertAlmostEqual(outer_channel_margin_cm(self.c),-0.00363,places=12)
+        self.assertAlmostEqual(outer_channel_margin_cm(self.c),
+                               p["negative_channel_coating_to_inner_hex_margin_cm"],
+                               places=12)
+        self.assertGreater(
+            outer_channel_margin_cm(self.c)+self.c.zrc_coating_thickness_cm,0.)
 
     def test_figure5_and_figure6_nominal_width_ambiguity_not_suppressed(self):
         p=fuel_analytical_areas(self.c)
