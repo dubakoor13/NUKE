@@ -356,7 +356,7 @@ def advance_coating_axial_enthalpy(
         if error<=tolerance:
             iterations=count
             break
-        direction=np.asarray(spsolve(jac,-res),dtype=float)
+        direction=np.asarray(spsolve(jac,-res.ravel()),dtype=float)
         if not np.all(np.isfinite(direction)):
             raise ArithmeticError("singular/nonfinite axial coating Newton step")
         alpha=1.
