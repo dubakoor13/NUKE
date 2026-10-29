@@ -41,9 +41,12 @@ from .physical_core_reference_validation import assess_core_fidelity
 
 NASA_SOURCE = "https://ntrs.nasa.gov/api/citations/20150021278/downloads/20150021278.pdf"
 NASA_ID = "NASA NTRS 20150021278"
-NORMALS = ((0.0, 1.0),
-           (math.sqrt(3.0)/2.0, 0.5),
-           (math.sqrt(3.0)/2.0,-0.5))
+# In OpenMC HexagonalPrism(orientation="y"), two sides are parallel
+# to the y-axis, so x-normal (not y-normal) describes its flat-to-flat
+# section. A prior analytic helper assumed the opposite orientation.
+NORMALS = ((1.0, 0.0),
+           (0.5, math.sqrt(3.0)/2.0),
+           (0.5,-math.sqrt(3.0)/2.0))
 
 
 def hex_area(flat_to_flat_cm:float)->float:
@@ -56,26 +59,73 @@ def support(x:float,y:float)->float:
     return max(abs(nx*x+ny*y) for nx,ny in NORMALS)
 
 
+def _circular_cap(r:float,d:float)->float:
+    """Exact circle segment outside one straight inner-hex face."""
+    if d>=r:
+        return 0.0
+    if d<=0:
+        raise ValueError("channel centre is not strictly inside current inner hex")
+    return r*r*math.acos(d/r)-d*math.sqrt(max(0.0,r*r-d*d))
+
+
 def fuel_analytical_areas(c:NervaConfig)->dict:
-    """Exact cross-sectional partition for the 19-channel CAD/CSG model."""
+    """Exactly partition 19-channel CSG, including 6 clipped ZrC rings.
+
+    This intentionally retains the original OpenMC 'y'-hex orientation.
+    Distinct ZrC channel/exterior *cells* overlap geometrically as shapes
+    but their actual CSG regions DO NOT: the channel ring is clipped by
+    the inner prism, and the exterior shell owns the rest. That changes
+    the correct region-volume bookkeeping without changing materials.
+    """
     c.validate()
     centers=coolant_channel_positions(c)
     if len(centers)!=19:
         raise ValueError("exactly 19 actual fuel-element coolant centers required")
-    if (minimum_channel_ligament_cm(c)<=0 or
-            outer_channel_margin_cm(c)<=0):
-        raise ValueError("OpenMC 19 channel coating circles are overlapping or out of hex")
+    ligament=minimum_channel_ligament_cm(c)
+    if ligament<=0:
+        raise ValueError("channel-coating circles intersect each other")
+    apothem_inner=c.inner_fuel_flat_to_flat_cm/2.0
+    apothem_outer=c.fuel_flat_to_flat_cm/2.0
+    cap_total=0.0
+    clipped_centres=0
+    min_inner_margin=float("inf")
+    min_outer_margin=float("inf")
+    min_bore_margin=float("inf")
+    for x,y in centers:
+        distances=[
+            apothem_inner-nx*x-ny*y
+            for nx,ny in [*NORMALS,*[(-a,-b) for a,b in NORMALS]]
+        ]
+        outer_distances=[
+            apothem_outer-nx*x-ny*y
+            for nx,ny in [*NORMALS,*[(-a,-b) for a,b in NORMALS]]
+        ]
+        if min(outer_distances)<=c.coated_channel_radius_cm:
+            raise ValueError("coated coolant passage exits the actual OpenMC outer hex")
+        if min(distances)<=c.channel_radius_cm:
+            raise ValueError("hydrogen bore exits the inner fuel hex")
+        crossing=[d for d in distances if d<c.coated_channel_radius_cm]
+        if len(crossing)>1:
+            raise ValueError("two-face/corner circle clipping not qualified analytically")
+        if crossing:
+            clipped_centres+=1
+            cap_total+=_circular_cap(c.coated_channel_radius_cm,crossing[0])
+        min_inner_margin=min(min_inner_margin,min(distances)-c.coated_channel_radius_cm)
+        min_bore_margin=min(min_bore_margin,min(distances)-c.channel_radius_cm)
+        min_outer_margin=min(min_outer_margin,min(outer_distances)-c.coated_channel_radius_cm)
     outer_area=hex_area(c.fuel_flat_to_flat_cm)
     inner_area=hex_area(c.inner_fuel_flat_to_flat_cm)
-    bore=19.0*math.pi*c.channel_radius_cm**2
-    coatings=19.0*math.pi*(
-        c.coated_channel_radius_cm**2-c.channel_radius_cm**2)
+    bore=19.*math.pi*c.channel_radius_cm**2
+    complete_rings=19.*math.pi*(
+        c.coated_channel_radius_cm**2-c.channel_radius_cm**2
+    )
+    channel_coating_inside_inner=complete_rings-cap_total
     exterior=outer_area-inner_area
-    fuel=inner_area-bore-coatings
+    fuel=inner_area-bore-channel_coating_inside_inner
     areas={
         "fuel_matrix":fuel,
         "hydrogen_coolant_bores":bore,
-        "ZrC_channel_coatings":coatings,
+        "ZrC_channel_coatings":channel_coating_inside_inner,
         "ZrC_external_hex_coating":exterior,
     }
     if any(not math.isfinite(x) or x<=0 for x in areas.values()):
@@ -97,6 +147,8 @@ def fuel_analytical_areas(c:NervaConfig)->dict:
         "channel_bore_diameter_cm":c.coolant_bore_diameter_cm,
         "channel_center_pitch_cm":c.coolant_bore_pitch_cm,
         "ZrC_outer_nominal_thickness_cm":c.zrc_coating_thickness_cm,
+        "hex_prism_actual_OpenMC_orientation":"y — vertical flats",
+        "legacy_assumed_opposite_hex_orientation":True,
         "hex_external_total_cross_section_cm2":outer_area,
         "inner_hex_cross_section_cm2":inner_area,
         "exact_2d_partition_areas_cm2":areas,
@@ -112,10 +164,17 @@ def fuel_analytical_areas(c:NervaConfig)->dict:
             19*2*math.pi*c.coated_channel_radius_cm,
         "hydrogen_channel_wetted_surface_cm2":
             19*2*math.pi*c.channel_radius_cm*c.active_length_cm,
-        "minimum_2d_channel_to_channel_fuel_ligament_cm":
-            minimum_channel_ligament_cm(c),
-        "minimum_coated_channel_to_inner_hex_margin_cm":
-            outer_channel_margin_cm(c),
+        "minimum_2d_channel_to_channel_fuel_ligament_cm":ligament,
+        "number_outer_channel_coating_rings_clipped_by_actual_inner_hex":
+            clipped_centres,
+        "area_of_ring_outside_inner_hex_but_inside_exterior_ZrC_cm2":
+            cap_total,
+        "negative_channel_coating_to_inner_hex_margin_cm":
+            min_inner_margin,
+        "minimum_bore_to_inner_hex_margin_cm":min_bore_margin,
+        "minimum_coated_channel_to_outer_hex_margin_cm":
+            min_outer_margin,
+        "actual_nuclear_ZrC_region_partition_clips_channel_ring_at_inner_hex":True,
         "analytical_area_conservation":True,
     }
 
