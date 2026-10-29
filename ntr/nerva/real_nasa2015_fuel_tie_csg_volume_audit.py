@@ -338,8 +338,13 @@ def actual_openmc_csg_classification(c:NervaConfig, *,
             for rad in (0.5*c.channel_radius_cm,
                         c.channel_radius_cm+0.50*c.zrc_coating_thickness_cm,
                         c.coated_channel_radius_cm+0.03):
-                check(fuel,"fuel_element",cx+rad*ux,cy+rad*uy)
-    check(fuel,"fuel_element",0.0,c.fuel_flat_to_flat_cm/2-0.5*c.zrc_coating_thickness_cm)
+                xx,yy=cx+rad*ux,cy+rad*uy
+                # A diagnostic point outside the actual y-hex is not
+                # part of this element or its attached coating.
+                if support(xx,yy)<c.fuel_flat_to_flat_cm/2-1e-12:
+                    check(fuel,"fuel_element",xx,yy)
+    check(fuel,"fuel_element",
+          c.fuel_flat_to_flat_cm/2-0.5*c.zrc_coating_thickness_cm,0.0)
     for ang in (0.12,1.05,2.43,4.72):
         r=[0.0,c.tie_inner_tube_inner_radius_cm,
            c.tie_inner_tube_outer_radius_cm,c.tie_zrh_inner_radius_cm,
@@ -356,7 +361,8 @@ def actual_openmc_csg_classification(c:NervaConfig, *,
         # only if its hex support is within the inner apothem.
         if support(radius*math.cos(ang),radius*math.sin(ang)) < c.inner_fuel_flat_to_flat_cm/2:
             check(tie,"coaxial_tie_element",radius*math.cos(ang),radius*math.sin(ang))
-    check(tie,"coaxial_tie_element",0.0,c.fuel_flat_to_flat_cm/2-0.5*c.zrc_coating_thickness_cm)
+    check(tie,"coaxial_tie_element",
+          c.fuel_flat_to_flat_cm/2-0.5*c.zrc_coating_thickness_cm,0.0)
 
     # Exact analytic vs OpenMC CSG material classification on uniform area
     # points in the bounding rectangle, accepted only inside the hex.
