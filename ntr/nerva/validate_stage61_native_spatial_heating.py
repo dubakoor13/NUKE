@@ -90,7 +90,8 @@ class ExactSpatialFuelHandoffTests(unittest.TestCase):
             isolated_element_geometry_confirmed=True)
         weights=r.source_xy_to_fuel_weights
         mat_area=self.m.solid.transverse.fuel_areas_cm2
-        source_area=r.source_xy_fuel_area_cm2.ravel()
+        # source XY columns use OpenMC's native i+nx*j (X fastest).
+        source_area=r.source_xy_fuel_area_cm2.ravel(order="F")
         active=source_area>1e-14
         np.testing.assert_allclose(
             np.asarray(weights.sum(axis=0)).ravel()[active],
