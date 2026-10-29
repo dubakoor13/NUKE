@@ -1,0 +1,60 @@
+name: NUKE Stage56 compressible hydrogen momentum and EOS numerics
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/hydrogen_channel_hydraulics.py'
+      - 'ntr/nerva/validate_stage56_hydrogen_hydraulics.py'
+      - '.github/workflows/nerva-stage56-hydrogen-momentum.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/hydrogen_channel_hydraulics.py'
+      - 'ntr/nerva/validate_stage56_hydrogen_hydraulics.py'
+      - '.github/workflows/nerva-stage56-hydrogen-momentum.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  compressible-hydrogen-physical-momentum:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install sparse numerical dependencies
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2'
+      - name: Verify compressible hydrogen momentum and thermal regressions
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage56_hydrogen_hydraulics -v
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Numerical diagnostics with SYNTHETIC hydrogen property input
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.validate_stage56_hydrogen_hydraulics import simulate
+          r=simulate(nz=40,temperature=500.,pressure=3.e6,flow=.0005)
+          print('Stage56 channels:',len(r.mass_flow_kg_s))
+          print('Stage56 resolved axial coolant segments:',len(r.axial_edges_m)-1)
+          print('Stage56 inlet pressure [Pa]:',r.pressure_faces_pa[0,0])
+          print('Stage56 outlet pressure [Pa]:',r.pressure_faces_pa[-1,0])
+          print('Stage56 pressure loss [Pa]:',r.pressure_drop_pa[0])
+          print('Stage56 maximum Mach:',r.maximum_mach)
+          print('Stage56 max compressible momentum residual [Pa]:',
+                np.abs(r.momentum_residual_pa).max())
+          print('Stage56 ideal-gas fluid inventory [kg]:',r.total_fluid_inventory_kg)
+          print('Stage56: ideal EOS and all viscosity/cp tables are SYNTHETIC')
+          assert r.maximum_mach < .75
+          assert np.abs(r.momentum_residual_pa).max()<1e-5
+          assert r.pressure_drop_pa[0]>0
+          PY
