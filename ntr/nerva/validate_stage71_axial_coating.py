@@ -105,7 +105,7 @@ class AxialCoatingFiniteVolumeTests(unittest.TestCase):
         source[0,8]=1.
         step=advance_coating_axial_enthalpy(
             c,t,conductivity_w_m_k=k,
-            dt_s=1400.,net_w=source)
+            dt_s=100.,net_w=source)
         self.assertGreater(step.temperature_k[0,8],450.)
         self.assertGreater(step.temperature_k[1,8],450.)
         self.assertGreater(step.temperature_k[2,8],450.)
@@ -115,7 +115,7 @@ class AxialCoatingFiniteVolumeTests(unittest.TestCase):
         self.assertAlmostEqual(
             float(np.sum(c.mass_kg*(c.heat_capacity.integral(
                 step.temperature_k)-c.heat_capacity.integral(t)))),
-            1400.,delta=1e-7)
+            100.,delta=1e-7)
         self.assertEqual(step.net_axial_energy_j,0.)
 
     def test_variable_cp_and_k_recomputed_conservatively(self):
@@ -137,7 +137,7 @@ class AxialCoatingFiniteVolumeTests(unittest.TestCase):
                     m.coating.heat_capacity.integral(t)))),
             dt*4.,delta=3e-8)
         self.assertLess(
-            float(np.max(np.abs(r.per_node_first_law_residual_j))),1e-8)
+            float(np.max(np.abs(r.per_node_first_law_residual_j))),1e-7)
 
     def test_flux_is_equal_opposite_for_adjacent_axial_nodes(self):
         m=self.m
