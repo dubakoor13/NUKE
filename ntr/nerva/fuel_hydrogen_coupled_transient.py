@@ -29,6 +29,11 @@ from .coating_angular_fvm import (
     AngularCoatingMesh, build_angular_coating_mesh,
     advance_angular_coating_enthalpy,
 )
+from .coating_radial_fvm import (
+    RadialCoatingMesh, build_radial_coating_mesh,
+    advance_radial_coating_enthalpy, distribute_angular_power_to_radial_layers,
+)
+from .coating_radial_interfaces import radial_interface_power
 from .coating_angular_interfaces import (
     AngularCoatingInterfaces, build_angular_coating_interfaces,
     angular_interface_power, distribute_channel_coating_power,
@@ -78,6 +83,8 @@ class CoupledCoreResult:
     coating_axial_max_node_residual_j: float = 0.
     coating_angular_face_transfer_j: np.ndarray | None = None
     coating_angular_max_node_residual_j: float = 0.
+    coating_radial_face_transfer_j: np.ndarray | None = None
+    coating_radial_max_node_residual_j: float = 0.
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,7 @@ class CoupledCoreModel:
     coating: ResolvedCoatingModel | None = None
     angular_coating: AngularCoatingMesh | None = None
     angular_contacts: AngularCoatingInterfaces | None = None
+    radial_coating: RadialCoatingMesh | None = None
 
     @property
     def nzone(self) -> int:
@@ -142,6 +150,7 @@ def with_resolved_coating(
     contact_resistance_m2_k_w: object = 0.,
     axial_conduction_enabled: bool = False,
     angular_sectors: int | None = None,
+    radial_layers: int | None = None,
 ) -> CoupledCoreModel:
     """Enable coating mass and thermal contact within existing Stage58."""
     coating=build_resolved_coating(
@@ -163,9 +172,17 @@ def with_resolved_coating(
             density_kg_m3=density_kg_m3)
         contacts=build_angular_coating_interfaces(
             model.config,model.solid,coating,angular)
+    if radial_layers is None:
+        radial=None
+    else:
+        if angular is None:
+            raise ValueError("resolved radial coating needs angular sectors and axial conduction")
+        radial=build_radial_coating_mesh(
+            model.config,coating,angular,radial_layers=radial_layers,
+            density_kg_m3=density_kg_m3)
     return CoupledCoreModel(
         model.config,model.solid,model.fluid,model.properties,
-        model.solid_density_kg_m3,coating,angular,contacts,
+        model.solid_density_kg_m3,coating,angular,contacts,radial,
     )
 
 
