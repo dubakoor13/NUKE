@@ -165,6 +165,14 @@ def _metadata_list(dataset: object) -> list[str]:
 def _validate_file_and_tally(hdf: h5py.File, fuel_id: int) -> tuple[h5py.Group,int,tuple[int,int,int],np.ndarray,np.ndarray]:
     if "filetype" not in hdf.attrs or _scalar_string(hdf.attrs["filetype"])!="statepoint":
         raise ValueError("not a native OpenMC statepoint HDF5 file")
+    # OpenMC's StatePoint checks HDF5 schema version 18 in the
+    # supported OpenMC 0.15/0.16 format. A "statepoint" label is not enough.
+    if "version" not in hdf.attrs:
+        raise ValueError("native OpenMC statepoint schema version missing")
+    schema=np.asarray(hdf.attrs["version"])
+    if (schema.ndim!=0 or not np.issubdtype(schema.dtype,np.integer)
+            or int(schema)!=18):
+        raise ValueError("unsupported native OpenMC statepoint HDF5 schema version")
     if "run_mode" not in hdf or _scalar_string(hdf["run_mode"][()])!="eigenvalue":
         raise ValueError("only original OpenMC eigenvalue source-normalized tallies supported")
     # These fields are written by the OpenMC kernel itself. Caller-supplied
