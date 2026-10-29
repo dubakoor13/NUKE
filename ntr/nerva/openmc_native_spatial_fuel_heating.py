@@ -149,7 +149,8 @@ def _geometric_source_weights(
     weighted_target=np.zeros(nf)
     for a in range(src_nx):
         for b in range(src_ny):
-            srci=a*src_ny+b
+            # Native OpenMC bin=i+nx*(j+ny*k): X varies fastest.
+            srci=a+src_nx*b
             xa,xb=float(sx[a]),float(sx[a+1])
             ya,yb=float(sy[b]),float(sy[b+1])
             direct=_fuel_only_rectangle_area(
@@ -231,8 +232,10 @@ def project_native_3d_fuel_heating(
             not np.all(np.isfinite(stderr)) or
             np.any(mean<0) or np.any(stderr<0)):
         raise ValueError("native 3D mean or marginal error arrays invalid")
-    source_scores=mean.reshape((nx*ny,nz))
-    source_errors=stderr.reshape((nx*ny,nz))
+    # Source row index a+nx*b is x-fastest, consistent with native
+    # StructuredMesh C++ tally ordering and the overlap matrix columns.
+    source_scores=mean.reshape((nx*ny,nz),order="F")
+    source_errors=stderr.reshape((nx*ny,nz),order="F")
     empty=source_area<=1e-14
     if (np.any(source_scores[empty]>1e-12)
             or np.any(source_errors[empty]>1e-12)):
@@ -281,7 +284,7 @@ def project_native_3d_fuel_heating(
     return NativeSpatialFuelHeating(
         resolved=resolved,
         source_xy_to_fuel_weights=weights,
-        source_xy_fuel_area_cm2=source_area.reshape((nx,ny)),
+        source_xy_fuel_area_cm2=source_area.reshape((nx,ny),order="F"),
         fuel_cell_uncertainty_bound_w=bounds,
         axial_uncertainty_bound_w=np.sum(bounds,axis=1),
         total_uncertainty_bound_w=float(np.sum(bounds)),
