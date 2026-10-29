@@ -1,0 +1,81 @@
+name: NUKE Stage71 coating axial finite-volume enthalpy
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/resolved_coating_thermal.py'
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/validate_stage71_axial_coating.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage71-axial-coating.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/resolved_coating_thermal.py'
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/validate_stage71_axial_coating.py'
+      - '.github/workflows/nerva-stage71-axial-coating.yml'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  coating-axial-enthalpy-conservation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install numerical runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2' 'h5py>=3.10,<4'
+      - name: Verify Stage71 manufactured cases and Stage52-70 regressions
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage71_axial_coating -v
+          python -m unittest ntr.nerva.validate_stage70_resolved_coating -v
+          python -m unittest ntr.nerva.validate_stage69_structural_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage68_full_core_energy_ledger -v
+          python -m unittest ntr.nerva.validate_stage67_hydrogen_channel_heating -v
+          python -m unittest ntr.nerva.validate_stage66_direct_hydrogen_deposition -v
+          python -m unittest ntr.nerva.validate_stage65_coupled_nuclear_heating -v
+          python -m unittest ntr.nerva.validate_stage64_native_mesh_order -v
+          python -m unittest ntr.nerva.validate_stage63_native_statepoint_format -v
+          python -m unittest ntr.nerva.validate_stage62_native_statepoint_evidence -v
+          python -m unittest ntr.nerva.validate_stage61_native_spatial_heating -v
+          python -m unittest ntr.nerva.validate_stage60_native_hdf5_heating -v
+          python -m unittest ntr.nerva.validate_stage59_core_refinement_heating -v
+          python -m unittest ntr.nerva.validate_stage58_fuel_hydrogen_coupling -v
+          python -m unittest ntr.nerva.validate_stage57_hydrogen_transient -v
+          python -m unittest ntr.nerva.validate_stage56_hydrogen_hydraulics -v
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Print independent synthetic axial coating energy diagnostic
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.validate_stage71_axial_coating import axial_model
+          from ntr.nerva.resolved_coating_thermal import advance_coating_axial_enthalpy
+          m=axial_model(nz=3,film=0.)
+          t=np.full((3,19),450.)
+          t[0,8]=600.
+          result=advance_coating_axial_enthalpy(
+              m.coating,t,
+              conductivity_w_m_k=m.properties.coating_k_w_m_k,
+              dt_s=1000.,net_w=np.zeros((3,19)))
+          print('Stage71 channel-9 starting coating T [K]:',t[:,8].tolist())
+          print('Stage71 channel-9 final coating T [K]:',result.temperature_k[:,8].tolist())
+          print('Stage71 channel-9 axial conduction interface [J]:',result.axial_interface_j[:,8].tolist())
+          print('Stage71 total coating axial source residual [J]:',result.global_first_law_residual_j)
+          print('Stage71 cross-channel thermal conductance intentionally ZERO; angular DOFs pending')
+          print('Stage71 synthetic properties and NO genuine OpenMC source')
+          assert result.temperature_k[1,8]>450.
+          assert abs(result.global_first_law_residual_j)<1e-6
+          PY
