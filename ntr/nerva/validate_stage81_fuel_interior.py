@@ -204,6 +204,21 @@ class ConservativeInteriorFuelNonorthogonalTests(unittest.TestCase):
             old.solid.transverse.lateral_face_pairs.shape,
             new.solid.transverse.lateral_face_pairs.shape)
 
+    def test_nonmonotone_total_wall_heat_remains_explicitly_unresolved(self):
+        # Stage81's manufactured affine face consistency and exact
+        # first law do not by themselves prove curved-hole accuracy.
+        # The truly coupled synthetic XY sequence still has >2% and
+        # nonmonotone integrated fuel->coating heat on the last step.
+        integral=self.study.metrics["fuel_to_coating_energy_j"]
+        local_flux=self.study.metrics["fuel_outer_wall_peak_abs_w_m2"]
+        self.assertGreater(integral.relative_mid_to_fine,.01)
+        self.assertFalse(integral.decreasing_successive_differences)
+        self.assertIn(
+            "fuel_to_coating_energy_j",
+            self.study.metrics_requiring_further_refinement)
+        self.assertLess(local_flux.relative_mid_to_fine,.01)
+        self.assertLess(self.study.max_relative_energy_residual,5e-8)
+
     def test_nonphysical_interior_gradient_face_input_fails_closed(self):
         f=self.model.interior_fuel_faces
         n=self.model.solid.transverse.n_fuel
