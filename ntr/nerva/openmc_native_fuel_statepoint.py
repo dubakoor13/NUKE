@@ -62,7 +62,11 @@ class NativeFuelHeatingTally:
         "per-bin sample mean stderr; axial uncertainty upper-bound "
         "by sum of marginal stderr; inter-bin covariance unavailable"
     )
-    photon_status: str = "neutron-only heating-local; photon transport requires separate tally"
+    photon_status: str = (\n        "neutron-only transport heating-local: secondary photon energy "
+        "is ASSUMED DEPOSITED LOCALLY; this is NOT a pure-neutron "
+        "energy partition and must not be added to independent photon "
+        "heating without a separately validated transport accounting"
+    )
 
 
 @dataclass(frozen=True)
