@@ -23,6 +23,10 @@ import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 
 from .fuel_cutcell_conduction_2d import _NORMALS, _inside_hex, _clip_polygon
+from .fuel_wall_nonorthogonal import (
+    FuelGradientReconstruction,reconstruct_fuel_gradient,
+    tangential_wall_temperature_correction_k,
+)
 from .fuel_embedded_boundary_moments import (
     fuel_cutcell_volume_centroid_cm,
     circular_arc_centroid_and_normal_cm,
@@ -57,6 +61,9 @@ class AngularCoatingInterfaces:
     fuel_wall_tangential_offset_m: csr_matrix | None = None
     fuel_wall_signed_normal_depth_m: csr_matrix | None = None
     nonorthogonal_wall_fallback_count: int = 0
+    fuel_wall_mean_normal_x: csr_matrix | None = None
+    fuel_wall_mean_normal_y: csr_matrix | None = None
+    fuel_gradient_reconstruction: FuelGradientReconstruction | None = None
 
 
 @dataclass(frozen=True)
@@ -171,6 +178,8 @@ def build_angular_coating_interfaces(
     moment_depth_area_m3=[]
     signed_normal_area_m3=[]
     tangent_offset_area_m3=[]
+    normal_x_area=[]
+    normal_y_area=[]
     fallback_count=0
     # Per-cell total physical cylindrical contact length gives a
     # conservative positive effective control-volume depth when a
@@ -232,6 +241,8 @@ def build_angular_coating_interfaces(
                 material_centroid,physical_arc,
                 allow_nonorthogonal_negative=True)
             signed_normal_area_m3.append(patch_area*signed_normal)
+            normal_x_area.append(patch_area*physical_arc[3])
+            normal_y_area.append(patch_area*physical_arc[4])
             if signed_normal>0.:
                 moment_depth=signed_normal
             else:
@@ -293,6 +304,8 @@ def build_angular_coating_interfaces(
     signed_normal=aggregate_moments(
         signed_normal_area_m3,positive=False)
     tangent_offset=aggregate_moments(tangent_offset_area_m3,positive=False)
+    normal_x=aggregate_moments(normal_x_area,positive=False)
+    normal_y=aggregate_moments(normal_y_area,positive=False)
     reference=coating.fuel_arc_m2
     if reference.shape!=(fuel.n_fuel,19):
         raise ValueError("Stage70 coating contact reference has wrong shape")
@@ -320,7 +333,32 @@ def build_angular_coating_interfaces(
         fuel_wall_tangential_offset_m=tangent_offset,
         fuel_wall_signed_normal_depth_m=signed_normal,
         nonorthogonal_wall_fallback_count=fallback_count,
+        fuel_wall_mean_normal_x=normal_x,
+        fuel_wall_mean_normal_y=normal_y,
     )
+
+
+def nonorthogonal_fuel_wall_correction_k(
+    contacts:AngularCoatingInterfaces,
+    fuel_temperature_k:np.ndarray,
+    cell:np.ndarray,
+    column:np.ndarray,
+) -> np.ndarray:
+    """Physical, signed [z,arc] affine tangential temperature difference."""
+    reconstruction=contacts.fuel_gradient_reconstruction
+    if reconstruction is None:
+        raise ValueError("missing actual-centroid fuel LS gradient geometry")
+    maps=(contacts.fuel_wall_tangential_offset_m,
+          contacts.fuel_wall_mean_normal_x,
+          contacts.fuel_wall_mean_normal_y)
+    if any(v is None for v in maps):
+        raise ValueError("missing physical arc tangents or normals")
+    tangent=np.asarray(maps[0][cell,column]).ravel()
+    nx=np.asarray(maps[1][cell,column]).ravel()
+    ny=np.asarray(maps[2][cell,column]).ravel()
+    gx,gy=reconstruct_fuel_gradient(reconstruction,fuel_temperature_k)
+    return tangential_wall_temperature_correction_k(
+        gx,gy,cell,tangent,nx,ny)
 
 
 def angular_interface_power(
@@ -356,7 +394,8 @@ def angular_interface_power(
     r_outer=coating.outer_radius_m
     r_mid=coating.geometric_mid_radius_m
     bore=coating.inner_radius_m
-    if coating.fuel_wall_distance_model=="moment_normal_depth":
+    if coating.fuel_wall_distance_model in (
+            "moment_normal_depth","moment_nonorthogonal_gradient"):
         dm=contacts.fuel_wall_moment_depth_m
         if dm is None or dm.shape!=contacts.fuel_outer_full_m2.shape:
             raise ValueError("missing physical fuel centroid/arc moment distances")
@@ -380,8 +419,12 @@ def angular_interface_power(
         +coating.contact_resistance_m2_k_w[:,channel])
     if np.any(resistance<=0):
         raise ArithmeticError("unphysical angular coating contact resistance")
-    flow=arc/resistance*(
-        fuel_temperature_k[:,fidx]-coating_temperature_k[:,channel,ai])
+    jump=(fuel_temperature_k[:,fidx]-
+          coating_temperature_k[:,channel,ai])
+    if coating.fuel_wall_distance_model=="moment_nonorthogonal_gradient":
+        jump=jump-nonorthogonal_fuel_wall_correction_k(
+            contacts,fuel_temperature_k,fidx,rim.col)
+    flow=arc/resistance*jump
     fuel_out=np.zeros((nz,nfuel))
     coat_in=np.zeros((nz,19,na))
     for z in range(nz):
