@@ -25,6 +25,8 @@
 | Largest different-seed source-bank TV at batch100 | 0.883 | 0.921 |
 | Exact distinct source positions per 3000-source-particle bank (batch 60 and 100 combined observed range) | **62–89** | **73–88** |
 
+**Stage49 interpretation correction (verified against all 16 ORIGINAL HDF5):** Stage48's counts of 62–89 are **unique fission birth coordinates**, NOT the number of distinct complete neutron source states or independent fission ancestors. Stage49 audited position, direction, energy and all other actual source fields and found **2,250–3,000 distinct complete source neutron records out of 3,000**, while many records share a birth position. Thus Stage48's statement about strong **spatial** clustering remains valid but cannot by itself establish 97–98% identical complete source records, exact genealogical clone counts, or independently effective source sample size. See [executed Stage49 source-state audit](NERVA_STAGE49_EXECUTED_FULL_SOURCE_PHASE_SPACE_AND_REFERENCE.md).
+
 **Particularly important physical/numerical result:** at batch100, only about **2–3% of the nominal 3,000 source sites** had distinct exact positions (source bank cloning), and source spatial TV remains enormous between checkpoints and independent RNG seeds. These are actual OpenMC saved bank coordinates; exact duplicate positions do not independently prove genealogical independence for all other source sites either. This is severe neutron-source population degeneracy in a **strongly subcritical** (`k≈0.01`) cold-composition conceptual reactor surrogate, not evidence that the true NERVA reactor source behaves this way.
 
 Per-seed original `k` estimates from native C++ generation histories:
