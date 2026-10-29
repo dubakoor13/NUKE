@@ -55,6 +55,8 @@ class AngularCoatingInterfaces:
     fuel_wall_half_depth_m: csr_matrix | None = None
     fuel_wall_moment_depth_m: csr_matrix | None = None
     fuel_wall_tangential_offset_m: csr_matrix | None = None
+    fuel_wall_signed_normal_depth_m: csr_matrix | None = None
+    nonorthogonal_wall_fallback_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -167,7 +169,14 @@ def build_angular_coating_interfaces(
     areas=[]
     depth_area_m3=[]
     moment_depth_area_m3=[]
+    signed_normal_area_m3=[]
     tangent_offset_area_m3=[]
+    fallback_count=0
+    # Per-cell total physical cylindrical contact length gives a
+    # conservative positive effective control-volume depth when a
+    # curved face is nonorthogonal to its whole-cell material centroid.
+    total_fuel_contact_m2=np.asarray(
+        fuel.fuel_zrc_contact_m2.sum(axis=1)).ravel()
     polygon_cache={}
     centroid_cache={}
     inner=np.zeros((19,n),dtype=float)
@@ -219,8 +228,27 @@ def build_angular_coating_interfaces(
                 centroid_cache[fuel_cell]=material_centroid
             physical_arc=circular_arc_centroid_and_normal_cm(
                 (cx,cy),r_outer,float(left),float(right))
-            moment_depth,tangent=fuel_wall_moment_normal_depth_m(
-                material_centroid,physical_arc)
+            signed_normal,tangent=fuel_wall_moment_normal_depth_m(
+                material_centroid,physical_arc,
+                allow_nonorthogonal_negative=True)
+            signed_normal_area_m3.append(patch_area*signed_normal)
+            if signed_normal>0.:
+                moment_depth=signed_normal
+            else:
+                # A centroid lying behind this local tangent plane
+                # has NO valid normal two-point path. The exact fuel
+                # control-volume / total true cylindrical interface
+                # area provides a separate positive first-order
+                # volume-to-wall half-depth. It is explicitly counted,
+                # never masqueraded as a true centroid projection.
+                wall_area=float(total_fuel_contact_m2[fuel_cell])
+                if wall_area<=0.:
+                    raise ArithmeticError("no physical cutcell contact area for fallback")
+                volume_cm2=float(fuel.fuel_areas_cm2[fuel_cell])
+                moment_depth=.5*volume_cm2*1e-4*axial_length/wall_area
+                if not math.isfinite(moment_depth) or moment_depth<=0.:
+                    raise ArithmeticError("nonphysical fuel volume/contact fallback")
+                fallback_count+=1
             moment_depth_area_m3.append(patch_area*moment_depth)
             tangent_offset_area_m3.append(patch_area*tangent)
         # The inner bore/H2 area is separately clipped to physical hex.
@@ -262,6 +290,8 @@ def build_angular_coating_interfaces(
             (aggregate,outer.indices.copy(),outer.indptr.copy()),
             shape=outer.shape)
     moment_depth=aggregate_moments(moment_depth_area_m3,positive=True)
+    signed_normal=aggregate_moments(
+        signed_normal_area_m3,positive=False)
     tangent_offset=aggregate_moments(tangent_offset_area_m3,positive=False)
     reference=coating.fuel_arc_m2
     if reference.shape!=(fuel.n_fuel,19):
@@ -288,6 +318,8 @@ def build_angular_coating_interfaces(
         fuel_wall_half_depth_m=local_depth,
         fuel_wall_moment_depth_m=moment_depth,
         fuel_wall_tangential_offset_m=tangent_offset,
+        fuel_wall_signed_normal_depth_m=signed_normal,
+        nonorthogonal_wall_fallback_count=fallback_count,
     )
 
 
