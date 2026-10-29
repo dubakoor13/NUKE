@@ -56,12 +56,18 @@ class NativeFuelHeatingTally:
     source_mesh_upper_cm: tuple[float,float,float]
     axial_uncertainty_upper_bound_ev_per_source: np.ndarray
     source_mesh_mean_ev_per_source: np.ndarray
+    source_mesh_stderr_ev_per_source: np.ndarray
     statepoint_sha256: str
     uncertainty_status: str = (
         "per-bin sample mean stderr; axial uncertainty upper-bound "
         "by sum of marginal stderr; inter-bin covariance unavailable"
     )
-    photon_status: str = "neutron-only heating-local; photon transport requires separate tally"
+    photon_status: str = (
+        "neutron-only transport heating-local: secondary photon energy "
+        "is ASSUMED DEPOSITED LOCALLY; this is NOT a pure-neutron "
+        "energy partition and must not be added to independent photon "
+        "heating without a separately validated transport accounting"
+    )
 
 
 @dataclass(frozen=True)
@@ -310,5 +316,6 @@ def read_openmc_neutron_fuel_statepoint(
             source_mesh_upper_cm=tuple(high.tolist()),
             axial_uncertainty_upper_bound_ev_per_source=bound,
             source_mesh_mean_ev_per_source=m,
+            source_mesh_stderr_ev_per_source=err,
             statepoint_sha256=file_sha,
         )
