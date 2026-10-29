@@ -1,0 +1,52 @@
+name: NUKE Stage53 resolved 2D cut-cell fuel thermal physics
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/fuel_cutcell_conduction_2d.py'
+      - 'ntr/nerva/validate_stage53_fuel_cutcell_conduction_2d.py'
+      - '.github/workflows/nerva-stage53-cutcell-fuel-thermal.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/fuel_cutcell_conduction_2d.py'
+      - 'ntr/nerva/validate_stage53_fuel_cutcell_conduction_2d.py'
+      - '.github/workflows/nerva-stage53-cutcell-fuel-thermal.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  resolved-planar-cutcell-thermal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install numerical runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2'
+      - name: Run geometry-resolved 2D physics and numerical tests
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Report actual cut-cell heat geometry
+        run: |
+          python - <<'PY'
+          from ntr.nerva.config import NervaConfig
+          from ntr.nerva.fuel_cutcell_conduction_2d import build_cutcell_fuel_2d
+          op=build_cutcell_fuel_2d(NervaConfig(),nx=48,ny=56,
+              conductivity_w_m_k=12.,density_kg_m3=1000.,
+              heat_capacity_j_kg_k=1000.,zrc_conductivity_w_m_k=20.,
+              hydrogen_film_w_m2_k=1800.)
+          print("True cut-cell solid count:",op.n_fuel)
+          print("Conservative internal face count:",len(op.lateral_face_pairs))
+          print("OpenMC-matched actual physical fuel volume [m3]:",op.fuel_volumes_m3.sum())
+          print("Resolved fuel-to-ZrC interface [m2]:",op.channel_fuel_interface_m2.sum())
+          print("Channel heat-transfer arcs:",op.fuel_zrc_contact_m2.nnz)
+          PY
