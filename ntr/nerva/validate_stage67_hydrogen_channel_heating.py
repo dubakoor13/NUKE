@@ -55,7 +55,11 @@ def fixture(path: Path, model, *, photon=True, reverse=False,
         mesh["lower_left"][...]=[x[0],y[0],-66.]
         mesh["upper_right"][...]=[x[-1],y[-1],66.]
         tally=h["tallies/tally 3"]
-        tally["name"][...]=np.bytes_("nerva_3d_fuel_hydrogen_heating")
+        # HDF5 fixed-width scalar strings cannot be overwritten with
+        # a longer name without truncation; recreate the native dataset.
+        del tally["name"]
+        tally.create_dataset(
+            "name",data=np.bytes_("nerva_3d_fuel_hydrogen_heating"))
         del tally["filters"]
         ids=([11,12,13] if photon else [11,12])
         tally.create_dataset("filters",data=np.array(ids,dtype=np.int32))
@@ -150,7 +154,7 @@ class Stage67HydrogenChannelConservationTests(unittest.TestCase):
         m=coupled(film=0.,nz=3,nx=20,ny=24)
         r=parse(self.path,m)
         self.assertEqual(r.deposition_w.shape,(3,19))
-        self.assertEqual(np.count_nonzero(r.deposition_w[:,8]),1)
+        self.assertEqual(np.count_nonzero(r.deposition_w[:,8]),2)
         self.assertAlmostEqual(r.total_deposition_w,5.5*RATE*EV_TO_J,
                                delta=1e-13)
 
