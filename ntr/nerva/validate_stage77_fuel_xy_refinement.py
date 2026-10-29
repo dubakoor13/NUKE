@@ -150,6 +150,27 @@ class FullCoupledFuelXyRefinementTests(unittest.TestCase):
         self.assertFalse(sample.decreasing_successive_differences)
         self.assertIn("unresolved",sample.interpretation)
 
+    def test_large_local_wall_flux_and_transfer_deltas_fail_convergence_gate(self):
+        # Physical heat-transfer metrics still vary O(10%) on the
+        # finest change. Merely decreasing successive deltas does not
+        # establish a resolved local wall heat rate.
+        unresolved=self.study.metrics_requiring_further_refinement
+        self.assertIn("fuel_outer_wall_peak_abs_w_m2",unresolved)
+        self.assertIn("fuel_to_coating_energy_j",unresolved)
+        self.assertGreater(self.study.maximum_relative_finest_step,.10)
+        self.assertNotIn("fuel_peak_k",unresolved)
+
+    def test_grid_dependent_fuel_wall_half_cell_distance_is_exposed(self):
+        # Stage75 currently uses 0.5*MIN(dx,dy) as fuel distance for
+        # ALL embedded interfaces. This changes as XY grids refine
+        # even though true physical contact arc area stays fixed.
+        d=[case.fuel_wall_half_cell_distance_m
+           for case in self.study.cases]
+        self.assertTrue(d[0]>d[1]>d[2])
+        for case in self.study.cases:
+            self.assertGreater(case.fuel_wall_half_cell_distance_m,0.)
+        self.assertLess(self.study.max_wall_contact_discrepancy_m2,4e-11)
+
     def test_bad_xy_sequences_fail_before_creating_solver_model(self):
         errors=[
             (((20,24),(20,32),(36,40)),"increase both"),
