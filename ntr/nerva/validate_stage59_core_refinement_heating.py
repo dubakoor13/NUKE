@@ -199,6 +199,7 @@ class IndependentCoupledRefinementTests(unittest.TestCase):
             br=float(np.mean(primitive(m.fluid,reference.hydrogen).temperature_k))
             return max(abs(a-ar),abs(b-br))
         errors=[distance(s) for s in (full,half,quarter)]
+        print('Stage59 coupled temporal reference errors [K], 1/2/4 vs 8:',errors)
         self.assertGreater(errors[0],errors[1])
         self.assertGreater(errors[1],errors[2])
         self.assertGreater(errors[2],1e-11)
@@ -231,6 +232,7 @@ class IndependentCoupledRefinementTests(unittest.TestCase):
                 rc*math.log(rc/ri)/kz+rc/(ri*h))
             errors.append(limit-observed)
             self.assertGreater(limit,observed)
+        print('Stage59 wall boundary conductance limits [W], mesh error:',errors)
         self.assertGreater(errors[0],errors[1])
         self.assertGreater(errors[1],errors[2])
 
