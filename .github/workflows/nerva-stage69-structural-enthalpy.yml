@@ -1,0 +1,95 @@
+name: NUKE Stage69 conservative structural material enthalpy storage
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/structural_enthalpy_network.py'
+      - 'ntr/nerva/validate_stage69_structural_enthalpy.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage69-structural-enthalpy.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/structural_enthalpy_network.py'
+      - 'ntr/nerva/validate_stage69_structural_enthalpy.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage69-structural-enthalpy.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  conservative-structural-enthalpy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install HDF5 and numerical solvers
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2' 'h5py>=3.10,<4'
+      - name: Verify seven-material enthalpy and Stage52-68 regressions
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage69_structural_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage68_full_core_energy_ledger -v
+          python -m unittest ntr.nerva.validate_stage67_hydrogen_channel_heating -v
+          python -m unittest ntr.nerva.validate_stage66_direct_hydrogen_deposition -v
+          python -m unittest ntr.nerva.validate_stage65_coupled_nuclear_heating -v
+          python -m unittest ntr.nerva.validate_stage64_native_mesh_order -v
+          python -m unittest ntr.nerva.validate_stage63_native_statepoint_format -v
+          python -m unittest ntr.nerva.validate_stage62_native_statepoint_evidence -v
+          python -m unittest ntr.nerva.validate_stage61_native_spatial_heating -v
+          python -m unittest ntr.nerva.validate_stage60_native_hdf5_heating -v
+          python -m unittest ntr.nerva.validate_stage59_core_refinement_heating -v
+          python -m unittest ntr.nerva.validate_stage58_fuel_hydrogen_coupling -v
+          python -m unittest ntr.nerva.validate_stage57_hydrogen_transient -v
+          python -m unittest ntr.nerva.validate_stage56_hydrogen_hydraulics -v
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Show synthetic Stage68 to Stage69 WHOLE-CORE structural energy allocation
+        run: |
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          import numpy as np
+          from ntr.nerva.validate_stage68_full_core_energy_ledger import fixture,IDS,RATE,SHA
+          from ntr.nerva.openmc_full_core_energy_ledger import read_openmc_full_core_energy_ledger
+          from ntr.nerva.validate_stage69_structural_enthalpy import make_model
+          from ntr.nerva.structural_enthalpy_network import allocate_full_core_structural_heating,advance_structural_enthalpy
+          with tempfile.TemporaryDirectory() as td:
+              file=Path(td)/'synthetic_native.h5'
+              fixture(file)
+              ledger=read_openmc_full_core_energy_ledger(
+                  file,expected_material_ids=IDS,
+                  source_rate_particles_per_s=RATE,
+                  source_rate_basis='SYNTHETIC whole-core only; not one NERVA fuel element',
+                  nuclear_data_sha256=SHA)
+              allocation=allocate_full_core_structural_heating(ledger)
+              model=make_model(varying=True,contact=100.,bath=0.002)
+              advance=advance_structural_enthalpy(
+                  model,np.ones(7)*500.,
+                  dt_s=10.,deposited_power_w=allocation.structural_power_w,
+                  bath_temperature_k=300.)
+              print('Stage69 fuel+hydrogen whole-core heating [W]:',
+                    allocation.fuel_power_w+allocation.hydrogen_power_w)
+              print('Stage69 seven structural material heating [W]:',
+                    allocation.structural_power_w.tolist())
+              print('Stage69 seven structural storage change [J]:',
+                    advance.total_stored_energy_change_j)
+              print('Stage69 externally exported bath energy [J]:',
+                    advance.total_bath_export_j)
+              print('Stage69 structure total deposited [J]:',
+                    advance.total_deposited_energy_j)
+              print('Stage69 total 1st law residual [J]:',
+                    advance.total_first_law_residual_j)
+              print('Stage69 property/mass/interface data SYNTHETIC; no qualified reactor structure thermal prediction')
+              assert advance.relative_first_law_residual<1e-9
+              assert abs(allocation.allocation_residual_w)<1e-10
+          PY
