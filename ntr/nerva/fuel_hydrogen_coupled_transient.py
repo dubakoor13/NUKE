@@ -25,6 +25,14 @@ from .fuel_cutcell_axial_transport import AxialCutCellModel
 from .fuel_cutcell_nonlinear_enthalpy import (
     NonlinearThermalProperties, _NonlinearSystem,
 )
+from .coating_angular_fvm import (
+    AngularCoatingMesh, build_angular_coating_mesh,
+    advance_angular_coating_enthalpy,
+)
+from .coating_angular_interfaces import (
+    AngularCoatingInterfaces, build_angular_coating_interfaces,
+    angular_interface_power, distribute_channel_coating_power,
+)
 from .resolved_coating_thermal import (
     ResolvedCoatingModel, build_resolved_coating,
     coating_interface_power, advance_coating_enthalpy,
@@ -68,6 +76,8 @@ class CoupledCoreResult:
     coating_first_law_residual_j: float = 0.
     coating_axial_interface_j: np.ndarray | None = None
     coating_axial_max_node_residual_j: float = 0.
+    coating_angular_face_transfer_j: np.ndarray | None = None
+    coating_angular_max_node_residual_j: float = 0.
 
 
 @dataclass(frozen=True)
@@ -78,6 +88,8 @@ class CoupledCoreModel:
     properties: NonlinearThermalProperties
     solid_density_kg_m3: np.ndarray
     coating: ResolvedCoatingModel | None = None
+    angular_coating: AngularCoatingMesh | None = None
+    angular_contacts: AngularCoatingInterfaces | None = None
 
     @property
     def nzone(self) -> int:
@@ -129,6 +141,7 @@ def with_resolved_coating(
     heat_capacity: TemperatureTable,
     contact_resistance_m2_k_w: object = 0.,
     axial_conduction_enabled: bool = False,
+    angular_sectors: int | None = None,
 ) -> CoupledCoreModel:
     """Enable coating mass and thermal contact within existing Stage58."""
     coating=build_resolved_coating(
@@ -137,9 +150,22 @@ def with_resolved_coating(
         contact_resistance_m2_k_w=contact_resistance_m2_k_w,
         axial_conduction_enabled=axial_conduction_enabled,
     )
+    if angular_sectors is None:
+        angular=None
+        contacts=None
+    else:
+        if not axial_conduction_enabled:
+            raise ValueError(
+                "angular coating transport includes axial conduction: enable axial_conduction_enabled"
+            )
+        angular=build_angular_coating_mesh(
+            model.config,coating,angular_sectors=angular_sectors,
+            density_kg_m3=density_kg_m3)
+        contacts=build_angular_coating_interfaces(
+            model.config,model.solid,coating,angular)
     return CoupledCoreModel(
         model.config,model.solid,model.fluid,model.properties,
-        model.solid_density_kg_m3,coating,
+        model.solid_density_kg_m3,coating,angular,contacts,
     )
 
 
@@ -267,13 +293,20 @@ def advance_coupled_core(
             or np.any(hsrc<0)):
         raise ValueError("hydrogen nuclear deposition must be nonnegative finite W [z,19]")
     coat_model=model.coating
+    angular=model.angular_coating
+    contacts=model.angular_contacts
+    if (angular is None)!=(contacts is None):
+        raise ValueError("angular geometry and physical contact must both be present")
     coating_src=np.asarray(coating_deposition_w,dtype=float)
     if coating_src.ndim==0:
         coating_src=np.full((nz,19),float(coating_src))
-    if (coating_src.shape!=(nz,19) or
+    if angular is not None and coating_src.shape==(nz,19):
+        coating_src=distribute_channel_coating_power(coating_src,angular)
+    desired=(nz,19) if angular is None else angular.sector_mass_kg.shape
+    if (coating_src.shape!=desired or
             not np.all(np.isfinite(coating_src)) or
             np.any(coating_src<0)):
-        raise ValueError("coating nuclear deposition must be nonnegative W [z,19]")
+        raise ValueError("coating nuclear deposition must be nonnegative finite W in physical [z,19,angle] geometry")
     if coat_model is None:
         if initial.coating_temperature_k is not None or np.any(coating_src>0):
             raise ValueError("cannot advance coating heat without resolved coating model")
@@ -283,10 +316,17 @@ def advance_coupled_core(
         if initial.coating_temperature_k is None:
             raise ValueError("resolved coating temperature state required [z,19]")
         tcoat=np.asarray(initial.coating_temperature_k,dtype=float).copy()
-        if tcoat.shape!=(nz,19) or not np.all(np.isfinite(tcoat)):
-            raise ValueError("coating state must have finite temperatures [z,19]")
+        expected_coating_shape=(
+            (nz,19) if angular is None else angular.sector_mass_kg.shape)
+        if (tcoat.shape!=expected_coating_shape
+                or not np.all(np.isfinite(tcoat))):
+            raise ValueError(
+                "coating state must have finite temperatures matching resolved [z,19,angle] geometry")
+        coat_mass=(
+            coat_model.mass_kg if angular is None
+            else angular.sector_mass_kg)
         initial_coating_energy=float(np.sum(
-            coat_model.mass_kg*coat_model.heat_capacity.integral(tcoat)))
+            coat_mass*coat_model.heat_capacity.integral(tcoat)))
     gas0=primitive(model.fluid,initial.hydrogen)
     pgas=gas0
     speed=float(np.max(
@@ -312,6 +352,9 @@ def advance_coupled_core(
     coating_axial_j=(np.zeros((nz-1,19)) if coat_model is not None
                      and coat_model.axial_conduction_enabled else None)
     coating_axial_max_node_residual_j=0.
+    coating_angular_j=(
+        np.zeros(len(angular.edge_left)) if angular is not None else None)
+    coating_angular_max_node_residual_j=0.
     outflow_net=0.
     max_iters=0
     initial_fluid_energy=float(np.sum(
@@ -338,15 +381,24 @@ def advance_coupled_core(
             candidate_h=old_wall_h.copy()
             candidate_s=old_wall_s.copy()
             candidate_coating_in=None
-        else:
+        elif angular is None:
             candidate_s,candidate_coating_in,candidate_h=coating_interface_power(
                 coat_model,model.solid,model.properties,
                 old_t,old_coating,old_gas.temperature_k)
+        else:
+            contact_flux=angular_interface_power(
+                coat_model,model.solid,model.properties,contacts,
+                old_t,old_coating,old_gas.temperature_k)
+            candidate_s=contact_flux.fuel_to_coating_by_fuel_w
+            candidate_coating_in=contact_flux.fuel_to_coating_by_sector_w
+            candidate_angular_out=contact_flux.coating_to_hydrogen_by_sector_w
+            candidate_h=contact_flux.coating_to_hydrogen_by_channel_w
         converged=False
         final_solid=None
         final_hydrogen=None
         final_coating=None
         final_axial_diffusion=None
+        final_angular_diffusion=None
         final_step=None
         for iteration in range(1,max_wall_iterations+1):
             trial_fluid=advance_transient_hydrogen(
@@ -368,7 +420,7 @@ def advance_coupled_core(
                 difference=max(
                     float(np.max(np.abs(target_s-candidate_s))),
                     float(np.max(np.abs(target_h-candidate_h))))
-            else:
+            elif angular is None:
                 coating_net_w=(coating_src+candidate_coating_in-candidate_h)
                 if coat_model.axial_conduction_enabled:
                     trial_axial_diffusion=advance_coating_axial_enthalpy(
@@ -388,6 +440,30 @@ def advance_coupled_core(
                     float(np.max(np.abs(target_s-candidate_s))),
                     float(np.max(np.abs(target_ci-candidate_coating_in))),
                     float(np.max(np.abs(target_h-candidate_h))))
+            else:
+                # Every channel's angular coating cells share physical
+                # cutcell and bore arcs. The coating enthalpy step receives
+                # EXACTLY the signed angular fuel-in minus H2-out powers.
+                coating_net_w=(coating_src+candidate_coating_in-
+                               candidate_angular_out)
+                trial_angular_diffusion=advance_angular_coating_enthalpy(
+                    coat_model,angular,old_coating,
+                    conductivity_w_m_k=model.properties.coating_k_w_m_k,
+                    dt_s=sub_dt,deposition_w=coating_net_w)
+                trial_coating=trial_angular_diffusion.temperature_k
+                cm=.5*(old_coating+trial_coating)
+                target_flux=angular_interface_power(
+                    coat_model,model.solid,model.properties,contacts,
+                    tm,cm,hm)
+                target_s=target_flux.fuel_to_coating_by_fuel_w
+                target_ci=target_flux.fuel_to_coating_by_sector_w
+                target_angular_out=target_flux.coating_to_hydrogen_by_sector_w
+                target_h=target_flux.coating_to_hydrogen_by_channel_w
+                difference=max(
+                    float(np.max(np.abs(target_s-candidate_s))),
+                    float(np.max(np.abs(target_ci-candidate_coating_in))),
+                    float(np.max(np.abs(target_angular_out-candidate_angular_out))),
+                    float(np.max(np.abs(target_h-candidate_h))))
             magnitude=max(1.,float(np.max(np.abs(target_s))),
                           float(np.max(np.abs(target_h))))
             if difference<=wall_relative_tolerance*magnitude:
@@ -396,14 +472,21 @@ def advance_coupled_core(
                 final_hydrogen=trial_fluid.state
                 final_coating=trial_coating
                 final_axial_diffusion=(
-                    trial_axial_diffusion if coat_model is not None else None
-                )
+                    trial_axial_diffusion if coat_model is not None
+                    and angular is None else None)
+                final_angular_diffusion=(
+                    trial_angular_diffusion if angular is not None else None)
                 final_step=trial_fluid
                 max_iters=max(max_iters,iteration)
                 break
             # Global heat stays antisymmetric under a common relaxation.
             candidate_s=.5*(candidate_s+target_s)
-            candidate_h=.5*(candidate_h+target_h)
+            if angular is None:
+                candidate_h=.5*(candidate_h+target_h)
+            else:
+                candidate_angular_out=.5*(
+                    candidate_angular_out+target_angular_out)
+                candidate_h=candidate_angular_out.sum(axis=2)
             if coat_model is not None:
                 candidate_coating_in=.5*(candidate_coating_in+target_ci)
         if not converged:
@@ -424,6 +507,19 @@ def advance_coupled_core(
                     coating_axial_max_node_residual_j,
                     float(np.max(np.abs(
                         final_axial_diffusion.per_node_first_law_residual_j))))
+            if final_angular_diffusion is not None:
+                coating_angular_j+=final_angular_diffusion.face_transfer_j
+                coating_angular_max_node_residual_j=max(
+                    coating_angular_max_node_residual_j,
+                    final_angular_diffusion.maximum_node_residual_j)
+                axial_faces=np.flatnonzero(angular.face_kind==0)
+                ax_left=angular.edge_left[axial_faces]
+                left_zone=ax_left//(19*angular.sector_area_m2.shape[1])
+                left_channel=(
+                    ax_left//angular.sector_area_m2.shape[1])%19
+                np.add.at(
+                    coating_axial_j,(left_zone,left_channel),
+                    final_angular_diffusion.face_transfer_j[axial_faces])
         qtotal+=sub_dt*float(np.sum(fsrc))
         hydrogen_qtotal+=sub_dt*hsrc
         outflow_net+=sub_dt*float(np.sum(
@@ -443,7 +539,7 @@ def advance_coupled_core(
         coat_balance=0.
     else:
         coating_final_energy=float(np.sum(
-            coat_model.mass_kg*coat_model.heat_capacity.integral(tcoat)))
+            coat_mass*coat_model.heat_capacity.integral(tcoat)))
         dcoat=coating_final_energy-initial_coating_energy
         coat_balance=dcoat+coating_out_j-coating_in_j-coating_qtotal
     residual=ds+dh+dcoat+outflow_net-qtotal-hydrogen_source_j-coating_qtotal
@@ -482,4 +578,6 @@ def advance_coupled_core(
         coating_first_law_residual_j=coat_balance,
         coating_axial_interface_j=coating_axial_j,
         coating_axial_max_node_residual_j=coating_axial_max_node_residual_j,
+        coating_angular_face_transfer_j=coating_angular_j,
+        coating_angular_max_node_residual_j=coating_angular_max_node_residual_j,
     )
