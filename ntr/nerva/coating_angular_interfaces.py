@@ -22,7 +22,7 @@ import math
 import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 
-from .fuel_cutcell_conduction_2d import _NORMALS, _inside_hex
+from .fuel_cutcell_conduction_2d import _NORMALS, _inside_hex, _clip_polygon
 from .fuel_cutcell_axial_transport import AxialCutCellModel
 from .fuel_cutcell_nonlinear_enthalpy import NonlinearThermalProperties
 from .layout import coolant_channel_positions
@@ -44,6 +44,10 @@ class AngularCoatingInterfaces:
     sector_count: int
     fuel_arc_residual_m2: float
     hydrogen_arc_residual_m2: float
+    # Area-weighted local half-depth, built from exact Stage53 cutcell
+    # footprint and circular contact ARC normal. Optional to preserve
+    # older construction; selected explicitly by the Stage78 model.
+    fuel_wall_half_depth_m: csr_matrix | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,37 @@ def _angle_events(cx:float,cy:float,r:float,
     return result
 
 
+def local_fuel_wall_half_depth_m(
+    clipped_cell_polygon_cm: list[tuple[float,float]],
+    wall_point_cm: tuple[float,float],
+    outward_from_bore: tuple[float,float],
+) -> float:
+    """Positive local half-depth from curved wall into available fuel.
+
+    For a planar boundary orthogonal to n and a clipped rectangular fuel
+    cell extending h outward, returns h/2 EXACTLY (the 1D cell-centroid
+    distance). For oblique/curved cutcells, approximates the depth as half
+    the largest projected positive extent of the physical hex-clipped
+    polygon. It is NOT an exact fuel-volume centroid; convergence against
+    a manufactured curved-boundary solution is still required.
+    """
+    if len(clipped_cell_polygon_cm)<3:
+        raise ValueError("fuel wall needs a physical clipped cell polygon")
+    nx,ny=(float(outward_from_bore[0]),float(outward_from_bore[1]))
+    norm=math.hypot(nx,ny)
+    if abs(norm-1.)>1e-10:
+        raise ValueError("fuel-wall outward normal must have unit magnitude")
+    px,py=wall_point_cm
+    distances=[
+        nx*(vx-px)+ny*(vy-py)
+        for vx,vy in clipped_cell_polygon_cm
+    ]
+    width=max(distances)
+    if not math.isfinite(width) or width<=1e-13:
+        raise ArithmeticError("no physical fuel half-depth across curved wall")
+    return .5*width*.01
+
+
 def build_angular_coating_interfaces(
     config:NervaConfig,
     solid:AxialCutCellModel,
@@ -123,6 +158,8 @@ def build_angular_coating_interfaces(
     rows=[]
     cols=[]
     areas=[]
+    depth_area_m3=[]
+    polygon_cache={}
     inner=np.zeros((19,n),dtype=float)
     for channel,(cx,cy) in enumerate(coords):
         # Outer coating/fuel arcs require a unique physical cutcell owner.
@@ -149,7 +186,20 @@ def build_angular_coating_interfaces(
                 raise ArithmeticError("outer arc angular bin invalid")
             rows.append(fuel_cell)
             cols.append(channel*n+angular_cell)
-            areas.append(r_outer*(right-left)*.01*axial_length)
+            patch_area=r_outer*(right-left)*.01*axial_length
+            areas.append(patch_area)
+            # Account for the true locally available fuel depth, not
+            # the single global min(dx,dy)/2 for every curved contact.
+            poly=polygon_cache.get(fuel_cell)
+            if poly is None:
+                x0,x1=float(xedge[ix]),float(xedge[ix+1])
+                y0,y1=float(yedge[iy]),float(yedge[iy+1])
+                poly=_clip_polygon(
+                    [(x0,y0),(x1,y0),(x1,y1),(x0,y1)],ap)
+                polygon_cache[fuel_cell]=poly
+            arc_normal=(math.cos(theta),math.sin(theta))
+            depth=local_fuel_wall_half_depth_m(poly,(x,y),arc_normal)
+            depth_area_m3.append(patch_area*depth)
         # The inner bore/H2 area is separately clipped to physical hex.
         cuts=_angle_events(
             cx,cy,r_bore,None,None,ap,angular_edges)
@@ -165,6 +215,16 @@ def build_angular_coating_interfaces(
     outer=coo_matrix(
         (areas,(rows,cols)),
         shape=(fuel.n_fuel,19*n)).tocsr()
+    weighted=coo_matrix(
+        (depth_area_m3,(rows,cols)),shape=outer.shape).tocsr()
+    if (not np.array_equal(weighted.indptr,outer.indptr)
+            or not np.array_equal(weighted.indices,outer.indices)):
+        raise ArithmeticError("local half-depth contact topology mismatch")
+    depths=weighted.data/outer.data
+    if not np.all(np.isfinite(depths)) or np.any(depths<=0):
+        raise ArithmeticError("nonphysical embedded fuel contact half-depth")
+    local_depth=csr_matrix(
+        (depths,outer.indices.copy(),outer.indptr.copy()),shape=outer.shape)
     reference=coating.fuel_arc_m2
     if reference.shape!=(fuel.n_fuel,19):
         raise ValueError("Stage70 coating contact reference has wrong shape")
@@ -187,6 +247,7 @@ def build_angular_coating_interfaces(
         sector_count=n,
         fuel_arc_residual_m2=fuel_res,
         hydrogen_arc_residual_m2=h2_res,
+        fuel_wall_half_depth_m=local_depth,
     )
 
 
@@ -223,8 +284,19 @@ def angular_interface_power(
     r_outer=coating.outer_radius_m
     r_mid=coating.geometric_mid_radius_m
     bore=coating.inner_radius_m
+    if coating.fuel_wall_distance_model=="local_half_depth":
+        dm=contacts.fuel_wall_half_depth_m
+        if dm is None or dm.shape!=contacts.fuel_outer_full_m2.shape:
+            raise ValueError("missing local fuel wall half-depth contact geometry")
+        local=np.asarray(dm[fidx,rim.col]).ravel()
+        if np.any(local<=0) or not np.all(np.isfinite(local)):
+            raise ArithmeticError("invalid local fuel wall half-depth")
+    elif coating.fuel_wall_distance_model=="global_half_cell":
+        local=coating.half_fuel_distance_m
+    else:
+        raise ValueError("unknown fuel-wall embedded-boundary distance model")
     resistance=(
-        coating.half_fuel_distance_m/kf[:,fidx]
+        local/kf[:,fidx]
         +r_outer*math.log(r_outer/r_mid)/kc[:,channel,ai]
         +coating.contact_resistance_m2_k_w[:,channel])
     if np.any(resistance<=0):

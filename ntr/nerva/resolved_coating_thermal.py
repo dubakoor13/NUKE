@@ -50,6 +50,7 @@ class ResolvedCoatingModel:
     geometric_mid_radius_m: float
     axial_conduction_enabled: bool = False
     axial_edges_m: np.ndarray | None = None
+    fuel_wall_distance_model: str = "global_half_cell"
 
 
 def _hex_polygon(ap: float) -> list[tuple[float, float]]:
