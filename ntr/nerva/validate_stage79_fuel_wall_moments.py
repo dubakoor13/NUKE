@@ -187,10 +187,8 @@ class TrueEmbeddedFuelFirstMoments(unittest.TestCase):
     def test_flux_improvement_does_not_hide_nonmonotone_integrated_energy(self):
         # Measured from truly executed synthetic 20x24,28x32,36x40
         # Stage75 coupled models at same W/m3 and same physical volume.
-        from .validate_stage78_embedded_wall_distance import (
-            EmbeddedCurvedWallDistanceTests,
-        )
-        local=EmbeddedCurvedWallDistanceTests.local
+        local=run_fuel_xy_convergence(
+            local_factory,base_mesh=BASE,heating=HEAT,xy_sizes=GRIDS)
         new=self.study
         peak="fuel_outer_wall_peak_abs_w_m2"
         integral="fuel_to_coating_energy_j"
