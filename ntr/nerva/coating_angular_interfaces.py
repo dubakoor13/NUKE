@@ -197,8 +197,8 @@ def build_angular_coating_interfaces(
                 poly=_clip_polygon(
                     [(x0,y0),(x1,y0),(x1,y1),(x0,y1)],ap)
                 polygon_cache[fuel_cell]=poly
-            n=(math.cos(theta),math.sin(theta))
-            depth=local_fuel_wall_half_depth_m(poly,(x,y),n)
+            arc_normal=(math.cos(theta),math.sin(theta))
+            depth=local_fuel_wall_half_depth_m(poly,(x,y),arc_normal)
             depth_area_m3.append(patch_area*depth)
         # The inner bore/H2 area is separately clipped to physical hex.
         cuts=_angle_events(
