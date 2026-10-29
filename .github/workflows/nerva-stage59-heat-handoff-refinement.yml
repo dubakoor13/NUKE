@@ -1,0 +1,65 @@
+name: NUKE Stage59 fuel heat evidence and coupled numerical refinement
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/openmc_fuel_axial_heat_handoff.py'
+      - 'ntr/nerva/validate_stage59_core_refinement_heating.py'
+      - '.github/workflows/nerva-stage59-heat-handoff-refinement.yml'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+  pull_request:
+    paths:
+      - 'ntr/nerva/openmc_fuel_axial_heat_handoff.py'
+      - 'ntr/nerva/validate_stage59_core_refinement_heating.py'
+      - '.github/workflows/nerva-stage59-heat-handoff-refinement.yml'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  conservative-openmc-heating-and-refinement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install sparse runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2'
+      - name: Verify heat-score mapping and Stage58 numerical refinement
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage59_core_refinement_heating -v
+          python -m unittest ntr.nerva.validate_stage58_fuel_hydrogen_coupling -v
+          python -m unittest ntr.nerva.validate_stage57_hydrogen_transient -v
+          python -m unittest ntr.nerva.validate_stage56_hydrogen_hydraulics -v
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Print power-integral and geometric mapping diagnostics (SYNTHETIC)
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.validate_stage59_core_refinement_heating import input_heating
+          from ntr.nerva.validate_stage58_fuel_hydrogen_coupling import coupled
+          from ntr.nerva.openmc_fuel_axial_heat_handoff import project_openmc_axial_fuel_heating
+          m=coupled(film=0.,nz=4,nx=20,ny=24)
+          score=input_heating()
+          p=project_openmc_axial_fuel_heating(m.solid,score)
+          print('Stage59 source axial bins:',len(p.source_axial_bin_w))
+          print('Stage59 mapped axial bins:',len(p.mapped_axial_bin_w))
+          print('Stage59 actual physical fuel cells per slice:',m.solid.transverse.n_fuel)
+          print('Stage59 source fuel heating [W]:',sum(p.source_axial_bin_w))
+          print('Stage59 mapped fuel heating [W]:',p.mapped_fuel_power_w)
+          print('Stage59 fuel mapping residual [W]:',p.fuel_power_balance_residual_w)
+          print('Stage59 separately unresolved nonfuel heating [W]:',p.unresolved_nonfuel_power_w)
+          print('Stage59: input profiles SYNTHETIC; no actual OpenMC statepoint read')
+          assert abs(p.fuel_power_balance_residual_w)<1e-11
+          PY

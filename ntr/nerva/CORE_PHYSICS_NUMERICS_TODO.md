@@ -97,7 +97,7 @@ The table is **dependency order**, not evidence that any later stage has been im
 - [x] **C01.28** *Zero-wall-conductance limit:* recovers independent Stage55 **solid-only** conduction plus Stage57 standalone hydrogen dynamics.
 - [ ] **C01.29** *Low-speed fixed-density limit:* reproduces Stage54/55 constant-property reference, within discretization and energy-variable differences.
 - [ ] **C01.30** *Axial thermal pulse:* resolve downstream advection plus axial solid conduction and verify direction and conservation.
-- [ ] **C01.31** *Time-step/subcycling sensitivity:* compare `dt`, `dt/2`, `dt/4` using a fixed reference setup; report errors instead of pass/fail alone.
+- [x] **C01.31** *Time-step/subcycling sensitivity:* compare `dt`, `dt/2`, `dt/4` using a fixed reference setup; report errors instead of pass/fail alone.
 - [ ] **C01.32** *Wall-contact mapping:* sum Stage53 interface areas and wall-energy transfers independently before/after thermal-flow integration.
 - [ ] **C01.33** *Invalid-domain tests:* reject out-of-range T, negative densities/pressures, exceeded Mach/CFL, failed nonlinear iteration, empty source, mismatched meshes.
 - [x] **C01.34** Run Stage52–57 regression suites unchanged; ensure Stage58 new tests do not mask earlier failures.
@@ -108,17 +108,21 @@ The table is **dependency order**, not evidence that any later stage has been im
 
 ## C02 — Genuine OpenMC deposited-heating coupling to the physical fuel volumes (P0)
 
+**Stage59 partial numerical implementation (2026-10-29):** [PR #173](https://github.com/dubakoor13/NUKE/pull/173) at commit `8e4d3f7e1b5cd0cd98d92867a54520ec596e6df7`, [focused CI run 40850469318](https://github.com/dubakoor13/NUKE/actions/runs/40850469318): **12 new tests + all 85 previous Stage52–58 tests PASS**. Added `openmc_fuel_axial_heat_handoff.py` to accept *exported* axial neutron and photon heating scores **eV per source particle**; physical W requires caller-supplied source rate and source-rate basis. Axial-bin overlap and actual Stage53 fuel-volume partition conserve heat (example 22.430472876 W -> 22.430472876 W, 3.55e-15 W residual, 4.806529902 W nonfuel deposition separately unresolved). Map retains SHA256 labels, explicit transverse-uniform approximation and exact target geometry guards. **Missing:** native OpenMC HDF5 parser, actual hash verification, material-instance/source/tally identity, independent source normalization validation, true transverse score reconstruction and uncertainty propagation. This partial work is **not** verified hot-core heating.
+
+## C02 — Genuine OpenMC deposited-heating coupling to the physical fuel volumes (P0)
+
 **Existing:** OpenMC statepoint/tally tools and multiple real transport/source-investigation experiments exist; Stage51–57 geometric/thermal volumes are usable. **Not demonstrated as a fully qualified, reactor-power-driven coupled hot core.**
 
 - [ ] **C02.01** Define a canonical source-data contract including OpenMC statepoint path, geometry/material hash, cross-section library metadata, batch/seed, estimator type and tally normalization.
-- [ ] **C02.02** Explicitly distinguish tally output *per starting/source neutron* from an independently justified physical power [W].
+- [x] **C02.02** Explicitly distinguish tally output *per starting/source neutron* from an independently justified physical power [W].
 - [ ] **C02.03** Extract separate neutron and photon deposited-heating components where the chosen scored physics requires both; report missing contributions rather than silently equating neutron-only heating to total reactor watts.
 - [ ] **C02.04** Preserve tally mean, standard deviation, covariance or correctly documented unavailable covariance through mapping.
 - [ ] **C02.05** Map HDF5 fuel-element instance and axial heating into each physical Stage53 cut-cell and Stage54 axial slab using an explicit overlap/conservation operator.
 - [ ] **C02.06** Do not uniformly smear a coarse tally into fine local cells without labeling the assumed reconstruction and its unresolved spatial error.
 - [ ] **C02.07** Include coating, tie-tube, structural and coolant energy-deposition channels only where distinct physical OpenMC material/cell tallies actually support them; retain an explicit `unresolved` bucket otherwise.
 - [ ] **C02.08** Detect and reject identical geometry instance indices mistakenly counted twice, including the six formerly overlapping ZrC caps.
-- [ ] **C02.09** Confirm mesh/tally volume weighting and flux-source mapping respect the 132-cm axial length and actual fuel-only volumes.
+- [x] **C02.09** Confirm mesh/tally volume weighting and flux-source mapping respect the 132-cm axial length and actual fuel-only volumes.
 - [ ] **C02.10** Check `sum(mapped heat) + unresolved = justified total deposited heat` within reported stochastic and numerical uncertainties; never force closure through arbitrary residual rescaling.
 - [ ] **C02.11** Explicitly record external physical normalization inputs (actual reactor power/energy balance), with uncertainty and source. Invalid/absent inputs must produce a hard failure or *per-source-particle* diagnostic mode, not fake watts.
 - [ ] **C02.12** Expose one typed heating interface directly consumable by Stage58; avoid five competing adapters that each have a different normalization convention.
@@ -228,10 +232,14 @@ The table is **dependency order**, not evidence that any later stage has been im
 
 ## C08 — Numerical verification, convergence, robustness, and rejection policy (P1)
 
+**Stage59 independent numerical observations (2026-10-29):** [focused CI 40850469318](https://github.com/dubakoor13/NUKE/actions/runs/40850469318) reports Stage58 sealed coupled thermal timestep errors versus 8 steps: **[0.00133920, 0.000589794, 0.000199376] K** for 1, 2, 4 steps; decreasing but not proof of a formal time-order study. With 20×24, 28×34, 40×46 fuel meshes, wall boundary conductance error versus zero-fuel-half-cell-resistance limit decreases **[1587.44, 1139.88, 848.36] W**. This is **one wall-flux trend**, not C08.02's full spatial peak-temperature convergence.
+
+## C08 — Numerical verification, convergence, robustness, and rejection policy (P1)
+
 - [ ] **C08.01** Define a minimal independent analytic/method-of-manufactured-solutions suite for diffusion, advection, interface exchange, compressibility and integrated enthalpy.
 - [ ] **C08.02** Compare 2D fuel grids across at least three resolutions; report cell count, flux/temperature errors, peak-temperature convergence and numerical order where measurable.
 - [ ] **C08.03** Compare multiple axial mesh sizes (fuel and H2 jointly), explicitly checking gradients, pressure waves and wall-flux shape, not only global inventory.
-- [ ] **C08.04** Compare `dt`, `dt/2`, `dt/4` on the combined Stage58 model and show expected temporal behavior away from nonsmooth events.
+- [x] **C08.04** Compare `dt`, `dt/2`, `dt/4` on the combined Stage58 model and show expected temporal behavior away from nonsmooth events.
 - [ ] **C08.05** Quantify splitting error from thermal–fluid subcycling and compare against a tighter-reference combined solution.
 - [ ] **C08.06** Include a standard 1D ideal-gas Riemann/shock-tube benchmark with reference solution inside the Stage57 property/Mach domain, and explicitly reject tests outside that domain.
 - [ ] **C08.07** Test traveling acoustic perturbations, reflective walls, steady uniform-flow preservation and finite-volume contact discontinuities under relevant regimes.
@@ -262,7 +270,7 @@ The table is **dependency order**, not evidence that any later stage has been im
 - [ ] **C09.09** Ensure Stage51–57 stacked PRs and subsequent core work have a documented integration/merge sequence and no orphaned unreviewed physics code.
 - [ ] **C09.10** Make a consolidated acceptance script run all real numerical gates, not just smoke tests, with per-gate PASS/FAIL and linked artifacts.
 - [ ] **C09.11** Summarize changed physical assumptions between versions, expected changes in solution and non-regression scope.
-- [ ] **C09.12** Maintain **this single TODO file** as the canonical core-development checklist; update checkboxes with a commit/CI citation rather than creating redundant milestone reports.
+- [x] **C09.12** Maintain **this single TODO file** as the canonical core-development checklist; update checkboxes with a commit/CI citation rather than creating redundant milestone reports.
 
 **Exit:** another developer can reproduce the declared numerical core results and see exactly which physically validated claims are *not* supported.
 
