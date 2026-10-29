@@ -242,15 +242,34 @@ def build_tallies(
             if cell.name.startswith("hydrogen channel ")
         ]
         if fuel_hydrogen_cells:
+            # Each fuel element reuses this same 19-cell universe. The
+            # separate CellFilter identities preserve channel number but
+            # cannot, by themselves, identify ONE lattice instance.
+            # Therefore a single-element mesh/instance gate is mandatory
+            # in the downstream HDF5-to-thermal coupling.
+            by_channel = {
+                int(cell.name.removeprefix("hydrogen channel ")): cell
+                for cell in fuel_hydrogen_cells
+            }
+            if set(by_channel) != set(range(1, 20)):
+                raise ValueError(
+                    "OpenMC hydrogen heating requires exactly 19 channels"
+                )
             fuel_h2_heating = openmc.Tally(
                 name="nerva_3d_fuel_hydrogen_heating"
             )
             fuel_h2_heating.filters = [
                 mesh_filter,
-                openmc.CellFilter(fuel_hydrogen_cells),
+                openmc.CellFilter(
+                    [by_channel[i] for i in range(1, 20)]
+                ),
             ]
+            if config.photon_transport:
+                fuel_h2_heating.filters.append(
+                    openmc.ParticleFilter(["neutron", "photon"])
+                )
             fuel_h2_heating.scores = [
-                "heating-local",
+                "heating" if config.photon_transport else "heating-local",
                 "absorption",
             ]
             tallies.append(fuel_h2_heating)
