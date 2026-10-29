@@ -10,7 +10,9 @@ Neither tie coatings nor the outer element jacket are represented.
 No OpenMC power is inferred here. Coating watts, material density, bounded
 cp(T), contact resistance and heat-transfer coefficients are explicit data.
 A coating channel is one thermal node per axial zone (19*NZ states);
-tangential and axial conduction inside ZrC remain out of scope. Distinct
+Stage71 optionally resolves conservative AXIAL conduction along each sleeve.
+Tangential conduction within a sleeve requires angular DOFs and remains
+out of scope. Distinct
 fuel and coolant heat paths share the *same coating enthalpy* and are
 applied once with opposite signs.
 """
@@ -332,9 +334,7 @@ def advance_coating_axial_enthalpy(
         if nz>1:
             np.add.at(main,left.ravel(),conductance.ravel())
             np.add.at(main,right.ravel(),conductance.ravel())
-            jac=diags(
-                [main,np.zeros(nn-1),np.zeros(nn-1)],
-                [0,-1,1],shape=(nn,nn),format="csr")
+            jac=diags(main,format="csr")
             from scipy.sparse import coo_matrix
             I=np.concatenate((left.ravel(),right.ravel()))
             J=np.concatenate((right.ravel(),left.ravel()))
@@ -384,14 +384,20 @@ def advance_coating_axial_enthalpy(
     closure=float(np.sum(hchange)-dt_s*np.sum(power))
     scale=max(1.,float(np.sum(np.abs(hchange))),
               float(dt_s*np.sum(np.abs(power))))
+    axial_node_outflow=np.zeros_like(final)
+    if nz>1:
+        axial_node_outflow[:-1,:]+=all_flux
+        axial_node_outflow[1:,:]-=all_flux
+    axial_total=float(np.sum(axial_node_outflow))
     if (np.max(np.abs(node_residual_j))>2.*tolerance*dt_s or
-            abs(closure)>3e-9*scale):
+            abs(closure)>3e-9*scale or
+            abs(axial_total)>1e-11*scale):
         raise ArithmeticError("coating axial finite-volume energy is not conserved")
     return AxialCoatingDiffusionStep(
         temperature_k=final,
         axial_interface_j=all_flux,
         per_node_first_law_residual_j=node_residual_j,
-        net_axial_energy_j=0.,
+        net_axial_energy_j=axial_total,
         global_first_law_residual_j=closure,
         iterations=iterations,
     )
