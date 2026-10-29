@@ -1,0 +1,76 @@
+name: NUKE Stage66 conservative separate coolant nuclear deposition
+
+on:
+  push:
+    paths:
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/validate_stage66_direct_hydrogen_deposition.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage66-hydrogen-deposition.yml'
+  pull_request:
+    paths:
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
+      - 'ntr/nerva/validate_stage66_direct_hydrogen_deposition.py'
+      - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
+      - '.github/workflows/nerva-stage66-hydrogen-deposition.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  separate-hydrogen-nuclear-heat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install sparse thermal and HDF5 test runtime
+        run: python -m pip install 'numpy>=1.26,<3' 'scipy>=1.12,<2' 'h5py>=3.10,<4'
+      - name: Verify Stage66 hydrogen deposition and all prior Stage52-65 regressions
+        run: |
+          set -euo pipefail
+          python -m unittest ntr.nerva.validate_stage66_direct_hydrogen_deposition -v
+          python -m unittest ntr.nerva.validate_stage65_coupled_nuclear_heating -v
+          python -m unittest ntr.nerva.validate_stage64_native_mesh_order -v
+          python -m unittest ntr.nerva.validate_stage63_native_statepoint_format -v
+          python -m unittest ntr.nerva.validate_stage62_native_statepoint_evidence -v
+          python -m unittest ntr.nerva.validate_stage61_native_spatial_heating -v
+          python -m unittest ntr.nerva.validate_stage60_native_hdf5_heating -v
+          python -m unittest ntr.nerva.validate_stage59_core_refinement_heating -v
+          python -m unittest ntr.nerva.validate_stage58_fuel_hydrogen_coupling -v
+          python -m unittest ntr.nerva.validate_stage57_hydrogen_transient -v
+          python -m unittest ntr.nerva.validate_stage56_hydrogen_hydraulics -v
+          python -m unittest ntr.nerva.validate_stage55_nonlinear_enthalpy -v
+          python -m unittest ntr.nerva.validate_stage54_fuel_cutcell_axial_transport -v
+          python -m unittest ntr.nerva.validate_stage53_fuel_cutcell_conduction_2d -v
+          python -m unittest ntr.nerva.validate_stage52_fuel_sector_conduction_2d -v
+          python -m ntr.nerva.validate_fuel_sector_geometry
+      - name: Report physically separate synthetic coolant deposition budget
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from ntr.nerva.validate_stage58_fuel_hydrogen_coupling import coupled,initial,solve
+          from ntr.nerva.hydrogen_transient_fvm import primitive
+          m=coupled(film=1400.,nz=2,nx=20,ny=24)
+          source=initial(m,tf=530.,th=400.)
+          fuel_q=3e5*m.solid.solid_volume_m3
+          gas_q=np.full((2,19),1100.)
+          result=solve(m,source,dt=5e-6,q=fuel_q,hydrogen_deposition_w=gas_q)
+          print('Stage66 fuel nuclear deposition [J]:',result.fuel_deposition_j)
+          print('Stage66 DIRECT H2 nuclear deposition [J]:',result.hydrogen_deposition_j)
+          print('Stage66 INTERNAL wall heat to H2 [J]:',np.sum(result.wall_heat_to_hydrogen_j))
+          print('Stage66 fuel storage change [J]:',result.fuel_storage_change_j)
+          print('Stage66 H2 total energy change [J]:',result.hydrogen_total_energy_change_j)
+          print('Stage66 first-law residual [J]:',result.first_law_residual_j)
+          print('Stage66 H2 mean pressure [Pa]:',primitive(m.fluid,result.state.hydrogen).pressure_pa.mean())
+          print('Stage66 synthetic deposited nuclear watts, NOT actual OpenMC transport')
+          assert result.hydrogen_deposition_j>0
+          assert result.fuel_deposition_j>0
+          assert np.sum(result.wall_heat_to_hydrogen_j)>0
+          assert result.relative_first_law_residual<1e-8
+          PY
