@@ -81,7 +81,15 @@ def radial_interface_power(
     angle=(rim.col%na).astype(int)
     arc=dz[:,None]*rim.data[None,:]/length
     outer_mid=math.sqrt(edges[-2]*edges[-1])
-    if coating.fuel_wall_distance_model=="local_half_depth":
+    if coating.fuel_wall_distance_model=="moment_normal_depth":
+        depth_map=contacts.fuel_wall_moment_depth_m
+        if (depth_map is None or
+                depth_map.shape!=contacts.fuel_outer_full_m2.shape):
+            raise ValueError("missing true material-centroid fuel wall normal depths")
+        local=np.asarray(depth_map[cell,rim.col]).ravel()
+        if np.any(local<=0) or not np.all(np.isfinite(local)):
+            raise ArithmeticError("nonpositive embedded centroid-to-wall normal depth")
+    elif coating.fuel_wall_distance_model=="local_half_depth":
         depth_map=contacts.fuel_wall_half_depth_m
         if (depth_map is None or
                 depth_map.shape!=contacts.fuel_outer_full_m2.shape):

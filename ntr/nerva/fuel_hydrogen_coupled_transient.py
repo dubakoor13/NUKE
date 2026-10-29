@@ -155,7 +155,7 @@ def with_resolved_coating(
 ) -> CoupledCoreModel:
     """Enable coating mass and thermal contact within existing Stage58."""
     if fuel_wall_distance_model not in (
-            "global_half_cell","local_half_depth"):
+            "global_half_cell","local_half_depth","moment_normal_depth"):
         raise ValueError("unknown embedded fuel wall distance model")
     if (fuel_wall_distance_model=="local_half_depth"
             and angular_sectors is None):
