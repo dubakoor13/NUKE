@@ -1,15 +1,17 @@
-name: NUKE Stage73 geometric angular coating interfaces and energy conservation
+name: NUKE Stage73 coupled angular fuel-ZrC-H2 enthalpy conservation
 
 on:
   push:
     paths:
       - 'ntr/nerva/coating_angular_interfaces.py'
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
       - 'ntr/nerva/validate_stage73_angular_interfaces.py'
       - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
       - '.github/workflows/nerva-stage73-angular-interfaces.yml'
   pull_request:
     paths:
       - 'ntr/nerva/coating_angular_interfaces.py'
+      - 'ntr/nerva/fuel_hydrogen_coupled_transient.py'
       - 'ntr/nerva/validate_stage73_angular_interfaces.py'
       - 'ntr/nerva/CORE_PHYSICS_NUMERICS_TODO.md'
       - '.github/workflows/nerva-stage73-angular-interfaces.yml'
